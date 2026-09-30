@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OctaCfg" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#5C6370" fontStyle="italic"/>
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Var" foreground="#D9A93F"/>
+  <Color name="Section" foreground="#5FB8CB" fontWeight="bold"/>
+
+  <RuleSet>
+    <Span color="Comment" begin="//" stopAtEol="true"/>
+    <Span color="Comment" begin="#" stopAtEol="true"/>
+    <Span color="String">
+      <Begin>"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Span begin="\\" end="." ruleSet=""/>
+      </RuleSet>
+    </Span>
+    <Rule color="Section">^\s*\[[^\]]+\]</Rule>
+    <Rule color="Var">\b[a-zA-Z_][a-zA-Z0-9_.]*\b(?=\s+|\s*$)</Rule>
+    <Rule color="Number">\b\d+(\.\d+)?\b</Rule>
+  </RuleSet>
+</SyntaxDefinition>

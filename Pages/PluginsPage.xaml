@@ -1,0 +1,143 @@
+<Page x:Class="OctavianRSM.Pages.PluginsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Плагины">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Margin="0,0,0,14" LastChildFill="False">
+            <StackPanel>
+                <TextBlock Style="{StaticResource OctaPageTitle}" Text="Плагины"/>
+                <TextBlock Style="{StaticResource OctaPageSub}" Text="carbon/plugins — включение, перезагрузка через RCON"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:TextBox x:Name="TxtSearch" Width="240" PlaceholderText="поиск плагина…" Margin="0,0,10,0" TextChanged="Search_Changed"/>
+                <ui:Button Content="ПАПКА" Click="OpenFolder_Click" Margin="0,0,8,0"/>
+                <ui:Button Content="⟳ СКАНИРОВАТЬ" Appearance="Primary" Click="Refresh_Click"/>
+            </StackPanel>
+        </DockPanel>
+
+        <TabControl Grid.Row="1">
+            <TabItem Header="ПЛАГИНЫ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <StackPanel>
+            <ItemsControl x:Name="Cards">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,10" Padding="0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="4"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Золотая кайма статуса -->
+                                <Border Width="4" CornerRadius="8,0,0,8">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="#3A4150"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Enabled}" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource B.Accent}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
+
+                                <StackPanel Grid.Column="1" Margin="16,12">
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource B.Text}" VerticalAlignment="Center"/>
+                                        <Border Style="{StaticResource OctaChip}" DockPanel.Dock="Right" Margin="10,0,0,0" Padding="8,2">
+                                            <TextBlock Foreground="{StaticResource B.Accent}" FontSize="10" FontWeight="Bold">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Text" Value="ВЫКЛ"/>
+                                                        <Setter Property="Foreground" Value="{StaticResource B.TextDim}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Enabled}" Value="True">
+                                                                <Setter Property="Text" Value="ВКЛ"/>
+                                                                <Setter Property="Foreground" Value="{StaticResource B.Accent}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Border>
+                                    </DockPanel>
+                                    <TextBlock Text="{Binding MetaLine}" Style="{StaticResource OctaPageSub}" Margin="0,2,0,0"/>
+                                    <TextBlock Text="{Binding Description}" Style="{StaticResource OctaPageSub}"
+                                               Margin="0,4,0,0" TextWrapping="Wrap" FontStyle="Italic"/>
+                                    <TextBlock Text="{Binding FileName}" FontSize="10" FontFamily="Consolas"
+                                               Foreground="{StaticResource B.TextDim}" Margin="0,4,0,0" Opacity="0.6"/>
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <ui:Button Content="⟳ RELOAD" Click="Reload_Click" Padding="12,5" Margin="0,0,6,0"
+                                               ToolTip="c.reload через RCON"/>
+                                    <ui:Button Content="🗑" Click="Uninstall_Click" Padding="10,5" Margin="0,0,10,0"
+                                               Appearance="Danger" ToolTip="Удалить (файл+конфиг в _trash)"/>
+                                    <ui:ToggleSwitch IsChecked="{Binding Enabled, Mode=OneWay}" Click="Toggle_Click" OffContent="" OnContent=""/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="МОДУЛИ CARBON">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <StackPanel>
+            <ItemsControl x:Name="ModuleCards">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,8" Padding="12,8">
+                            <DockPanel LastChildFill="False">
+                                <Ellipse Width="8" Height="8" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,10,0">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="#3A4150"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Enabled}" Value="True">
+                                                    <Setter Property="Fill" Value="{StaticResource B.Cyan}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                                <ui:ToggleSwitch DockPanel.Dock="Right" IsChecked="{Binding Enabled, Mode=OneWay}"
+                                                 Click="ModuleToggle_Click" OffContent="" OnContent="" VerticalAlignment="Center"/>
+                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{StaticResource B.Text}"/>
+                                    <TextBlock Text="{Binding ConfigPath, StringFormat='  {0}'}" FontSize="10" FontFamily="Consolas"
+                                               Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center" Opacity="0.6"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Style="{StaticResource OctaPanel}" Margin="0,12,0,0" Padding="14,8">
+            <DockPanel LastChildFill="False">
+                <TextBlock x:Name="TxtCount" Text="—" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="TxtStatus" Text="" DockPanel.Dock="Right" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Page>

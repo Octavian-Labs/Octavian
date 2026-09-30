@@ -1,0 +1,165 @@
+<Page x:Class="OctavianRSM.Pages.SettingsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Настройки">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Style="{StaticResource OctaPageTitle}" Text="Настройки"/>
+            <TextBlock Style="{StaticResource OctaPageSub}" Text="пути, сеть, мир — сохраняется в octavian-rsm.json"/>
+        </StackPanel>
+
+        <TabControl Grid.Row="1">
+            <TabItem Header="ПУТИ И СЕРВЕР">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+            <UniformGrid Columns="2">
+                <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,8" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="ПУТИ" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,10"/>
+                        <TextBlock Text="Папка сервера" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="TxtServerDir" Margin="0,0,0,10"/>
+                        <TextBlock Text="SteamCMD (exe)" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="TxtSteamCmd"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,8" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="РЕЖИМ И СЕТЬ" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,10"/>
+                        <TextBlock Text="Название/описание/теги — во вкладке «Серв. конфиг → Общее»" Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                        <UniformGrid Columns="2" Margin="0,0,0,10">
+                            <StackPanel Margin="0,0,6,0">
+                                <TextBlock Text="Режим" Style="{StaticResource OctaFieldLabel}"/>
+                                <ComboBox x:Name="CmbDeploymentMode"><ComboBoxItem Content="Local"/><ComboBoxItem Content="Remote"/></ComboBox>
+                            </StackPanel>
+                            <StackPanel Margin="6,0,0,0">
+                                <TextBlock Text="RCON host / IP" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtRconHost"/>
+                            </StackPanel>
+                        </UniformGrid>
+                        <UniformGrid Columns="3">
+                            <StackPanel Margin="0,0,6,0">
+                                <TextBlock Text="Game порт" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtGamePort"/>
+                            </StackPanel>
+                            <StackPanel Margin="3,0">
+                                <TextBlock Text="RCON порт" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtRconPort"/>
+                            </StackPanel>
+                            <StackPanel Margin="6,0,0,0">
+                                <TextBlock Text="Query порт" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtQueryPort"/>
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="RCON пароль" Style="{StaticResource OctaFieldLabel}" Margin="0,10,0,4"/>
+                        <PasswordBox x:Name="TxtRconPassword"/>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="МИР">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+            <UniformGrid Columns="2">
+                <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="МИР" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,10"/>
+                        <UniformGrid Columns="3">
+                            <StackPanel Margin="0,0,6,0">
+                                <TextBlock Text="Seed" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtSeed"/>
+                            </StackPanel>
+                            <StackPanel Margin="3,0">
+                                <TextBlock Text="Размер карты" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtWorldSize"/>
+                            </StackPanel>
+                            <StackPanel Margin="6,0,0,0">
+                                <TextBlock Text="Макс. игроков" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtMaxPlayers"/>
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="Тип карты" Style="{StaticResource OctaFieldLabel}" Margin="0,10,0,4"/>
+                        <ComboBox x:Name="CmbLevel">
+                            <ComboBoxItem Content="Procedural Map"/>
+                            <ComboBoxItem Content="Barren"/>
+                            <ComboBoxItem Content="Hapis Island"/>
+                            <ComboBoxItem Content="Savas Island"/>
+                        </ComboBox>
+                        <TextBlock Text="URL кастомной карты (levelurl)" Style="{StaticResource OctaFieldLabel}" Margin="0,10,0,4"/>
+                        <ui:TextBox x:Name="TxtLevelUrl" PlaceholderText="пусто = обычная карта"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="ПРОЧЕЕ" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,10"/>
+                        <UniformGrid Columns="3">
+                            <StackPanel Margin="0,0,6,0">
+                                <TextBlock Text="Identity" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtIdentity"/>
+                            </StackPanel>
+                            <StackPanel Margin="3,0">
+                                <TextBlock Text="App порт" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtAppPort"/>
+                            </StackPanel>
+                            <StackPanel Margin="6,0,0,0">
+                                <TextBlock Text="Сохранение, сек" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtSaveInterval"/>
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="Gamemode" Style="{StaticResource OctaFieldLabel}" Margin="0,10,0,4"/>
+                        <ComboBox x:Name="CmbGamemode">
+                            <ComboBoxItem Content="vanilla"/>
+                            <ComboBoxItem Content="softcore"/>
+                            <ComboBoxItem Content="hardcore"/>
+                            <ComboBoxItem Content="primitive"/>
+                        </ComboBox>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="АВТОМАТИКА">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+            <UniformGrid Columns="2">
+                <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="АВТОМАТИКА" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,10"/>
+                        <CheckBox x:Name="ChkWatchdog" Content="Watchdog — автоподнятие после падения" Foreground="{StaticResource B.Text}" Margin="0,0,0,6"/>
+                        <DockPanel LastChildFill="False" Margin="0,0,0,10">
+                            <TextBlock Text=" задержка" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
+                            <ui:NumberBox x:Name="NumWatchdog" Width="70" Minimum="3" Maximum="300" SpinButtonPlacementMode="Inline" Margin="6,0,0,0"/>
+                            <TextBlock Text=" сек" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                        </DockPanel>
+                        <CheckBox x:Name="ChkAutoRestart" Content="Авторестарт по расписанию" Foreground="{StaticResource B.Text}" Margin="0,0,0,6"/>
+                        <UniformGrid Columns="2">
+                            <StackPanel Margin="0,0,6,0">
+                                <TextBlock Text="Время (ЧЧ:мм, через запятую)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtRestartTimes"/>
+                            </StackPanel>
+                            <StackPanel Margin="6,0,0,0">
+                                <TextBlock Text="Предупреждение, сек" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="TxtRestartWarn"/>
+                            </StackPanel>
+                        </UniformGrid>
+                        <TextBlock Text="рестарт выполняет сам Rust (restart N с анонсами) — watchdog поднимает процесс" Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Style="{StaticResource OctaPanel}" Margin="0,12,0,0" Padding="14,10">
+            <DockPanel LastChildFill="False">
+                <TextBlock x:Name="TxtSaved" Text="" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+                <ui:Button DockPanel.Dock="Right" Content="СОХРАНИТЬ" Appearance="Primary" Padding="20,7" Click="Save_Click"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Page>

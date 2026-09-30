@@ -1,0 +1,219 @@
+<Page x:Class="OctavianRSM.Pages.ServerCfgPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Background="Transparent" Margin="20">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,14">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Style="{StaticResource OctaPageTitle}" Text="Серв. конфиг"/>
+                <TextBlock x:Name="TxtPath" Style="{StaticResource OctaPageSub}" Text="server.cfg — редактирование формой"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Content="ОТКАТИТЬ" Margin="0,0,8,0" Padding="14,6" Click="BtnRevert_Click"/>
+                <Button Content="ПРИМЕНИТЬ (readcfg)" Margin="0,0,8,0" Padding="14,6" Click="BtnReadCfg_Click"/>
+                <Button Content="СОХРАНИТЬ" Padding="14,6" Click="BtnSave_Click"/>
+            </StackPanel>
+        </DockPanel>
+
+        <TabControl Grid.Row="1">
+            <TabItem Header="ОБЩЕЕ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <StackPanel>
+                <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="Имя сервера" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="In_Hostname" Margin="0,0,0,10"/>
+                        <TextBlock Text="Описание (в списке серверов)" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="In_Description" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" Margin="0,0,0,10"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Сайт (server.url)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_Url"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Теги (server.tags, через запятую)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_Tags"/>
+                            </StackPanel>
+                        </Grid>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Баннер (server.headerimage URL)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_Header"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Лого Rust+ (server.logoimage URL)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_Logo"/>
+                            </StackPanel>
+                        </Grid>
+                        <DockPanel LastChildFill="False" Margin="0,12,0,0">
+                            <ui:Button Content="ПРОВЕРИТЬ ПУБЛИКАЦИЮ" Style="{StaticResource OctaCmdBtn}"
+                                       DockPanel.Dock="Left" Click="CheckPublication_Click"
+                                       ToolTip="Валидация тегов/URL + проверка локальных портов и A2S-ответа"/>
+                            <TextBlock x:Name="PubPortState" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap"/>
+                        </DockPanel>
+                        <TextBlock x:Name="PubValidation" Text="" Margin="0,8,0,0"
+                                   Foreground="{StaticResource B.Warn}" FontSize="12" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="ЛИМИТЫ И ФЛАГИ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <StackPanel>
+                <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Макс. игроков" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_MaxPlayers"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Сейв-интервал (сек)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_SaveInterval"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="4">
+                                <TextBlock Text="Idle kick (мин)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_IdleKick"/>
+                            </StackPanel>
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <ui:ToggleSwitch x:Name="Sw_Pve" Content="PVE-режим" Margin="0,0,24,0"/>
+                            <ui:ToggleSwitch x:Name="Sw_Censor" Content="Скрыть список игроков" Margin="0,0,24,0"/>
+                            <ui:ToggleSwitch x:Name="Sw_Radiation" Content="Радиация на монументах"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="КАРТА И СЕТЬ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <StackPanel>
+                <!-- КАРТА — launch-lock -->
+                <DockPanel LastChildFill="False" Margin="0,0,0,6">
+                    <TextBlock Text="КАРТА" Style="{StaticResource OctaSectionHeader}" DockPanel.Dock="Left"/>
+                    <TextBlock x:Name="TxtLockMap" DockPanel.Dock="Right"
+                               Text="🔒 только при выключенном сервере" Foreground="{StaticResource B.Warn}"
+                               FontSize="11" VerticalAlignment="Center" Visibility="Collapsed"/>
+                </DockPanel>
+                <Border x:Name="PnlMap" Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="140"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="140"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Кастомная карта (server.levelurl)" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_LevelUrl"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Seed" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_Seed"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="4">
+                            <TextBlock Text="Размер мира" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_WorldSize"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- СЕТЬ — launch-lock -->
+                <DockPanel LastChildFill="False" Margin="0,0,0,6">
+                    <TextBlock Text="СЕТЬ" Style="{StaticResource OctaSectionHeader}" DockPanel.Dock="Left"/>
+                    <TextBlock x:Name="TxtLockNet" DockPanel.Dock="Right"
+                               Text="🔒 только при выключенном сервере" Foreground="{StaticResource B.Warn}"
+                               FontSize="11" VerticalAlignment="Center" Visibility="Collapsed"/>
+                </DockPanel>
+                <Border x:Name="PnlNet" Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="server.ip" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_Ip"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="server.port" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_Port"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="4">
+                            <TextBlock Text="server.queryport" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_QueryPort"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="6">
+                            <TextBlock Text="rcon.port" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_RconPort"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="8">
+                            <TextBlock Text="rcon.password" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="In_RconPass"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="ДОП. CONVARS">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <StackPanel>
+                <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="Один convar на строку: ключ «значение». Пишутся в конец server.cfg."
+                                   Style="{StaticResource OctaCmdSub}" Margin="0,0,0,6"/>
+                        <TextBox x:Name="In_Custom" AcceptsReturn="True" MinHeight="64" FontFamily="Consolas" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Style="{StaticResource OctaPanel}" Margin="0,12,0,0" Padding="14,8">
+            <DockPanel LastChildFill="False">
+                <TextBlock x:Name="TxtStatus" Text="готов" Style="{StaticResource OctaPageSub}"
+                           VerticalAlignment="Center" DockPanel.Dock="Left"/>
+                <TextBlock x:Name="TxtFile" Style="{StaticResource OctaMono}" Foreground="{StaticResource B.TextDim}"
+                           FontSize="11" VerticalAlignment="Center" DockPanel.Dock="Right"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Page>

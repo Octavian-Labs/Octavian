@@ -1,0 +1,195 @@
+<Page x:Class="OctavianRSM.Pages.PlayersPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Игроки">
+    <Grid Margin="20,16,20,14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Margin="0,0,0,12" LastChildFill="False">
+            <StackPanel>
+                <TextBlock Style="{StaticResource OctaPageTitle}" Text="Игроки"/>
+                <TextBlock x:Name="TxtCount" Style="{StaticResource OctaPageSub}" Text="загрузка…"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:TextBox x:Name="TxtSearch" Width="220" PlaceholderText="поиск: ник / steamid / ip"
+                            Margin="0,0,10,0" TextChanged="Search_Changed"/>
+                <ui:Button Content="⟳ ОБНОВИТЬ" Appearance="Primary" Click="Refresh_Click" Padding="14,6"/>
+            </StackPanel>
+        </DockPanel>
+
+        <TabControl Grid.Row="1">
+            <TabItem Header="ОНЛАЙН">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Style="{StaticResource OctaPanel}" Padding="0">
+                        <DataGrid x:Name="Grid" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0"
+                                  GridLinesVisibility="Horizontal" CanUserAddRows="False"
+                                  SelectionMode="Single" RowHeight="30" ColumnHeaderHeight="30" FontSize="12">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Кикнуть…" Click="Kick_Click"/>
+                                    <MenuItem Header="Забанить…" Click="Ban_Click"/>
+                                    <MenuItem Header="Замьютить (10 мин)" Click="MuteMenu_Click"/>
+                                    <MenuItem Header="Снять мут" Click="Unmute_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="Сделать Owner'ом" Click="Owner_Click"/>
+                                    <MenuItem Header="Сделать модератором" Click="Mod_Click"/>
+                                    <MenuItem Header="Снять все права" Click="ClearRights_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="Статистика" Click="Stats_Click"/>
+                                    <MenuItem Header="Лог боя (combatlog)" Click="CombatLog_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="Копировать SteamID" Click="CopyId_Click"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Header="ИГРОК" Width="2*">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Border Width="24" Height="24" CornerRadius="12" Background="{StaticResource B.Bg3}"
+                                                        BorderBrush="{StaticResource B.Accent2}" BorderThickness="1">
+                                                    <TextBlock Text="{Binding Initials}" FontWeight="Bold" FontSize="10"
+                                                               Foreground="{StaticResource B.Accent}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <StackPanel Margin="8,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12"/>
+                                                    <TextBlock Text="{Binding SteamID}" FontSize="9" FontFamily="Consolas"
+                                                               Foreground="{StaticResource B.TextDim}"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="ПИНГ" Binding="{Binding Ping}" Width="56"/>
+                                <DataGridTextColumn Header="HP" Binding="{Binding HealthText}" Width="50"/>
+                                <DataGridTextColumn Header="АДРЕС" Binding="{Binding Address}" Width="*" ElementStyle="{StaticResource OctaMono}"/>
+                                <DataGridTemplateColumn Header="СТРАНА" Width="74">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding CountryText}" FontWeight="SemiBold"
+                                                       ToolTip="{Binding CountryTip}" VerticalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="СЕССИЯ" Binding="{Binding Connected}" Width="70"/>
+                                <DataGridTextColumn Header="ВСЕГО" Binding="{Binding TotalText}" Width="80"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <Border Grid.Row="1" Style="{StaticResource OctaPanel}" Margin="0,10,0,0" Padding="12,8">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False">
+                                <TextBlock Text="МОДЕРАЦИЯ" Style="{StaticResource OctaStatLabel}"
+                                           DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <ui:TextBox x:Name="TxtReason" DockPanel.Dock="Left" Width="220"
+                                            PlaceholderText="Причина…" VerticalContentAlignment="Center"/>
+                                <TextBlock x:Name="TxtSelected" Text="" Style="{StaticResource OctaPageSub}"
+                                           VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <ui:Button Content="KICK" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="Kick_Click"/>
+                                    <ui:Button Content="BAN" Appearance="Danger" Padding="12,4" Margin="6,0,0,0" Click="Ban_Click"/>
+                                    <ui:Button Content="UNBAN" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="Unban_Click"/>
+                                    <ComboBox x:Name="CmbMute" Width="86" Margin="10,0,0,0" SelectedIndex="1"
+                                              ToolTip="Длительность мута" VerticalContentAlignment="Center">
+                                        <ComboBoxItem Content="5 мин" Tag="300"/>
+                                        <ComboBoxItem Content="10 мин" Tag="600"/>
+                                        <ComboBoxItem Content="1 час" Tag="3600"/>
+                                        <ComboBoxItem Content="24 часа" Tag="86400"/>
+                                        <ComboBoxItem Content="7 дней" Tag="604800"/>
+                                    </ComboBox>
+                                    <ui:Button Content="MUTE" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="Mute_Click"/>
+                                    <ui:Button Content="UNMUTE" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="Unmute_Click"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <DockPanel Margin="0,8,0,0" LastChildFill="False">
+                                <TextBlock Text="ПРАВА" Style="{StaticResource OctaStatLabel}"
+                                           DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,12,0" Width="86"/>
+                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                    <ui:Button Content="☆ +OWNER" Appearance="Primary" Padding="12,4" Click="Owner_Click"
+                                               ToolTip="ownerid — полный доступ, включая все серверные команды"/>
+                                    <ui:Button Content="☆ +МОДЕРАТОР" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="Mod_Click"
+                                               ToolTip="moderatorid — права модератора (kick/ban/mute/телепорт в игре)"/>
+                                    <ui:Button Content="✕ СНЯТЬ ПРАВА" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="ClearRights_Click"
+                                               ToolTip="removeowner + removemoderator"/>
+                                </StackPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBlock Text="ДЕЙСТВИЯ" Style="{StaticResource OctaStatLabel}"
+                                               VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                    <ComboBox x:Name="CmbTpTarget" Width="140" Margin="0,0,6,0"
+                                              DisplayMemberPath="DisplayName" SelectedValuePath="SteamID"
+                                              ToolTip="Цель телепорта" VerticalContentAlignment="Center"/>
+                                    <ui:Button Content="⇒ ТП" Appearance="Secondary" Padding="12,4" Click="Teleport_Click"
+                                               ToolTip="teleport выбранного игрока к игроку из списка"/>
+                                    <ui:Button Content="STATS" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="Stats_Click"/>
+                                    <ui:Button Content="ЛОГ БОЯ" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="CombatLog_Click"/>
+                                    <ui:Button Content="⧉ ID" Appearance="Secondary" Padding="12,4" Margin="6,0,0,0" Click="CopyId_Click"
+                                               ToolTip="Скопировать SteamID64"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="БАЗА ИГРОКОВ">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="0,0,0,8" LastChildFill="False">
+                        <TextBlock x:Name="TxtRoster" Style="{StaticResource OctaPageSub}"
+                                   Text="все игроки, которых видел сервер" DockPanel.Dock="Left"/>
+                    </DockPanel>
+                    <Border Grid.Row="1" Style="{StaticResource OctaPanel}" Padding="0">
+                        <DataGrid x:Name="GridRoster" AutoGenerateColumns="False" IsReadOnly="True" BorderThickness="0"
+                                  GridLinesVisibility="Horizontal" CanUserAddRows="False"
+                                  RowHeight="26" ColumnHeaderHeight="30" FontSize="12">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Забанить…" Click="Ban_Click"/>
+                                    <MenuItem Header="Разбанить" Click="Unban_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="Сделать Owner'ом" Click="Owner_Click"/>
+                                    <MenuItem Header="Сделать модератором" Click="Mod_Click"/>
+                                    <MenuItem Header="Снять все права" Click="ClearRights_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="Копировать SteamID" Click="CopyId_Click"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="НИК" Binding="{Binding Name}" Width="2*"/>
+                                <DataGridTextColumn Header="STEAMID" Binding="{Binding SteamId}" Width="165" ElementStyle="{StaticResource OctaMono}"/>
+                                <DataGridTextColumn Header="IP" Binding="{Binding Ip}" Width="115" ElementStyle="{StaticResource OctaMono}"/>
+                                <DataGridTemplateColumn Header="СТРАНА" Width="70">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding CountryText}" FontWeight="SemiBold"
+                                                       ToolTip="{Binding CountryTip}" VerticalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="НА СЕРВЕРЕ" Binding="{Binding TotalText}" Width="90"/>
+                                <DataGridTextColumn Header="ПЕРВЫЙ ВИЗИТ" Binding="{Binding FirstSeen}" Width="130"/>
+                                <DataGridTextColumn Header="БЫЛ ОНЛАЙН" Binding="{Binding LastSeen}" Width="130"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Page>

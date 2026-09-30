@@ -1,0 +1,51 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <Version>1.2.5</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AvalonEdit" Version="6.3.1.120" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- plugins\*.cs — встраиваемые ресурсы, а не код проекта -->
+    <Compile Remove="plugins\*.cs" />
+    <None Remove="plugins\*.cs" />
+    <None Update="Assets\*.xshd">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- Базовые Carbon-плагины встроены в EXE: автономная установка сервера
+       в пустой папке без внешних файлов. BootstrapService.ExtractBaselinePlugins -->
+  <ItemGroup>
+    <!-- xshd-подсветка AvalonEdit — чтобы single-file EXE не требовал папку Assets -->
+    <EmbeddedResource Include="Assets\JsonMode.xshd" LogicalName="OctavianRSM.Assets.JsonMode.xshd" />
+    <EmbeddedResource Include="Assets\CfgMode.xshd" LogicalName="OctavianRSM.Assets.CfgMode.xshd" />
+  </ItemGroup>
+
+  <!-- OctaAdminTools — единственный плагин из коробки: нужен менеджеру
+       для инструментов игрока. В дев-окружении берётся живой исходник
+       из Server\carbon\plugins, в чистом клоне — копия из plugins\ -->
+  <Choose>
+    <When Condition="Exists('..\..\Server\carbon\plugins\OctaAdminTools.cs')">
+      <ItemGroup>
+        <EmbeddedResource Include="..\..\Server\carbon\plugins\OctaAdminTools.cs" LogicalName="OctavianRSM.plugins.OctaAdminTools.cs" />
+      </ItemGroup>
+    </When>
+    <Otherwise>
+      <ItemGroup>
+        <EmbeddedResource Include="plugins\OctaAdminTools.cs" LogicalName="OctavianRSM.plugins.OctaAdminTools.cs" />
+      </ItemGroup>
+    </Otherwise>
+  </Choose>
+
+</Project>

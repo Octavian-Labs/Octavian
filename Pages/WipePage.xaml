@@ -1,0 +1,77 @@
+<Page x:Class="OctavianRSM.Pages.WipePage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Вайпы">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Style="{StaticResource OctaPageTitle}" Text="Вайпы"/>
+            <TextBlock Style="{StaticResource OctaPageSub}" Text="файлы переносятся в _wipe_backup — операция обратима"/>
+        </StackPanel>
+
+        <UniformGrid Grid.Row="1" Columns="2" Margin="0,0,0,14">
+            <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" BorderBrush="{StaticResource B.Accent2}">
+                <StackPanel>
+                    <TextBlock Text="ПОСЛЕДНИЙ ВАЙП" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="TxtLastWipe" Text="—" Style="{StaticResource OctaStatValue}" FontSize="26"/>
+                    <TextBlock x:Name="TxtFiles" Text="файлов сохранения: —" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="СЛЕДУЮЩИЙ ВАЙП" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="TxtNextWipe" Text="—" Style="{StaticResource OctaStatValue}" FontSize="26"/>
+                    <TextBlock x:Name="TxtCountdown" Text="" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <TabControl Grid.Row="2" Grid.RowSpan="2">
+            <TabItem Header="АВТОВАЙП">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <StackPanel>
+                <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                    <DockPanel LastChildFill="False">
+                        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ui:ToggleSwitch x:Name="SwAuto" OffContent="Автовайп выкл" OnContent="Автовайп вкл" VerticalAlignment="Center"/>
+                            <TextBlock Text=" каждые" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                            <ui:NumberBox x:Name="NumDays" Width="70" Minimum="1" Maximum="90" SpinButtonPlacementMode="Inline" VerticalAlignment="Center"/>
+                            <TextBlock Text=" дн." Style="{StaticResource OctaPageSub}" VerticalAlignment="Center" Margin="6,0,14,0"/>
+                            <CheckBox x:Name="ChkFull" Content="полный (с блюпринтами)" Foreground="{StaticResource B.Text}" VerticalAlignment="Center"/>
+                            <CheckBox x:Name="ChkSeed" Content="случайный seed" Foreground="{StaticResource B.Text}" VerticalAlignment="Center" Margin="14,0,0,0"/>
+                        </StackPanel>
+                        <ui:Button DockPanel.Dock="Right" Content="СОХРАНИТЬ" Click="SaveCfg_Click" Padding="14,5"/>
+                    </DockPanel>
+                </Border>
+                </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="ВЫПОЛНИТЬ ВАЙП">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <StackPanel>
+                <Border Style="{StaticResource OctaPanel}" Padding="16,14">
+                    <StackPanel>
+                        <TextBlock Text="РУЧНОЙ ВАЙП" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,8"/>
+                        <TextBlock Text="Сервер должен быть остановлен. Файлы переместятся в Server\_wipe_backup\&lt;дата&gt;."
+                                   Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:Button Content="ВАЙП КАРТЫ (.sav)" Appearance="Secondary" Padding="16,8" Margin="0,0,10,0" Click="MapWipe_Click"/>
+                            <ui:Button Content="ПОЛНЫЙ ВАЙП (+блюпринты)" Appearance="Danger" Padding="16,8" Click="FullWipe_Click"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TxtResult" Text="" Style="{StaticResource OctaPageSub}" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+                </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Page>

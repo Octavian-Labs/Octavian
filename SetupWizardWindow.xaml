@@ -1,0 +1,281 @@
+<Window x:Class="OctavianRSM.SetupWizardWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="OCTAVIAN RSM — ПЕРВАЯ НАСТРОЙКА" Height="640" Width="920"
+        MinWidth="820" MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip"
+        Background="#0A0C10">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="36" ResizeBorderThickness="8"
+                      GlassFrameThickness="0" CornerRadius="0"
+                      UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="36"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="56"/>
+        </Grid.RowDefinitions>
+
+        <!-- Заголовок -->
+        <Border Grid.Row="0" Background="#0D1118"
+                BorderBrush="{StaticResource B.Border}" BorderThickness="0,0,0,1">
+            <DockPanel LastChildFill="False">
+                <TextBlock Margin="14,0,0,0" FontSize="13" FontWeight="Bold" VerticalAlignment="Center">
+                    <Run Text="◆ " Foreground="{StaticResource B.Accent}"/>
+                    <Run Text="OCTAVIAN" Foreground="{StaticResource B.Text}"/>
+                    <Run Text="  ПЕРВАЯ НАСТРОЙКА" Foreground="{StaticResource B.Accent2}" FontSize="10"/>
+                </TextBlock>
+                <Button Content="✕" Width="46" Click="Close_Click"
+                        Style="{StaticResource OctaWinBtnClose}"
+                        DockPanel.Dock="Right"
+                        WindowChrome.IsHitTestVisibleInChrome="True"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Шапка шага -->
+        <Border Grid.Row="1" Padding="24,16,24,8">
+            <DockPanel>
+                <TextBlock x:Name="TxtStepTitle" Style="{StaticResource OctaPageTitle}" FontSize="20"/>
+                <TextBlock x:Name="TxtStepNo" DockPanel.Dock="Right"
+                           Foreground="{StaticResource B.Accent2}" FontWeight="Bold"
+                           FontSize="13" VerticalAlignment="Bottom" Margin="0,0,0,3"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ══ ШАГ 0: режим ══ -->
+        <Grid x:Name="StepMode" Grid.Row="2" Margin="24,4">
+            <StackPanel>
+                <TextBlock x:Name="TxtContext" Style="{StaticResource OctaPageSub}"
+                           TextWrapping="Wrap" Margin="0,0,0,14"/>
+                <UniformGrid Columns="2">
+                    <Border Style="{StaticResource OctaPanelAccent}" Margin="0,0,8,0"
+                            BorderBrush="{StaticResource B.Accent2}" BorderThickness="2,1,1,1"
+                            Cursor="Hand" MouseLeftButtonUp="ModeLocal_Click">
+                        <StackPanel>
+                            <TextBlock Text="🖥  ЛОКАЛЬНЫЙ СЕРВЕР" FontSize="16" FontWeight="Bold"
+                                       Foreground="{StaticResource B.Accent}"/>
+                            <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12"
+                                       Foreground="{StaticResource B.TextDim}"
+                                       Text="Загрузит SteamCMD, Rust Dedicated (~7 GB) и Carbon в папку программы, затем проведёт по настройке. Steam-аккаунт не нужен."/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0"
+                            Cursor="Hand" MouseLeftButtonUp="ModeRemote_Click">
+                        <StackPanel>
+                            <TextBlock Text="🌐  УДАЛЬНЫЙ RCON" FontSize="16" FontWeight="Bold"
+                                       Foreground="{StaticResource B.Text}"/>
+                            <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12"
+                                       Foreground="{StaticResource B.TextDim}"
+                                       Text="Без установки. Менеджер подключится по RCON к уже работающему серверу на другой машине — консоль, игроки, модерация."/>
+                        </StackPanel>
+                    </Border>
+                </UniformGrid>
+                <TextBlock Margin="0,14,0,0" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                           TextWrapping="Wrap"
+                           Text="Локальную установку можно отменить в любой момент — частично скачанные файлы останутся и докачаются при следующем запуске."/>
+            </StackPanel>
+        </Grid>
+
+        <!-- ══ ШАГ 1: профиль ══ -->
+        <Grid x:Name="StepProfile" Grid.Row="2" Margin="24,4" Visibility="Collapsed">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Style="{StaticResource OctaPageSub}"
+                           TextWrapping="Wrap" Margin="0,0,0,10"
+                           Text="Профиль задаёт рейты сбора, стаки, скорость крафта, режим и теги браузера. В фоне уже идёт загрузка сервера."/>
+                <ListBox x:Name="LstProfiles" DockPanel.Dock="Top"
+                         BorderThickness="0" Background="Transparent"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel/>
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="270" Margin="0,0,10,10" Padding="12,10"
+                                    Background="{StaticResource B.Bg1}"
+                                    BorderBrush="{StaticResource B.Border}"
+                                    BorderThickness="1" CornerRadius="8">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Bold"
+                                               Foreground="{StaticResource B.Accent}"/>
+                                    <TextBlock Text="{Binding Subtitle}" FontSize="11" TextWrapping="Wrap"
+                                               Foreground="{StaticResource B.TextDim}" Margin="0,4,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Grid>
+
+        <!-- ══ ШАГ 2: основные параметры ══ -->
+        <Grid x:Name="StepBasics" Grid.Row="2" Margin="24,4" Visibility="Collapsed">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel MaxWidth="640">
+                    <UniformGrid Columns="2">
+                        <StackPanel Margin="0,0,8,10">
+                            <TextBlock Text="Название сервера (hostname)" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="TxtHostname"/>
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,10">
+                            <TextBlock Text="Identity (папка сохранений)" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="TxtIdentity"/>
+                        </StackPanel>
+                    </UniformGrid>
+                    <TextBlock Text="Описание" Style="{StaticResource OctaFieldLabel}"/>
+                    <TextBox x:Name="TxtDescription" Margin="0,0,0,10"/>
+                    <UniformGrid Columns="3">
+                        <StackPanel Margin="0,0,8,10">
+                            <TextBlock Text="Game port" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="TxtGamePort"/>
+                        </StackPanel>
+                        <StackPanel Margin="4,0,4,10">
+                            <TextBlock Text="Query port" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="TxtQueryPort"/>
+                        </StackPanel>
+                        <StackPanel Margin="8,0,0,10">
+                            <TextBlock Text="RCON port" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="TxtRconPort"/>
+                        </StackPanel>
+                    </UniformGrid>
+                    <TextBlock Text="RCON пароль" Style="{StaticResource OctaFieldLabel}"/>
+                    <DockPanel Margin="0,0,0,10">
+                        <ui:Button x:Name="BtnGenPass" DockPanel.Dock="Right" Content="СГЕНЕРИРОВАТЬ"
+                                   Style="{StaticResource OctaCmdBtn}" Click="GenPass_Click"/>
+                        <TextBox x:Name="TxtRconPassword"/>
+                    </DockPanel>
+                    <UniformGrid Columns="2">
+                        <CheckBox x:Name="ChkCarbon" IsChecked="True" Margin="0,0,8,10"
+                                  Foreground="{StaticResource B.Text}">
+                            <TextBlock TextWrapping="Wrap" Text="Установить Carbon (мод-фреймворк, нужен для рейтов и плагинов)" FontSize="12"/>
+                        </CheckBox>
+                        <CheckBox x:Name="ChkPlugins" IsChecked="True" Margin="8,0,0,10"
+                                  Foreground="{StaticResource B.Text}">
+                            <TextBlock TextWrapping="Wrap" Text="Установить OctaAdminTools (плагин инструментов менеджера)" FontSize="12"/>
+                        </CheckBox>
+                    </UniformGrid>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ══ ШАГ 3: мир ══ -->
+        <Grid x:Name="StepWorld" Grid.Row="2" Margin="24,4" Visibility="Collapsed">
+            <StackPanel MaxWidth="640">
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,8,10">
+                        <TextBlock Text="Карта" Style="{StaticResource OctaFieldLabel}"/>
+                        <ComboBox x:Name="CmbLevel">
+                            <ComboBoxItem Content="Procedural Map" IsSelected="True"/>
+                            <ComboBoxItem Content="Barren"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Margin="8,0,0,10">
+                        <TextBlock Text="Макс. игроков" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="TxtMaxPlayers"/>
+                    </StackPanel>
+                </UniformGrid>
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,8,10">
+                        <TextBlock Text="Размер мира (1000–6000)" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="TxtWorldSize"/>
+                    </StackPanel>
+                    <StackPanel Margin="8,0,0,10">
+                        <TextBlock Text="Seed" Style="{StaticResource OctaFieldLabel}"/>
+                        <DockPanel>
+                            <ui:Button DockPanel.Dock="Right" Content="🎲" Width="34"
+                                       Style="{StaticResource OctaCmdBtn}" Click="SeedRandom_Click"/>
+                            <TextBox x:Name="TxtSeed"/>
+                        </DockPanel>
+                    </StackPanel>
+                </UniformGrid>
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,8,10">
+                        <TextBlock Text="Расписание вайпов (тег)" Style="{StaticResource OctaFieldLabel}"/>
+                        <ComboBox x:Name="CmbWipe">
+                            <ComboBoxItem Content="weekly" IsSelected="True"/>
+                            <ComboBoxItem Content="biweekly"/>
+                            <ComboBoxItem Content="monthly"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Margin="8,0,0,10">
+                        <TextBlock Text="Свои теги (через запятую)" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="TxtExtraTags"/>
+                    </StackPanel>
+                </UniformGrid>
+            </StackPanel>
+        </Grid>
+
+        <!-- ══ ШАГ 4: установка ══ -->
+        <Grid x:Name="StepInstall" Grid.Row="2" Margin="24,4" Visibility="Collapsed">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                    <DockPanel>
+                        <TextBlock x:Name="TxtPhase" Text="Подготовка…" FontWeight="Bold"
+                                   Foreground="{StaticResource B.Text}" FontSize="13"/>
+                        <TextBlock x:Name="TxtPct" DockPanel.Dock="Right" Text=""
+                                   Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                    </DockPanel>
+                    <ProgressBar x:Name="PbInstall" Height="6" Margin="0,8,0,0"
+                                 Minimum="0" Maximum="100" IsIndeterminate="True"
+                                 Foreground="{StaticResource B.Accent}"
+                                 Background="{StaticResource B.Bg3}"/>
+                </StackPanel>
+                <Border Style="{StaticResource OctaPanel}" Padding="10">
+                    <ScrollViewer x:Name="LogScroll" VerticalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="TxtInstallLog" Style="{StaticResource OctaMono}" FontSize="11"/>
+                    </ScrollViewer>
+                </Border>
+            </DockPanel>
+        </Grid>
+
+        <!-- ══ ШАГ 5: удалённый RCON ══ -->
+        <Grid x:Name="StepRemote" Grid.Row="2" Margin="24,4" Visibility="Collapsed">
+            <StackPanel MaxWidth="560">
+                <TextBlock Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,0,14,0"
+                           Text="Укажите параметры RCON удалённого сервера. Локальные функции (файлы, процессы, плагины) будут скрыты — останутся консоль, игроки и команды."/>
+                <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,8,10">
+                        <TextBlock Text="Хост / IP" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="TxtRemoteHost"/>
+                    </StackPanel>
+                    <StackPanel Margin="8,0,0,10">
+                        <TextBlock Text="RCON port" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="TxtRemotePort"/>
+                    </StackPanel>
+                </UniformGrid>
+                <TextBlock Text="RCON пароль" Style="{StaticResource OctaFieldLabel}"/>
+                <TextBox x:Name="TxtRemotePassword" Margin="0,0,10,0"/>
+                <DockPanel>
+                    <ui:Button Content="ПРОВЕРИТЬ ПОДКЛЮЧЕНИЕ" Style="{StaticResource OctaCmdBtn}"
+                               Click="TestRemote_Click"/>
+                    <TextBlock x:Name="TxtRemoteResult" VerticalAlignment="Center" Margin="10,0,0,0"
+                               Foreground="{StaticResource B.TextDim}" FontSize="12" TextWrapping="Wrap"/>
+                </DockPanel>
+            </StackPanel>
+        </Grid>
+
+        <!-- Футер навигации -->
+        <Border Grid.Row="3" Background="#0D1118"
+                BorderBrush="{StaticResource B.Border}" BorderThickness="0,1,0,0">
+            <DockPanel Margin="24,0" LastChildFill="False" VerticalAlignment="Center">
+                <ui:Button x:Name="BtnCancel" Content="ОТМЕНА" Click="Cancel_Click"
+                           Style="{StaticResource OctaCmdBtn}"/>
+                <ui:Button x:Name="BtnRetry" Content="ПОВТОРИТЬ" Click="Retry_Click"
+                           Style="{StaticResource OctaCmdBtn}" Visibility="Collapsed"
+                           DockPanel.Dock="Right"/>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <ui:Button x:Name="BtnBack" Content="← НАЗАД" Click="Back_Click"
+                               Style="{StaticResource OctaCmdBtn}"/>
+                    <ui:Button x:Name="BtnNext" Content="ДАЛЕЕ →" Click="Next_Click"
+                               Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,6,0,0"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

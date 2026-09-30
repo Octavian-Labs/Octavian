@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<SyntaxDefinition name="OctaJson" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="String" foreground="#CE9178"/>
+  <Color name="Number" foreground="#B5CEA8"/>
+  <Color name="Keyword" foreground="#569CD6"/>
+  <Color name="Key" foreground="#D9A93F"/>
+  <Color name="Punct" foreground="#8B94A5"/>
+  <Color name="Comment" foreground="#5C6370" fontStyle="italic"/>
+
+  <RuleSet>
+    <Span color="Comment" begin="//" stopAtEol="true"/>
+    <Span color="String">
+      <Begin>"</Begin>
+      <End>"</End>
+      <RuleSet>
+        <Span begin="\\" end="." ruleSet=""/>
+      </RuleSet>
+    </Span>
+    <Rule color="Number">\b(-?\d+(\.\d+)?([eE][+-]?\d+)?)\b</Rule>
+    <Rule color="Keyword">\b(true|false|null)\b</Rule>
+    <Keywords color="Key"/>
+    <Rule color="Punct">[{}\[\]:,]</Rule>
+  </RuleSet>
+</SyntaxDefinition>

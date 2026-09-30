@@ -1,0 +1,665 @@
+<Page x:Class="OctavianRSM.Pages.CommandsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Управление">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Style="{StaticResource OctaPageTitle}" Text="Управление"/>
+            <TextBlock x:Name="TxtRcon" Style="{StaticResource OctaPageSub}" Text="все команды идут через RCON"/>
+            <Border Style="{StaticResource OctaPanel}" Padding="10,7" Margin="0,10,0,0">
+                <WrapPanel VerticalAlignment="Center">
+                    <TextBlock Text="ЦЕЛЬ (ИГРОК):" Style="{StaticResource OctaCmdTitle}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="CbTarget" Width="260" Margin="0,0,8,0" VerticalAlignment="Center" DisplayMemberPath="DisplayName" SelectedValuePath="SteamID" SelectionChanged="Target_Changed" ToolTip="Онлайн-игрок для адресных действий"/>
+                    <ui:Button Content="ОБНОВИТЬ" Style="{StaticResource OctaCmdBtn}" Margin="0,0,8,0" Click="RefreshPlayers_Click" ToolTip="Обновить playerlist"/>
+                    <TextBlock x:Name="TxtTargetHint" Text="выберите цель для адресных действий" Style="{StaticResource OctaCmdSub}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                </WrapPanel>
+            </Border>
+        </StackPanel>
+
+        <TabControl Grid.Row="1">
+            <TabItem Header="ОПЕРАЦИИ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel x:Name="ServerWrap" Margin="0,0,0,4">
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Сохранение мира" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="server.save — принудительный сейв" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="server.save" Click="RunSimple"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Записать конфиг" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="server.writecfg — сохранить переменные" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="server.writecfg" Click="RunSimple"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Рестарт через N сек" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="restart — с предупреждением" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:NumberBox x:Name="In_RestartSec" Value="60" Minimum="0" Maximum="3600" Margin="0,8,0,6" SpinButtonPlacementMode="Inline"/>
+                            <ui:Button Content="РЕСТАРТ" Appearance="Danger" Tag="restart {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_RestartSec}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="FPS-лимит" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="fps.limit (0 = без лимита)" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:NumberBox x:Name="In_Fps" Value="0" Minimum="0" Maximum="500" Margin="0,8,0,6" SpinButtonPlacementMode="Inline"/>
+                            <ui:Button Content="ПРИМЕНИТЬ" Tag="fps.limit {0}" Click="RunParam" DataContext="{Binding ElementName=In_Fps}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Перечитать server.cfg" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="server.readcfg — применить конфиг" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="server.readcfg" Click="RunSimple"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Остановка сервера" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="quit — штатное завершение" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="СТОП" Appearance="Danger" Margin="0,8,0,0" Tag="quit" Click="RunConfirm"/>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="ВРЕМЯ И ПОГОДА">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel Margin="0,0,0,4">
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False">
+                                <TextBlock Text="Время суток" Style="{StaticResource OctaCmdTitle}"/>
+                                <TextBlock x:Name="TxtTimeVal" Text="12.0" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold" FontSize="15"/>
+                            </DockPanel>
+                            <TextBlock Text="env.time — 0..24 часа" Style="{StaticResource OctaCmdSub}"/>
+                            <Slider x:Name="SldTime" Minimum="0" Maximum="24" Value="12" TickFrequency="1" IsSnapToTickEnabled="False"
+                                    Margin="0,10,0,6" ValueChanged="SldTime_Changed"/>
+                            <!-- WrapPanel: широкие кнопки сами переносятся на новую строку -->
+                            <WrapPanel HorizontalAlignment="Stretch">
+                                <ui:Button Content="РАССВЕТ" Style="{StaticResource OctaCmdBtn}" Tag="env.time 7" Click="RunSimple"/>
+                                <ui:Button Content="ПОЛДЕНЬ" Style="{StaticResource OctaCmdBtn}" Tag="env.time 12" Click="RunSimple"/>
+                                <ui:Button Content="ЗАКАТ" Style="{StaticResource OctaCmdBtn}" Tag="env.time 19" Click="RunSimple"/>
+                                <ui:Button Content="ПОЛНОЧЬ" Style="{StaticResource OctaCmdBtn}" Tag="env.time 0" Click="RunSimple"/>
+                                <ui:Button Content="ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="env.time {0}" Click="RunParam" DataContext="{Binding ElementName=SldTime}"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <!-- Моментальная погода: пресеты weather.load (Weather 2.0) -->
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Моментальная погода" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="weather.load — включает пресет сразу, weather.reset — назад в динамику" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,6,0,0">
+                                <ui:Button Content="☀ ЯСНО" Style="{StaticResource OctaCmdBtn}" Tag="weather.load clear" Click="RunSimple"/>
+                                <ui:Button Content="🌁 ПЫЛЬ" Style="{StaticResource OctaCmdBtn}" Tag="weather.load dust" Click="RunSimple"/>
+                                <ui:Button Content="🌫 ТУМАН" Style="{StaticResource OctaCmdBtn}" Tag="weather.load fog" Click="RunSimple"/>
+                                <ui:Button Content="☁ ПАСМУРНО" Style="{StaticResource OctaCmdBtn}" Tag="weather.load overcast" Click="RunSimple"/>
+                                <ui:Button Content="🌦 ДОЖДЬ" Style="{StaticResource OctaCmdBtn}" Tag="weather.load rainmild" Click="RunSimple"/>
+                                <ui:Button Content="🌧 ЛИВЕНЬ" Style="{StaticResource OctaCmdBtn}" Tag="weather.load rainheavy" Click="RunSimple"/>
+                                <ui:Button Content="⛈ ШТОРМ" Style="{StaticResource OctaCmdBtnDanger}" Tag="weather.load storm" Click="RunSimple"/>
+                                <ui:Button Content="↻ ДИНАМИКА" Style="{StaticResource OctaCmdBtn}" Tag="weather.reset" Click="RunSimple"
+                                           ToolTip="Вернуть динамическую смену погоды"/>
+                                <ui:Button Content="i ОТЧЁТ" Style="{StaticResource OctaCmdBtn}" Tag="weather.report" Click="RunSimple"
+                                           ToolTip="Текущие параметры погоды в результат"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Шансы типов в динамической смене погоды -->
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Вероятности погоды" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="weather.*_chance 0.0–1.0 — частота каждого типа при динамической смене" Style="{StaticResource OctaCmdSub}" Margin="0,0,0,8"/>
+                            <UniformGrid Columns="3">
+                                <StackPanel Margin="0,0,8,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="☀ Ясно" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_CClear" DockPanel.Dock="Right" Text="0.5" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldCClear" Minimum="0" Maximum="1" Value="0.5" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_CClear"/>
+                                </StackPanel>
+                                <StackPanel Margin="4,0,4,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="🌫 Туман" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_CFog" DockPanel.Dock="Right" Text="0.2" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldCFog" Minimum="0" Maximum="1" Value="0.2" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_CFog"/>
+                                </StackPanel>
+                                <StackPanel Margin="8,0,0,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="🌁 Пыль" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_CDust" DockPanel.Dock="Right" Text="0.1" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldCDust" Minimum="0" Maximum="1" Value="0.1" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_CDust"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,8,8,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="☁ Пасмурно" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_COver" DockPanel.Dock="Right" Text="0.4" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldCOver" Minimum="0" Maximum="1" Value="0.4" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_COver"/>
+                                </StackPanel>
+                                <StackPanel Margin="4,8,4,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="🌦 Дождь" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_CRain" DockPanel.Dock="Right" Text="0.2" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldCRain" Minimum="0" Maximum="1" Value="0.2" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_CRain"/>
+                                </StackPanel>
+                                <StackPanel Margin="8,8,0,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="⛈ Шторм" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_CStorm" DockPanel.Dock="Right" Text="0.05" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldCStorm" Minimum="0" Maximum="1" Value="0.05" TickFrequency="0.05" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_CStorm"/>
+                                </StackPanel>
+                            </UniformGrid>
+                            <ui:Button Content="⇒ ПРИМЕНИТЬ ВЕРОЯТНОСТИ (все 6 типов)" Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,12,0,0" Click="ApplyWeather_Click"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Интенсивности атмосферы -->
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Атмосфера и интенсивность" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="weather.rain / fog / wind / thunder — сила явления 0.0–1.0 прямо сейчас" Style="{StaticResource OctaCmdSub}" Margin="0,0,0,8"/>
+                            <UniformGrid Columns="2">
+                                <StackPanel Margin="0,0,8,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Дождь" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_Rain" DockPanel.Dock="Right" Text="0" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldRain" Minimum="0" Maximum="1" Value="0" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_Rain"/>
+                                </StackPanel>
+                                <StackPanel Margin="8,0,0,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Туман" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_Fog" DockPanel.Dock="Right" Text="0" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldFog" Minimum="0" Maximum="1" Value="0" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_Fog"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,8,8,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Ветер" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_Wind" DockPanel.Dock="Right" Text="0" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldWind" Minimum="0" Maximum="1" Value="0" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_Wind"/>
+                                </StackPanel>
+                                <StackPanel Margin="8,8,0,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Гроза" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_Storm" DockPanel.Dock="Right" Text="0" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldStorm" Minimum="0" Maximum="1" Value="0" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_Storm"/>
+                                </StackPanel>
+                            </UniformGrid>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="⇒ ИНТЕНСИВНОСТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Click="ApplyAtmos_Click"/>
+                                <ui:Button Content="🌈 РАДУГА" Style="{StaticResource OctaCmdBtn}" Tag="weather.rainbow 1" Click="RunSimple" ToolTip="Включить радугу"/>
+                                <ui:Button Content="✕ СБРОС" Style="{StaticResource OctaCmdBtn}" Tag="weather.reset" Click="RunSimple"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="ИГРОКИ И МОДЕРАЦИЯ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel x:Name="PlayersWrap" Margin="0,0,0,4">
+                    <TextBlock Text="ДЕЙСТВИЯ С ВЫБРАННОЙ ЦЕЛЬЮ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=PlayersWrap}" Margin="16,8,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Состояние и администрация" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="команды применяются к игроку из глобального поля ЦЕЛЬ" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="ПОЗИЦИЯ" Style="{StaticResource OctaCmdBtn}" Tag="octa.targetinfo {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="COMBATLOG" Style="{StaticResource OctaCmdBtn}" Tag="combatlog {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="ЛЕЧИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="octa.heal {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="ПОДНЯТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="octa.revive {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="GOD ON" Style="{StaticResource OctaCmdBtn}" Tag="octa.god {0} true" Click="TargetCommandConfirm_Click"/>
+                                <ui:Button Content="GOD OFF" Style="{StaticResource OctaCmdBtn}" Tag="octa.god {0} false" Click="TargetCommand_Click"/>
+                                <ui:Button Content="УБИТЬ" Style="{StaticResource OctaCmdBtnDanger}" Tag="octa.kill {0}" Click="TargetCommandConfirm_Click"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Телепорт цели" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="по координатам либо к другому онлайн-игроку" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_TargetPos" Margin="0,8,0,6" PlaceholderText="x y z, например 1200 10 -900"/>
+                            <ui:Button Content="В КООРДИНАТЫ" Style="{StaticResource OctaCmdBtn}" Click="TeleportTargetPos_Click"/>
+                            <ComboBox x:Name="CbTeleportDest" Margin="0,8,0,6" DisplayMemberPath="DisplayName" SelectedValuePath="SteamID" ToolTip="Игрок назначения"/>
+                            <ui:Button Content="К ИГРОКУ" Style="{StaticResource OctaCmdBtnPrimary}" Click="TeleportTarget_Click"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="ДОСТУП, ОЧЕРЕДЬ И ИНВЕНТАРЬ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=PlayersWrap}" Margin="16,10,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Очередь и режим обслуживания" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="админы проходят всегда; whitelist действует только во время техработ" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,8,0,0">
+                                <ui:Button Content="ОЧЕРЕДЬ / INFO" Style="{StaticResource OctaCmdBtn}" Tag="serverinfo" Click="RunSimple" ToolTip="serverinfo содержит Queued и Joining; голая команда queue в текущей сборке Rust падает с FormatException"/>
+                                <ui:Button Content="PRIORITY +" Style="{StaticResource OctaCmdBtn}" Tag="skipqueueid {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="PRIORITY −" Style="{StaticResource OctaCmdBtn}" Tag="removeskipqueue {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="ALLOW +" Style="{StaticResource OctaCmdBtn}" Tag="octa.allow add {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="ALLOW −" Style="{StaticResource OctaCmdBtn}" Tag="octa.allow remove {0}" Click="TargetCommand_Click"/>
+                                <ui:Button Content="ALLOW LIST" Style="{StaticResource OctaCmdBtn}" Tag="octa.allow list" Click="RunSimple"/>
+                                <ui:Button Content="СТАТУС" Style="{StaticResource OctaCmdBtn}" Tag="octa.maintenance status" Click="RunSimple"/>
+                            </WrapPanel>
+                            <ui:TextBox x:Name="In_AccessSteamId" Margin="0,8,0,6" PlaceholderText="SteamID офлайн-игрока (необязательно)"/>
+                            <WrapPanel>
+                                <ui:Button Content="PRIORITY ID +" Style="{StaticResource OctaCmdBtn}" Tag="skipqueueid {0}" Click="AccessIdCommand_Click"/>
+                                <ui:Button Content="PRIORITY ID −" Style="{StaticResource OctaCmdBtn}" Tag="removeskipqueue {0}" Click="AccessIdCommand_Click"/>
+                                <ui:Button Content="ALLOW ID +" Style="{StaticResource OctaCmdBtn}" Tag="octa.allow add {0}" Click="AccessIdCommand_Click"/>
+                                <ui:Button Content="ALLOW ID −" Style="{StaticResource OctaCmdBtn}" Tag="octa.allow remove {0}" Click="AccessIdCommand_Click"/>
+                            </WrapPanel>
+                            <ui:TextBox x:Name="In_MaintMessage" Margin="0,8,0,6" PlaceholderText="Технические работы. Попробуйте позже."/>
+                            <WrapPanel>
+                                <ui:Button Content="ТЕХРАБОТЫ ON" Style="{StaticResource OctaCmdBtnDanger}" Click="MaintenanceOn_Click"/>
+                                <ui:Button Content="ТЕХРАБОТЫ OFF" Style="{StaticResource OctaCmdBtnPrimary}" Tag="octa.maintenance off" Click="RunConfirm"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Loadout и предметы" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="выдача выбранной цели; loadout создаётся в F1 через inventory.saveloadout" Style="{StaticResource OctaCmdSub}"/>
+                            <Grid Margin="0,8,0,6"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><ui:TextBox x:Name="In_GiveItem" PlaceholderText="shortname, например wood"/><ui:NumberBox x:Name="In_GiveAmount" Grid.Column="2" Value="1" Minimum="1" Maximum="1000000" SpinButtonPlacementMode="Inline"/></Grid>
+                            <ui:Button Content="ВЫДАТЬ ПРЕДМЕТ" Style="{StaticResource OctaCmdBtnPrimary}" Click="GiveTarget_Click"/>
+                            <ui:TextBox x:Name="In_Loadout" Margin="0,8,0,6" PlaceholderText="имя loadout"/>
+                            <WrapPanel>
+                                <ui:Button Content="СПИСОК" Style="{StaticResource OctaCmdBtn}" Tag="inventory.listloadouts" Click="RunSimple"/>
+                                <ui:Button Content="ВЫДАТЬ LOADOUT" Style="{StaticResource OctaCmdBtnPrimary}" Click="DeployLoadout_Click"/>
+                                <ui:Button Content="ОЧИСТИТЬ ИНВЕНТАРЬ" Style="{StaticResource OctaCmdBtnDanger}" Tag="octa.strip {0}" Click="TargetCommandConfirm_Click"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="БАЗОВАЯ МОДЕРАЦИЯ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=PlayersWrap}" Margin="16,10,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Кикнуть" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="kick steamid причина" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_Kick" Margin="0,8,0,6" PlaceholderText="76561... reason"/>
+                            <ui:Button Content="KICK" Tag="kick {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_Kick}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Разбанить" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="unban steamid" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_Unban" Margin="0,8,0,6" PlaceholderText="76561..."/>
+                            <ui:Button Content="UNBAN" Tag="unban {0}" Click="RunParam" DataContext="{Binding ElementName=In_Unban}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Мут чата" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="mute / unmute steamid" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_Mute" Margin="0,8,0,6" PlaceholderText="76561..."/>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="MUTE" Margin="0,0,6,0" Tag="mute {0}" Click="RunParam" DataContext="{Binding ElementName=In_Mute}"/>
+                                <ui:Button Content="UNMUTE" Tag="unmute {0}" Click="RunParam" DataContext="{Binding ElementName=In_Mute}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Назначить модера" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="moderatorid steamid ник" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_Mod" Margin="0,8,0,6" PlaceholderText="76561... Nick"/>
+                            <ui:Button Content="НАЗНАЧИТЬ" Tag="moderatorid {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_Mod}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Выдать OWNER" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="ownerid steamid ник причина" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_Owner" Margin="0,8,0,6" PlaceholderText="76561... Nick reason"/>
+                            <ui:Button Content="НАЗНАЧИТЬ" Appearance="Danger" Tag="ownerid {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_Owner}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Снять права" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="removemoderator / removeowner" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_Demote" Margin="0,8,0,6" PlaceholderText="76561..."/>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="МОДЕР" Margin="0,0,6,0" Tag="removemoderator {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_Demote}"/>
+                                <ui:Button Content="OWNER" Appearance="Danger" Tag="removeowner {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_Demote}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="ИВЕНТЫ И СПАВН">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel x:Name="EventsWrap" Margin="0,0,0,4">
+
+                    <!-- ══ РУЧНОЙ ЗАПУСК СОБЫТИЙ ══ -->
+                    <TextBlock Text="⚡ ЗАПУСК СОБЫТИЙ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=EventsWrap}" Margin="16,8,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Триггер ивентов" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="вызывает событие немедленно, в обход расписания" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="📦 АИРДРОП" Style="{StaticResource OctaCmdBtnPrimary}" Tag="airdrop.drop" Click="RunSimple" ToolTip="airdrop.drop — грузовой самолёт"/>
+                                <ui:Button Content="🚁 ЧИНУК+КРЕЙТ" Style="{StaticResource OctaCmdBtn}" Tag="spawn.ch47event" Click="RunSimple" ToolTip="spawn.ch47event — Chinook с хакаемым ящиком"/>
+                                <ui:Button Content="🚢 КАРГО" Style="{StaticResource OctaCmdBtn}" Tag="spawn.cargoshipevent" Click="RunConfirm" ToolTip="spawn.cargoshipevent — корабль у берега"/>
+                                <ui:Button Content="🚁 ПАТР. ВЕРТ" Style="{StaticResource OctaCmdBtn}" Tag="heli.call" Click="RunConfirm" ToolTip="heli.call — боевой вертолёт на карту"/>
+                                <ui:Button Content="БРЕДЛИ У ЦЕЛИ" Style="{StaticResource OctaCmdBtn}" Tag="bradley" Click="SpawnAtPlayer_Click" ToolTip="OctaAdminTools создаст Бредли в точке прицела выбранного игрока; встаньте на нужную дорогу"/>
+                                <ui:Button Content="БРЕДЛИ НА ЛАНЧЕ" Style="{StaticResource OctaCmdBtn}" Tag="bradley.quickrespawn" Click="RunConfirm" ToolTip="Штатно возродить Bradley на Launch Site, не создавая дубль"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Планировщик ивентов" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="airdrop / chinook / cargo / f15 / patrol_heli / bradley_road / travelling_vendor" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="📋 РАСПИСАНИЕ" Style="{StaticResource OctaCmdBtn}" Tag="events.print_server_events" Click="RunSimple" ToolTip="events.print_server_events — откройте ▲ для чтения"/>
+                            <ui:TextBox x:Name="In_EvToggle" Margin="0,8,0,6" PlaceholderText="airdrop true/false"/>
+                            <ui:Button Content="ВКЛ/ВЫКЛ ИВЕНТ" Style="{StaticResource OctaCmdBtn}" Tag="events.set_event_enabled {0}" Click="RunParam" DataContext="{Binding ElementName=In_EvToggle}"/>
+                            <ui:TextBox x:Name="In_EvDelay" Margin="0,8,0,6" PlaceholderText="airdrop 6 (часов до события)"/>
+                            <WrapPanel>
+                                <ui:Button Content="MIN ЧАСЫ" Style="{StaticResource OctaCmdBtn}" Tag="events.set_event_min_delay {0}" Click="RunParam" DataContext="{Binding ElementName=In_EvDelay}"/>
+                                <ui:Button Content="MAX ЧАСЫ" Style="{StaticResource OctaCmdBtn}" Tag="events.set_event_max_delay {0}" Click="RunParam" DataContext="{Binding ElementName=In_EvDelay}"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ══ ГЛУБОКОЕ МОРЕ ══ -->
+                    <TextBlock Text="🌊 ГЛУБОКОЕ МОРЕ (DEEP SEA)" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=EventsWrap}" Margin="16,10,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Портал и цикл" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="глубокое море открывается порталом, живёт циклом и вайпается" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="🌀 ОТКРЫТЬ ПОРТАЛ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="deepsea.open" Click="RunSimple" ToolTip="deepsea.open — открыть вход в глубокое море"/>
+                                <ui:Button Content="⛔ ЗАКРЫТЬ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.close" Click="RunConfirm" ToolTip="deepsea.close — закрыть портал"/>
+                                <ui:Button Content="♻ ПЕРЕСОЗДАТЬ" Style="{StaticResource OctaCmdBtnDanger}" Tag="deepsea.createdeepsea" Click="RunConfirm" ToolTip="deepsea.createdeepsea — регенерация зоны (тяжёлая операция)"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Диагностика моря" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="чтение состояния — откройте ▲ внизу" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="i СОСТОЯНИЕ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printstate" Click="RunSimple"/>
+                                <ui:Button Content="⏱ ДО ВАЙПА" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printtimetowipe" Click="RunSimple"/>
+                                <ui:Button Content="Σ СУЩНОСТИ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printentitycount" Click="RunSimple"/>
+                                <ui:Button Content="🎁 ЛУТ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printloot" Click="RunSimple"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Таймеры цикла" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="секунды: до открытия / до вайпа" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_DsOpen" Margin="0,8,0,6" PlaceholderText="сек до открытия, напр. 3600"/>
+                            <ui:Button Content="ДО ОТКРЫТИЯ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.settimetonextopening {0}" Click="RunParam" DataContext="{Binding ElementName=In_DsOpen}"/>
+                            <ui:TextBox x:Name="In_DsWipe" Margin="0,8,0,6" PlaceholderText="сек до вайпа, напр. 10800"/>
+                            <ui:Button Content="ДО ВАЙПА" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.settimetowipe {0}" Click="RunParam" DataContext="{Binding ElementName=In_DsWipe}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Локальные команды моря" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="spawnislandhere / spawnghostshiphere / spawnfloatingcityhere / spawnrhibgrouphere" Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap"/>
+                            <TextBlock Text="Требуют игрового контекста и позиции администратора. Через RCON их запуск намеренно заблокирован: иначе объект создаётся в неверной точке или команда падает." Foreground="{StaticResource B.Warn}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ══ ПАТРУЛЬНЫЙ ВЕРТОЛЁТ ══ -->
+                    <TextBlock Text="🚁 ПАТРУЛЬНЫЙ ВЕРТОЛЁТ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=EventsWrap}" Margin="16,10,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Управление вертом" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="RCON-безопасные глобальные действия; orbit/strafe требуют локальной цели и здесь не запускаются" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="ПРИЗВАТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="heli.call" Click="RunConfirm" ToolTip="heli.call"/>
+                                <ui:Button Content="УНИЧТОЖИТЬ" Style="{StaticResource OctaCmdBtnDanger}" Tag="heli.death" Click="RunConfirm" ToolTip="heli.death — мгновенное уничтожение"/>
+                                <ui:Button Content="ПРОГНАТЬ" Style="{StaticResource OctaCmdBtn}" Tag="heli.flee" Click="RunSimple" ToolTip="heli.flee — улетает с карты"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Время жизни верта" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="heli.lifetimeminutes — минут до ухода (дефолт 30)" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_HeliLife" Margin="0,8,0,6" PlaceholderText="30"/>
+                            <ui:Button Content="УСТАНОВИТЬ" Style="{StaticResource OctaCmdBtn}" Tag="heli.lifetimeminutes {0}" Click="RunParam" DataContext="{Binding ElementName=In_HeliLife}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ══ ПОПУЛЯЦИИ МИРА ══ -->
+                    <TextBlock Text="🌍 ПОПУЛЯЦИИ И СПАВН" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=EventsWrap}" Margin="16,10,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Популяции мира" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="перезаселение ресурсов/животных/лоута" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="🔄 ВСЁ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="spawn.fill_populations" Click="RunSimple" ToolTip="spawn.fill_populations"/>
+                                <ui:Button Content="👥 ГРУППЫ" Style="{StaticResource OctaCmdBtn}" Tag="spawn.fill_groups" Click="RunSimple"/>
+                                <ui:Button Content="🐗 ОСОБИ" Style="{StaticResource OctaCmdBtn}" Tag="spawn.fill_individuals" Click="RunSimple"/>
+                                <ui:Button Content="📊 ОТЧЁТ" Style="{StaticResource OctaCmdBtn}" Tag="spawn.report" Click="RunSimple" ToolTip="spawn.report — читайте через ▲"/>
+                                <ui:Button Content="✕ СНЕСТИ ВСЁ" Style="{StaticResource OctaCmdBtnDanger}" Tag="spawn.delete_all_populations" Click="RunConfirm" ToolTip="spawn.delete_all_populations — удаляет все популяции с карты"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Плотность и скорость спавна" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="spawn.min/max_rate + min/max_density (0–3, дефолт 0.5–1)" Style="{StaticResource OctaCmdSub}"/>
+                            <UniformGrid Columns="2" Margin="0,8,0,0">
+                                <StackPanel Margin="0,0,8,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Min rate" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_SpMinRate" DockPanel.Dock="Right" Text="0.5" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldSpMinRate" Minimum="0" Maximum="3" Value="0.5" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_SpMinRate"/>
+                                </StackPanel>
+                                <StackPanel Margin="8,0,0,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Max rate" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_SpMaxRate" DockPanel.Dock="Right" Text="1" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldSpMaxRate" Minimum="0" Maximum="3" Value="1" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_SpMaxRate"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,8,8,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Min density" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_SpMinDen" DockPanel.Dock="Right" Text="0.5" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldSpMinDen" Minimum="0" Maximum="3" Value="0.5" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_SpMinDen"/>
+                                </StackPanel>
+                                <StackPanel Margin="8,8,0,0">
+                                    <DockPanel LastChildFill="False"><TextBlock Text="Max density" Foreground="{StaticResource B.Text}"/><TextBlock x:Name="T_SpMaxDen" DockPanel.Dock="Right" Text="1" Foreground="{StaticResource B.TextDim}"/></DockPanel>
+                                    <Slider x:Name="SldSpMaxDen" Minimum="0" Maximum="3" Value="1" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Weather_Changed" Tag="T_SpMaxDen"/>
+                                </StackPanel>
+                            </UniformGrid>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="⇒ ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Click="SpawnScale_Click"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Спавн у игрока" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="octa.spawnat — в точке прицела выбранной цели (плагин OctaAdminTools)" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_SpawnEnt" Margin="0,8,0,6" PlaceholderText="bear / scientist / bradley / minicopter..."/>
+                            <WrapPanel>
+                                <ui:Button Content="СПАВН У ИГРОКА" Style="{StaticResource OctaCmdBtnPrimary}" Click="SpawnAtPlayer_Click" DataContext="{Binding ElementName=In_SpawnEnt}"/>
+                                <ui:Button Content="🐻" Style="{StaticResource OctaCmdBtn}" Tag="bear" Click="SpawnAtPlayer_Click" ToolTip="Медведь у игрока"/>
+                                <ui:Button Content="🐺" Style="{StaticResource OctaCmdBtn}" Tag="wolf" Click="SpawnAtPlayer_Click" ToolTip="Волк у игрока"/>
+                                <ui:Button Content="🐗" Style="{StaticResource OctaCmdBtn}" Tag="boar" Click="SpawnAtPlayer_Click" ToolTip="Кабан у игрока"/>
+                                <ui:Button Content="🔬" Style="{StaticResource OctaCmdBtn}" Tag="scientist" Click="SpawnAtPlayer_Click" ToolTip="Учёный у игрока"/>
+                                <ui:Button Content="🚜" Style="{StaticResource OctaCmdBtn}" Tag="bradley" Click="SpawnAtPlayer_Click" ToolTip="Бредли у игрока"/>
+                                <ui:Button Content="МИНИ" Style="{StaticResource OctaCmdBtn}" Tag="minicopter" Click="SpawnAtPlayer_Click" ToolTip="Миникоптер у игрока"/>
+                                <ui:Button Content="🚤" Style="{StaticResource OctaCmdBtn}" Tag="rhib" Click="SpawnAtPlayer_Click" ToolTip="RHIB у игрока"/>
+                                <ui:Button Content="📦" Style="{StaticResource OctaCmdBtn}" Tag="airdropcrate" Click="SpawnAtPlayer_Click" ToolTip="Ящик аирдропа у игрока"/>
+                            </WrapPanel>
+                            <ui:TextBox x:Name="In_KillType" Margin="0,8,0,6" PlaceholderText="bear — зачистка всех этого типа"/>
+                            <ui:Button Content="✕ ЗАЧИСТИТЬ ТИП" Style="{StaticResource OctaCmdBtnDanger}" Tag="octa.killtype {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_KillType}" ToolTip="octa.killtype — удаляет все сущности этого типа с карты"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Спавн по координатам" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="octa.spawnatpos сущность x y z" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_SpawnPos" Margin="0,8,0,6" PlaceholderText="bear 1200 5 -900"/>
+                            <ui:Button Content="СПАВН В ТОЧКЕ" Style="{StaticResource OctaCmdBtn}" Tag="octa.spawnatpos {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_SpawnPos}"/>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="РЕЖИМЫ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel x:Name="ModesWrap" Margin="0,0,0,4">
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Профиль нагрузки" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="перед первым изменением сохраняются текущие ai.* и spawn.*; профиль действует только до рестарта" Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="РАЗГРУЗКА" Style="{StaticResource OctaCmdBtn}" Tag="relief" Click="ApplyLoadMode_Click" ToolTip="Снизить скорость и плотность спавна, не отключая AI"/>
+                                <ui:Button Content="АВАРИЙНЫЙ" Style="{StaticResource OctaCmdBtnDanger}" Tag="emergency" Click="ApplyLoadMode_Click" ToolTip="Минимальные популяции и временная остановка AI"/>
+                                <ui:Button Content="ВОССТАНОВИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="restore" Click="ApplyLoadMode_Click" ToolTip="Вернуть снимок до применения профиля"/>
+                                <ui:Button Content="ОБНОВИТЬ СТАТУС" Style="{StaticResource OctaCmdBtn}" Click="RefreshModes_Click"/>
+                            </WrapPanel>
+                            <TextBlock x:Name="LoadModeStatus" Text="профиль не применялся" Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Что меняют профили" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="РАЗГРУЗКА: spawn rate/density 0.50–1.00, AI остаётся активным. АВАРИЙНЫЙ: 0.10–0.25 и ai.npc_enable/think/move = false. ВОССТАНОВИТЬ возвращает реальные значения из снимка." Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap"/>
+                            <TextBlock Text="Профили не записываются в server.cfg и не маскируются под постоянную оптимизацию." Foreground="{StaticResource B.Warn}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Режимы мира" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="PvE, decay и upkeep — текущий режим всегда показывается явно" Style="{StaticResource OctaCmdSub}"/>
+                            <CheckBox x:Name="ChkPersistWorld" Content="сохранять изменения в server.cfg" Foreground="{StaticResource B.TextDim}" Margin="0,9,0,6"/>
+                            <WrapPanel>
+                                <ui:Button Content="PVE ON" Style="{StaticResource OctaCmdBtn}" Tag="pve:on" Click="ApplyWorldMode_Click"/>
+                                <ui:Button Content="PVE OFF" Style="{StaticResource OctaCmdBtn}" Tag="pve:off" Click="ApplyWorldMode_Click"/>
+                                <ui:Button Content="DECAY OFF" Style="{StaticResource OctaCmdBtn}" Tag="decay:off" Click="ApplyWorldMode_Click"/>
+                                <ui:Button Content="UPKEEP OFF" Style="{StaticResource OctaCmdBtn}" Tag="upkeep:off" Click="ApplyWorldMode_Click"/>
+                                <ui:Button Content="ВОССТАНОВИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="restore" Click="ApplyWorldMode_Click"/>
+                            </WrapPanel>
+                            <TextBlock x:Name="WorldModeStatus" Text="загрузка текущих значений…" Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Безопасность режимов" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="Первое изменение создаёт снимок server.pve, decay.scale и decay.upkeep. Временный режим не переживает рестарт. При включённом сохранении значения также обновляются через структурный ServerConfigService." Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap"/>
+                            <TextBlock Text="Отключение decay/upkeep меняет игровой баланс — кнопки требуют подтверждения." Foreground="{StaticResource B.Warn}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="ЧАТ / ОБЪЯВЛЕНИЯ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel x:Name="ChatWrap" Margin="0,0,0,4">
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Объявление сейчас" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="say — сообщение от сервера всем игрокам" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_AnnouncementNow" Margin="0,8,0,6" PlaceholderText="текст объявления" AcceptsReturn="True" TextWrapping="Wrap" Height="70"/>
+                            <ui:Button Content="ОТПРАВИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Click="SendAnnouncement_Click"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Шаблоны объявлений" Style="{StaticResource OctaCmdTitle}"/>
+                            <ComboBox x:Name="CbAnnTemplates" Margin="0,8,0,6" SelectionChanged="AnnouncementTemplate_Changed"/>
+                            <ui:TextBox x:Name="In_NewTemplate" Margin="0,0,0,6" PlaceholderText="новый шаблон"/>
+                            <WrapPanel>
+                                <ui:Button Content="ДОБАВИТЬ" Style="{StaticResource OctaCmdBtn}" Click="AddAnnouncementTemplate_Click"/>
+                                <ui:Button Content="УДАЛИТЬ" Style="{StaticResource OctaCmdBtnDanger}" Click="DeleteAnnouncementTemplate_Click"/>
+                                <ui:Button Content="ОТПРАВИТЬ ШАБЛОН" Style="{StaticResource OctaCmdBtnPrimary}" Click="SendTemplate_Click"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Повторяющееся объявление" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="работает фоном, пока запущен OctavianRSM" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_AnnScheduleText" Margin="0,8,0,6" PlaceholderText="текст повторяющегося объявления"/>
+                            <ui:NumberBox x:Name="In_AnnMinutes" Value="30" Minimum="1" Maximum="1440" Margin="0,0,0,6" SpinButtonPlacementMode="Inline"/>
+                            <CheckBox x:Name="ChkAnnEnabled" Content="включить повтор" Foreground="{StaticResource B.TextDim}" Margin="0,0,0,8"/>
+                            <ui:Button Content="СОХРАНИТЬ РАСПИСАНИЕ" Style="{StaticResource OctaCmdBtnPrimary}" Click="SaveAnnouncementSchedule_Click"/>
+                            <TextBlock x:Name="AnnScheduleStatus" Text="" Style="{StaticResource OctaCmdSub}" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaPanel}" Padding="16,12" Margin="0,10,0,4" Width="{Binding ActualWidth, ElementName=ChatWrap}">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False" Margin="0,0,0,8">
+                                <TextBlock Text="ИСТОРИЯ ЧАТА" Style="{StaticResource OctaCmdTitle}" FontSize="14" DockPanel.Dock="Left"/>
+                                <ui:Button Content="ОБНОВИТЬ" Style="{StaticResource OctaCmdBtn}" DockPanel.Dock="Right" Margin="8,0,0,0" Click="RefreshChat_Click"/>
+                                <ui:TextBox x:Name="In_ChatSearch" Width="300" DockPanel.Dock="Right" PlaceholderText="поиск по локальной SQLite-истории" TextChanged="ChatSearch_Changed"/>
+                            </DockPanel>
+                            <ListBox x:Name="ChatHistory" MinHeight="160" MaxHeight="300" Background="Transparent" BorderThickness="0" FontFamily="Consolas" Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="CARBON / ПЛАГИНЫ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel Margin="0,0,0,4">
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Перезагрузить плагин" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="c.reload имя" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_Reload" Margin="0,8,0,6" PlaceholderText="WelcomePanel"/>
+                            <ui:Button Content="RELOAD" Tag="c.reload {0}" Click="RunParam" DataContext="{Binding ElementName=In_Reload}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Список плагинов" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="c.plugins — вывод в консоль" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="c.plugins" Click="RunSimple"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Релоад модулей" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="c.reloadmodules" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="c.reloadmodules" Click="RunConfirm"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Релоад конфигов модулей" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="c.loadmoduleconfig" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="c.loadmoduleconfig" Click="RunSimple"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="GC-сборка" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="gc.collect — очистка памяти" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="gc.collect" Click="RunSimple"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Банлист" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="banlist — вывод в консоль" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:Button Content="ВЫПОЛНИТЬ" Margin="0,8,0,0" Tag="banlist" Click="RunSimple"/>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <StackPanel Grid.Row="2">
+            <Border x:Name="PnlResultFull" Style="{StaticResource OctaPanel}" Margin="0,12,0,8" Padding="0" Visibility="Collapsed" MaxHeight="260">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="12,8" LastChildFill="True">
+                        <TextBlock Text="ПОЛНЫЙ ОТВЕТ СЕРВЕРА" Style="{StaticResource OctaCmdTitle}" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                        <ui:Button Content="КОПИРОВАТЬ" DockPanel.Dock="Right" Style="{StaticResource OctaCmdBtn}" Margin="0" Padding="10,4" Click="CopyResult_Click"/>
+                        <ui:Button Content="ОЧИСТИТЬ" DockPanel.Dock="Right" Style="{StaticResource OctaCmdBtn}" Margin="0,0,6,0" Padding="10,4" Click="ClearResult_Click"/>
+                    </DockPanel>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="12,0,12,12" Background="#10000000">
+                        <TextBlock x:Name="TxtResultFull" Text="" Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" FontFamily="Consolas" Padding="8"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="0" Padding="14,8">
+                <DockPanel LastChildFill="False">
+                    <TextBlock x:Name="TxtLast" Text="готов" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+                    <ui:Button x:Name="BtnExpandResult" Content="▲" DockPanel.Dock="Right" Style="{StaticResource OctaCmdBtn}" Margin="0" Padding="10,2" MinWidth="36" ToolTip="Развернуть полный ответ" Click="ExpandResult_Click"/>
+                    <TextBlock x:Name="TxtResult" Text="" DockPanel.Dock="Right" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center" MaxWidth="560" MaxHeight="40" Margin="0,0,8,0" TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+            </Border>
+        </StackPanel>
+    </Grid>
+</Page>

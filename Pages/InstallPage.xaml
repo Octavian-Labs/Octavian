@@ -1,0 +1,86 @@
+<Page x:Class="OctavianRSM.Pages.InstallPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Установка">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Style="{StaticResource OctaPageTitle}" Text="Установка"/>
+            <TextBlock Style="{StaticResource OctaPageSub}" Text="SteamCMD • app 258550 (Rust Dedicated Server) • Carbon"/>
+        </StackPanel>
+
+        <TabControl Grid.Row="1">
+            <TabItem Header="STEAMCMD / СЕРВЕР">
+                <Grid Margin="0,4,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <UniformGrid Columns="3" Margin="0,0,0,14">
+                        <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="УСТАНОВКА / ОБНОВЛЕНИЕ" Style="{StaticResource OctaStatLabel}"/>
+                                <TextBlock Text="Загружает или обновляет файлы сервера в выбранной ветке." Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <ui:Button Content="⬇ УСТАНОВИТЬ" Appearance="Primary" Click="Install_Click" Padding="14,7"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="ПРОВЕРКА ФАЙЛОВ" Style="{StaticResource OctaStatLabel}"/>
+                                <TextBlock Text="Сверяет контрольные суммы и докачивает битые файлы (validate)." Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <ui:Button Content="✓ ПРОВЕРИТЬ" Click="Validate_Click" Padding="14,7"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="ВЕТКА" Style="{StaticResource OctaStatLabel}"/>
+                                <TextBlock Text="Бета-ветка Steam (release/aux03/aux04/staging)." Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <ComboBox x:Name="CmbBranch" SelectedIndex="0" VerticalContentAlignment="Center">
+                                    <ComboBoxItem Content="release"/>
+                                    <ComboBoxItem Content="staging"/>
+                                    <ComboBoxItem Content="aux03"/>
+                                    <ComboBoxItem Content="aux04"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+                    <Border Grid.Row="1" Style="{StaticResource OctaPanel}" Padding="0">
+                        <DockPanel>
+                            <TextBlock Text="ВЫВОД STEAMCMD" Style="{StaticResource OctaStatLabel}" DockPanel.Dock="Top" Margin="14,12,0,0"/>
+                            <ScrollViewer x:Name="Scroll" Margin="14,8,14,12">
+                                <TextBlock x:Name="TxtLog" FontFamily="Consolas" FontSize="12"
+                                           Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap"/>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+            <TabItem Header="CARBON">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <UniformGrid Columns="2">
+                        <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="ВЕРСИЯ CARBON" Style="{StaticResource OctaStatLabel}"/>
+                                <TextBlock x:Name="TxtCarbonVer" Text="версия не проверялась" Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <ui:Button Content="⟳ ПРОВЕРИТЬ ОБНОВЛЕНИЕ" Click="CarbonCheck_Click" Padding="14,7"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="УСТАНОВКА CARBON" Style="{StaticResource OctaStatLabel}"/>
+                                <TextBlock Text="Скачать/обновить Carbon для Rust (staging/production), папка carbon в корне сервера." Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <ui:Button Content="⬇ УСТАНОВИТЬ / ОБНОВИТЬ" Click="CarbonInstall_Click" Padding="14,7" ToolTip="Скачивает архив с GitHub и распаковывает поверх сервера"/>
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Page>

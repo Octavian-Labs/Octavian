@@ -1,0 +1,170 @@
+<Page x:Class="OctavianRSM.Pages.DashboardPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Дашборд">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Шапка: бренд + кнопки питания -->
+        <DockPanel Margin="0,0,0,16" LastChildFill="False">
+            <StackPanel>
+                <TextBlock Style="{StaticResource OctaPageTitle}">
+                    <Run Text="Дашборд"/>
+                </TextBlock>
+                <TextBlock x:Name="TxtSub" Style="{StaticResource OctaPageSub}" Text="сервер Octavian RUST"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:Button x:Name="BtnUpdate" Content="⬆ ОБНОВИТЬ" Margin="4" Padding="16,8"
+                           Click="BtnUpdate_Click" Visibility="Collapsed"
+                           Background="{StaticResource B.AccentSoft}" BorderBrush="{StaticResource B.Accent}"
+                           ToolTip="Доступна новая версия менеджера"/>
+                <ui:Button x:Name="BtnStart" Content="▶ ЗАПУСТИТЬ" Appearance="Primary" Margin="4" Padding="16,8" Click="BtnStart_Click"/>
+                <ui:Button x:Name="BtnStop" Content="■ ОСТАНОВИТЬ" Appearance="Danger" Margin="4" Padding="16,8" Click="BtnStop_Click" IsEnabled="False"/>
+                <ui:Button x:Name="BtnKill" Content="✕ KILL" Appearance="Secondary" Margin="4" Padding="16,8" Click="BtnKill_Click" IsEnabled="False"/>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- СЕРВЕР: состояние, аптайм, вайп, канал управления -->
+        <TextBlock Grid.Row="1" Text="СЕРВЕР" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+        <UniformGrid Grid.Row="2" Columns="4" Margin="0,0,0,14">
+            <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" BorderBrush="{StaticResource B.Accent2}">
+                <StackPanel>
+                    <TextBlock Text="СОСТОЯНИЕ" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatState" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                    <TextBlock x:Name="StatStateSub" Text="ожидание данных" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
+                <StackPanel>
+                    <TextBlock Text="АПТАЙМ" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatUptime" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                    <TextBlock x:Name="StatMap" Text="карта —" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
+                <StackPanel>
+                    <TextBlock Text="ПОСЛЕДНИЙ ВАЙП" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatWipe" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="RCON" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatRcon" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                    <TextBlock x:Name="StatRconSub" Text="websocket" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <!-- ИГРОКИ И НАГРУЗКА: онлайн, очередь, кадры, сущности -->
+        <TextBlock Grid.Row="3" Text="ИГРОКИ И НАГРУЗКА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+        <UniformGrid Grid.Row="4" Columns="4" Margin="0,0,0,14">
+            <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="ОНЛАЙН" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatOnline" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                    <TextBlock x:Name="StatOnlineSub" Text="игроков" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
+                <StackPanel>
+                    <TextBlock Text="ОЧЕРЕДЬ / ВХОД" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatQueue" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
+                <StackPanel>
+                    <TextBlock Text="FPS" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatFps" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                    <TextBlock x:Name="StatEntities" Text="сущностей —" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="СЕТЬ IN / OUT" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatNet" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <!-- РЕСУРСЫ ХОСТА: процесс и диск (в remote — только serverinfo) -->
+        <TextBlock Grid.Row="5" Text="РЕСУРСЫ ХОСТА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+        <UniformGrid Grid.Row="6" Columns="4" Margin="0,0,0,14">
+            <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="CPU ПРОЦЕССА" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatCpu" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
+                <StackPanel>
+                    <TextBlock Text="RAM ПРОЦЕССА" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatRam" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
+                <StackPanel>
+                    <TextBlock Text="ДИСК СВОБОДНО" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatDisk" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="RAM СЕРВЕРА (serverinfo)" Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="StatMem" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <!-- Быстрые действия -->
+        <Border Grid.Row="7" Style="{StaticResource OctaPanel}" Margin="0,0,0,14" Padding="16,12">
+            <StackPanel>
+                <TextBlock Text="БЫСТРЫЕ КОМАНДЫ" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,8"/>
+                <WrapPanel>
+                    <ui:Button Content="say Привет!" Click="Q" Tag="say [OCTAVIAN] Привет!" Margin="0,0,8,0" Padding="12,5"/>
+                    <ui:Button Content="server.save" Click="Q" Tag="server.save" Margin="0,0,8,0" Padding="12,5"/>
+                    <ui:Button Content="serverinfo" Click="Q" Tag="serverinfo" Margin="0,0,8,0" Padding="12,5"/>
+                    <ui:Button Content="c.plugins" Click="Q" Tag="c.plugins" Margin="0,0,8,0" Padding="12,5"/>
+                    <ui:Button Content="o.reload all" Click="Q" Tag="o.reload *" Margin="0,0,8,0" Padding="12,5"/>
+                </WrapPanel>
+                <TextBlock x:Name="TxtQuickResult" Text="" Style="{StaticResource OctaPageSub}" Margin="0,8,0,0" MaxHeight="60" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Живой лог: выделение строк, копирование, автоскролл -->
+        <Border Grid.Row="8" Style="{StaticResource OctaPanel}" Padding="0">
+            <DockPanel>
+                <DockPanel DockPanel.Dock="Top" LastChildFill="False" Margin="16,10,16,0">
+                    <TextBlock Text="ЖУРНАЛ" Style="{StaticResource OctaStatLabel}" DockPanel.Dock="Left" VerticalAlignment="Center"/>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <CheckBox x:Name="ChkAuto" Content="автоскролл" IsChecked="True"
+                                  Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"/>
+                        <ui:Button Content="КОПИРОВАТЬ" FontSize="11" Padding="10,3" Margin="12,0,0,0" Click="CopyLog_Click"/>
+                    </StackPanel>
+                </DockPanel>
+                <ListBox x:Name="LogItems" Background="Transparent" BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" KeyDown="LogItems_KeyDown"
+                         ScrollViewer.ScrollChanged="Log_ScrollChanged">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Копировать строку" Click="CopyRow_Click"/>
+                            <MenuItem Header="Копировать всё" Click="CopyLog_Click"/>
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
+                </ListBox>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Page>

@@ -1,0 +1,193 @@
+<Page x:Class="OctavianRSM.Pages.RatesPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      ScrollViewer.CanContentScroll="False"
+      Title="Рейты и лут">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Style="{StaticResource OctaPageTitle}" Text="Рейты и лут"/>
+            <TextBlock Style="{StaticResource OctaPageSub}" Text="множители сбора/крафта + управление лутом через BetterLoot"/>
+        </StackPanel>
+
+        <TabControl Grid.Row="1">
+            <!-- ═══ СБОР И КРАФТ ═══ -->
+            <TabItem Header="СБОР И КРАФТ">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <WrapPanel>
+                        <Border Style="{StaticResource OctaPanel}" Width="440" Margin="0,0,12,12" Padding="16,14">
+                            <StackPanel>
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock Text="Сбор инструментом" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="T_Disp" Text="×1.0" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <TextBlock Text="gather.rate dispenser — дерево/руда/трупы" Style="{StaticResource OctaCmdSub}"/>
+                                <Slider x:Name="SldDisp" Minimum="0.5" Maximum="10" Value="1" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,10,0,4" ValueChanged="Rate_Changed" Tag="T_Disp"/>
+
+                                <DockPanel LastChildFill="False" Margin="0,6,0,0">
+                                    <TextBlock Text="Подбор с земли" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="T_Pickup" Text="×1.0" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <TextBlock Text="gather.rate pickup — камни/конопля/тыквы" Style="{StaticResource OctaCmdSub}"/>
+                                <Slider x:Name="SldPickup" Minimum="0.5" Maximum="10" Value="1" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,10,0,4" ValueChanged="Rate_Changed" Tag="T_Pickup"/>
+
+                                <DockPanel LastChildFill="False" Margin="0,6,0,0">
+                                    <TextBlock Text="Карьеры" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="T_Quarry" Text="×1.0" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <TextBlock Text="gather.rate quarry — Mining Quarry" Style="{StaticResource OctaCmdSub}"/>
+                                <Slider x:Name="SldQuarry" Minimum="0.5" Maximum="10" Value="1" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,10,0,4" ValueChanged="Rate_Changed" Tag="T_Quarry"/>
+
+                                <DockPanel LastChildFill="False" Margin="0,6,0,0">
+                                    <TextBlock Text="Survey-заряды" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="T_Survey" Text="×1.0" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <TextBlock Text="gather.rate survey — выброс из survey charge" Style="{StaticResource OctaCmdSub}"/>
+                                <Slider x:Name="SldSurvey" Minimum="0.5" Maximum="10" Value="1" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,10,0,4" ValueChanged="Rate_Changed" Tag="T_Survey"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource OctaPanel}" Width="440" Margin="0,0,12,12" Padding="16,14">
+                            <StackPanel>
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock Text="Выдача узлов" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="T_Scale" Text="×1.0" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <TextBlock Text="dispenser.scale — сколько выдаёт узел за удар" Style="{StaticResource OctaCmdSub}"/>
+                                <Slider x:Name="SldScale" Minimum="0.5" Maximum="10" Value="1" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,10,0,4" ValueChanged="Rate_Changed" Tag="T_Scale"/>
+
+                                <DockPanel LastChildFill="False" Margin="0,6,0,0">
+                                    <TextBlock Text="Скорость крафта" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="T_Craft" Text="×1.0" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <TextBlock Text="craft.timescale — 2 = вдвое быстрее" Style="{StaticResource OctaCmdSub}"/>
+                                <Slider x:Name="SldCraft" Minimum="0.5" Maximum="10" Value="1" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,10,0,4" ValueChanged="Rate_Changed" Tag="T_Craft"/>
+
+                                <TextBlock Text="Быстрые пресеты (применяют ко всем множителям)" Style="{StaticResource OctaFieldLabel}" Margin="0,14,0,4"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <ui:Button Content="×1" Padding="14,4" Margin="0,0,6,0" Tag="1" Click="Preset_Click"/>
+                                    <ui:Button Content="×2" Padding="14,4" Margin="0,0,6,0" Tag="2" Click="Preset_Click"/>
+                                    <ui:Button Content="×3" Padding="14,4" Margin="0,0,6,0" Tag="3" Click="Preset_Click"/>
+                                    <ui:Button Content="×5" Padding="14,4" Margin="0,0,6,0" Tag="5" Click="Preset_Click"/>
+                                    <ui:Button Content="×10" Padding="14,4" Tag="10" Click="Preset_Click"/>
+                                </StackPanel>
+
+                                <ui:Button Content="⇒ ПРИМЕНИТЬ РЕЙТЫ" Appearance="Primary" Margin="0,16,0,0" Padding="14,7"
+                                           Click="ApplyRates_Click"
+                                           ToolTip="Пишет в server.cfg и отправляет convars по RCON (если подключён)"/>
+                            </StackPanel>
+                        </Border>
+                    </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ═══ ЛУТ-ПЛАГИНЫ ═══ -->
+            <TabItem Header="ЛУТ / BETTERLOOT">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                    <WrapPanel>
+                        <Border Style="{StaticResource OctaPanel}" Width="440" Margin="0,0,12,12" Padding="16,14">
+                            <StackPanel>
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock Text="BetterLoot" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="TxtBL" Text="—" DockPanel.Dock="Right" Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"/>
+                                </DockPanel>
+                                <TextBlock Text="Полная перестройка таблиц лута: баланс, скрап, компоненты. Платный плагин — файл BetterLoot.cs кладётся в carbon\plugins."
+                                           Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <ui:Button Content="🌐 КУПИТЬ (Codefling)" Click="OpenBL_Click" Padding="12,6" Margin="0,0,6,0"/>
+                                    <ui:Button Content="📁 ОТКРЫТЬ КОНФИГ" Click="OpenBLCfg_Click" Padding="12,6" Margin="0,0,6,0"/>
+                                    <ui:Button Content="⟳ RELOAD" Click="ReloadBL_Click" Padding="12,6"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource OctaPanel}" Width="440" Margin="0,0,12,12" Padding="16,14">
+                            <StackPanel>
+                                <TextBlock Text="Множители лута (BetterLoot)" Style="{StaticResource OctaCmdTitle}"/>
+                                <TextBlock Text="Бочки/ящики/трупы заполняет BetterLoot — рейты GM их не касаются. Эти множители пишутся в configs\BetterLoot.json."
+                                           Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock Text="Loot Multiplier — общий" Style="{StaticResource OctaCmdSub}"/>
+                                    <TextBlock x:Name="T_LootMult" Text="×1" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <Slider x:Name="SldLootMult" Minimum="1" Maximum="10" Value="1" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,6,0,4" ValueChanged="Rate_Changed" Tag="T_LootMult"/>
+                                <DockPanel LastChildFill="False" Margin="0,6,0,0">
+                                    <TextBlock Text="Scrap Multipler — скрап в контейнерах" Style="{StaticResource OctaCmdSub}"/>
+                                    <TextBlock x:Name="T_ScrapMult" Text="×1" DockPanel.Dock="Right" Foreground="{StaticResource B.Accent}" FontWeight="Bold"/>
+                                </DockPanel>
+                                <Slider x:Name="SldScrapMult" Minimum="1" Maximum="10" Value="1" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,6,0,4" ValueChanged="Rate_Changed" Tag="T_ScrapMult"/>
+                                <ui:Button Content="⇒ ПРИМЕНИТЬ МНОЖИТЕЛИ ЛУТА" Appearance="Primary" Margin="0,12,0,0" Padding="14,6" Click="ApplyLootMult_Click"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource OctaPanel}" Width="440" Margin="0,0,12,12" Padding="16,14">
+                            <StackPanel>
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock Text="MagicLoot" Style="{StaticResource OctaCmdTitle}"/>
+                                    <TextBlock x:Name="TxtML" Text="—" DockPanel.Dock="Right" Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"/>
+                                </DockPanel>
+                                <TextBlock Text="Альтернатива: наборы лута-профилей (codes), быстрые пресеты наполнения ящиков. Платный — codefling.com/plugins/magicloot."
+                                           Style="{StaticResource OctaPageSub}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <ui:Button Content="🌐 САЙТ" Click="OpenML_Click" Padding="12,6" Margin="0,0,6,0"/>
+                                    <ui:Button Content="📂 ПАПКА ПЛАГИНОВ" Click="OpenPlugins_Click" Padding="12,6"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ═══ ПРЕСЕТЫ ЛУТА ═══ -->
+            <TabItem Header="ПРЕСЕТЫ ЛУТА">
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" MinWidth="200" MaxWidth="320"/>
+                        <ColumnDefinition Width="6"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="БИБЛИОТЕКА" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,6"/>
+                        <ListBox x:Name="LstPresets" Background="Transparent" BorderThickness="0"
+                                 SelectionChanged="Preset_Selected" MinHeight="120"/>
+                        <ui:Button Content="+ НОВЫЙ ПРЕСЕТ" Margin="0,8,0,0" Click="NewPreset_Click"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Название" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="In_PresetName" Margin="0,0,0,8"/>
+                        <TextBlock Text="Описание (для чего этот набор)" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="In_PresetDesc" Margin="0,0,0,8"/>
+                        <TextBlock Text="Цель применения" Style="{StaticResource OctaFieldLabel}"/>
+                        <ComboBox x:Name="CmbPresetTarget" Margin="0,0,0,8">
+                            <ComboBoxItem Content="BetterLoot — конфиг (configs\BetterLoot.json)" Tag="BetterLoot"/>
+                            <ComboBoxItem Content="BetterLoot — таблицы (data\...\LootTables.json)" Tag="BetterLootTables"/>
+                            <ComboBoxItem Content="BetterLoot — группы (data\...\LootGroups.json)" Tag="BetterLootGroups"/>
+                            <ComboBoxItem Content="BetterLoot — blacklist (data\...\Blacklist.json)" Tag="BetterLootBlacklist"/>
+                            <ComboBoxItem Content="looty-код с looty.cc (команда looty &lt;id&gt;)" Tag="looty"/>
+                            <ComboBoxItem Content="MagicLoot (configs\MagicLoot.json)" Tag="MagicLoot"/>
+                        </ComboBox>
+                        <TextBlock Text="Содержимое — JSON конфига / looty-id / код профиля" Style="{StaticResource OctaFieldLabel}"/>
+                        <TextBox x:Name="In_PresetCode" AcceptsReturn="True" FontFamily="Consolas" FontSize="12"
+                                 MinHeight="120" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"/>
+                        <DockPanel LastChildFill="False">
+                            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                                <ui:Button Content="💾 СОХРАНИТЬ" Appearance="Primary" Padding="14,6" Margin="0,0,8,0" Click="SavePreset_Click"/>
+                                <ui:Button Content="🗑 УДАЛИТЬ" Appearance="Danger" Padding="14,6" Click="DeletePreset_Click"/>
+                            </StackPanel>
+                            <ui:Button DockPanel.Dock="Right" Content="⇒ ПРИМЕНИТЬ НА СЕРВЕР" Padding="14,6" Click="ApplyPreset_Click"
+                                       ToolTip="Записывает содержимое в carbon\configs\BetterLoot.json + c.reload"/>
+                        </DockPanel>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Style="{StaticResource OctaPanel}" Margin="0,12,0,0" Padding="14,8">
+            <TextBlock x:Name="TxtStatus" Text="готов" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+        </Border>
+    </Grid>
+</Page>
