@@ -37,6 +37,16 @@ public partial class App : Application
             LogCrash(a.ExceptionObject as Exception);
 
         SettingsPath = ResolveSettingsPath();
+        // Диагностика: OctavianRSM.exe --test-config <PluginName> — открывает окно конфига,
+        // ошибки пишутся в data\config-errors.log
+        if (e.Args.Length >= 2 && e.Args[0] == "--test-config")
+        {
+            Settings = RsmSettings.Load(SettingsPath);
+            new PluginConfigWindow(e.Args[1]).Show();
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
+            MainWindow = Current.Windows.Count > 0 ? Current.Windows[0] : null;
+            return;
+        }
         var hadSettings = File.Exists(SettingsPath);
         Settings = RsmSettings.Load(SettingsPath);
         if (hadSettings && File.Exists(Settings.ServerExePath) && !Settings.SetupCompleted)

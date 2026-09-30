@@ -78,9 +78,11 @@ public partial class PluginConfigWindow : Window
         }
         catch (Exception ex)
         {
+            try { File.AppendAllText(Path.Combine(App.DataDir, "config-errors.log"),
+                $"═══ {DateTime.Now:yyyy-MM-dd HH:mm:ss} {_pluginName}\n{ex}\n\n"); } catch { }
             _root = null;
             Editor.Text = File.Exists(_path) ? File.ReadAllText(_path) : "";
-            TxtHint.Text = $"JSON не парсится — доступен только сырой редактор: {ex.Message}";
+            TxtHint.Text = $"Не удалось построить таблицу: {ex.Message}";
             SetMode(false);
             BtnTable.IsEnabled = false;
         }
@@ -232,7 +234,7 @@ public partial class PluginConfigWindow : Window
             VerticalContentAlignment = multi ? VerticalAlignment.Top : VerticalAlignment.Center,
             FontFamily = multi ? new FontFamily("Consolas") : new FontFamily("Segoe UI"),
             AcceptsReturn = multi, TextWrapping = multi ? TextWrapping.Wrap : TextWrapping.NoWrap,
-            MaxHeight = multi ? maxHeight : double.NaN
+            MaxHeight = multi ? maxHeight : double.PositiveInfinity
         };
         if (multi) { tb.MinHeight = 26; tb.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; }
         tb.TextChanged += (_, _) => MarkDirty();
