@@ -65,6 +65,9 @@
                 <ui:NavigationViewItem x:Name="NavPlugins" Content="Плагины" TargetPageType="pages:PluginsPage">
                     <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="PuzzlePiece24"/></ui:NavigationViewItem.Icon>
                 </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="NavStore" Content="Магазин" TargetPageType="pages:StorePage">
+                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Globe24"/></ui:NavigationViewItem.Icon>
+                </ui:NavigationViewItem>
                 <ui:NavigationViewItem x:Name="NavServerCfg" Content="Серв. конфиг" TargetPageType="pages:ServerCfgPage">
                     <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="TextBoxSettings24"/></ui:NavigationViewItem.Icon>
                 </ui:NavigationViewItem>

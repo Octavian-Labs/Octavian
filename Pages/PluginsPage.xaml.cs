@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -22,6 +23,7 @@ public partial class PluginsPage : Page
     private void Refresh()
     {
         _all = App.Plugins.Scan();
+        App.Plugins.ApplyCfCache(_all); // статусы codefling из кэша
         ModuleCards.ItemsSource = App.Plugins.ScanModules();
         ApplyFilter();
     }
@@ -67,6 +69,15 @@ public partial class PluginsPage : Page
         TxtStatus.Text = $"c.reload {p.Name}…";
         var resp = await App.Rcon.SendAsync($"c.reload {p.Name}");
         TxtStatus.Text = string.IsNullOrEmpty(resp) ? "отправлено" : resp;
+    }
+
+    // ⚙ — окно настроек плагина: таблица значений + JSON-редактор
+    private void Config_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not PluginInfo p) return;
+        // имя файла конфига = имя класса плагина (файл без расширения)
+        var cfgName = Path.GetFileNameWithoutExtension(p.FileName.Replace(".disabled", ""));
+        new PluginConfigWindow(cfgName) { Owner = Window.GetWindow(this) }.Show();
     }
 
     private void ModuleToggle_Click(object sender, RoutedEventArgs e)

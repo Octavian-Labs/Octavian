@@ -1,0 +1,59 @@
+<Window x:Class="OctavianRSM.PluginConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:avalon="http://icsharpcode.net/sharpdevelop/avalonedit"
+        Title="OctavianRSM — конфиг плагина" Width="760" Height="560" MinWidth="520" MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource B.Bg1}" Foreground="{StaticResource B.Text}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Шапка: имя + режим + действия -->
+        <DockPanel LastChildFill="False">
+            <StackPanel>
+                <TextBlock x:Name="TxtTitle" Style="{StaticResource OctaPageTitle}"/>
+                <TextBlock x:Name="TxtPath" Style="{StaticResource OctaPageSub}" FontFamily="Consolas" FontSize="11"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
+                <ui:Button x:Name="BtnTable" Content="▦ ТАБЛИЦА" Padding="12,5" Margin="0,0,6,0" Click="ModeTable_Click"/>
+                <ui:Button x:Name="BtnJson" Content="{}{ } JSON" Padding="12,5" Click="ModeJson_Click"/>
+            </StackPanel>
+        </DockPanel>
+
+        <TextBlock x:Name="TxtHint" Grid.Row="1" Style="{StaticResource OctaPageSub}"
+                   Margin="0,6,0,6" TextWrapping="Wrap"/>
+
+        <!-- Режим таблицы -->
+        <Border x:Name="PaneTable" Grid.Row="2" Style="{StaticResource OctaPanel}" Padding="0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="Rows" Margin="4"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Режим JSON -->
+        <Border x:Name="PaneJson" Grid.Row="2" Style="{StaticResource OctaPanel}" Padding="0" Visibility="Collapsed">
+            <avalon:TextEditor x:Name="Editor"
+                               ShowLineNumbers="True" FontFamily="Consolas" FontSize="13"
+                               Background="#0B0E14" Foreground="#E6E9EE"
+                               LineNumbersForeground="#4A5568"
+                               HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                               BorderThickness="0"
+                               PreviewKeyDown="Editor_KeyDown" TextChanged="Editor_TextChanged"/>
+        </Border>
+
+        <!-- Низ: статус + сохранение -->
+        <DockPanel Grid.Row="3" Margin="0,10,0,0" LastChildFill="False">
+            <TextBlock x:Name="TxtStatus" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <ui:Button Content="ОТКАТИТЬ" Padding="14,5" Margin="0,0,8,0" Click="Revert_Click"/>
+                <ui:Button Content="СОХРАНИТЬ" Appearance="Primary" Padding="18,5" Click="Save_Click"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

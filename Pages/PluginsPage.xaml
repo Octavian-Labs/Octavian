@@ -73,7 +73,22 @@
                                             </TextBlock>
                                         </Border>
                                     </DockPanel>
-                                    <TextBlock Text="{Binding MetaLine}" Style="{StaticResource OctaPageSub}" Margin="0,2,0,0"/>
+                                    <DockPanel LastChildFill="False">
+                                        <TextBlock Text="{Binding MetaLine}" Style="{StaticResource OctaPageSub}" Margin="0,2,0,0"/>
+                                        <TextBlock DockPanel.Dock="Right" FontSize="11" FontWeight="SemiBold" Margin="10,0,0,0"
+                                                   Text="{Binding CfStatus}" ToolTip="{Binding CfUrl}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{StaticResource B.TextDim}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding CfUpdateAvailable}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource B.Warn}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DockPanel>
                                     <TextBlock Text="{Binding Description}" Style="{StaticResource OctaPageSub}"
                                                Margin="0,4,0,0" TextWrapping="Wrap" FontStyle="Italic"/>
                                     <TextBlock Text="{Binding FileName}" FontSize="10" FontFamily="Consolas"
@@ -81,6 +96,8 @@
                                 </StackPanel>
 
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                                    <ui:Button Content="⚙" Click="Config_Click" Padding="10,5" Margin="0,0,6,0"
+                                               ToolTip="Настройки плагина (carbon/configs)"/>
                                     <ui:Button Content="⟳ RELOAD" Click="Reload_Click" Padding="12,5" Margin="0,0,6,0"
                                                ToolTip="c.reload через RCON"/>
                                     <ui:Button Content="🗑" Click="Uninstall_Click" Padding="10,5" Margin="0,0,10,0"

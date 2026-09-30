@@ -18,6 +18,12 @@ public class PluginInfo
     public bool Enabled { get; set; }
     public long SizeBytes { get; set; }
 
+    // Статус сверки с codefling (кэшируется в data\codefling-versions.json)
+    public string CfVersion { get; set; } = "";
+    public string CfUrl { get; set; } = "";
+    public string CfStatus { get; set; } = "";
+    public bool CfUpdateAvailable => CfStatus.StartsWith("↑");
+
     public string SizeText => SizeBytes < 1024 ? $"{SizeBytes} B" : $"{SizeBytes / 1024.0:0.#} KB";
     public string MetaLine => string.Join(" · ",
         new[] { Author, string.IsNullOrEmpty(Version) ? "" : $"v{Version}", SizeText }
@@ -146,6 +152,42 @@ public class PluginService
             return true;
         }
         catch { return false; }
+    }
+
+    // ── Кэш версий codefling (data\codefling-versions.json) ────────────────
+    private static string CfCachePath => Path.Combine(App.DataDir, "codefling-versions.json");
+
+    public static void SaveCfCache(IEnumerable<PluginInfo> plugins)
+    {
+        try
+        {
+            var map = plugins.Where(p => !string.IsNullOrEmpty(p.CfVersion))
+                .ToDictionary(p => p.Name, p => new { v = p.CfVersion, u = p.CfUrl });
+            File.WriteAllText(CfCachePath, System.Text.Json.JsonSerializer.Serialize(map));
+        }
+        catch { }
+    }
+
+    // Проставляет CfVersion/CfUrl/CfStatus из кэша после скана
+    public void ApplyCfCache(List<PluginInfo> list)
+    {
+        try
+        {
+            if (!File.Exists(CfCachePath)) return;
+            var map = System.Text.Json.JsonSerializer.Deserialize<
+                Dictionary<string, System.Text.Json.JsonElement>>(File.ReadAllText(CfCachePath));
+            if (map == null) return;
+            foreach (var p in list)
+            {
+                if (!map.TryGetValue(p.Name, out var el)) continue;
+                p.CfVersion = el.TryGetProperty("v", out var v) ? v.GetString() ?? "" : "";
+                p.CfUrl = el.TryGetProperty("u", out var u) ? u.GetString() ?? "" : "";
+                if (string.IsNullOrEmpty(p.CfVersion)) { p.CfStatus = "—"; continue; }
+                p.CfStatus = CodeflingService.IsNewer(p.CfVersion, p.Version)
+                    ? $"↑ {p.CfVersion}" : $"✓ {p.CfVersion}";
+            }
+        }
+        catch { }
     }
 
     // Удаление плагина: файл + связанный конфиг уходят в plugins\_trash (обратимо)
