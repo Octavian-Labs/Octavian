@@ -24,8 +24,9 @@ public partial class PluginConfigWindow : Window
     private class CfgRow
     {
         public required string[] Segments { get; init; } // путь ключей объекта до значения
-        public required string Kind { get; init; }       // bool|num|str|json
+        public required string Kind { get; init; }       // header|bool|num|str|list|json
         public required FrameworkElement Editor { get; init; }
+        public bool ListStrings { get; init; }           // элементы списка — строки (не парсить как числа)
     }
 
     private readonly string _pluginName;
@@ -95,28 +96,49 @@ public partial class PluginConfigWindow : Window
         if (_root != null) Flatten(_root, Array.Empty<string>(), 0);
     }
 
+    // Раскладка: объект → заголовок секции + рекурсия; скалярный массив → список
+    // построчно; массив объектов/прочее → редактируемый JSON-блок
     private void Flatten(JsonNode node, string[] path, int depth)
     {
-        if (node is JsonObject obj && depth < 12)
+        if (node is JsonObject obj && depth <= 10)
         {
-            if (obj.Count == 0)
-                AddRow(path, "json", "{ }"); // пустой объект — редактируем как JSON
+            if (path.Length > 0) AddHeaderRow(path[^1], path.Length);
+            if (obj.Count == 0 && path.Length > 0)
+                AddRow(path, "json", "{ }");
             foreach (var kv in obj)
-                if (kv.Value is JsonObject || kv.Value is JsonArray)
+            {
+                var child = path.Concat(new[] { kv.Key }).ToArray();
+                switch (kv.Value)
                 {
-                    if (kv.Value is JsonObject o && o.Count <= 24 && o.All(v => v.Value is not JsonObject))
-                        Flatten(kv.Value, path.Concat(new[] { kv.Key }).ToArray(), depth + 1);
-                    else
-                        AddRow(path.Concat(new[] { kv.Key }).ToArray(), "json", kv.Value!.ToJsonString());
+                    case JsonObject o:
+                        Flatten(o, child, depth + 1);
+                        break;
+                    case JsonArray a when a.All(v => v is null or JsonValue):
+                        var listStrings = a.All(v => v?.GetValueKind() is null or JsonValueKind.String);
+                        AddRow(child, "list",
+                            string.Join("\n", a.Select(v => ScalarText(v))), listStrings);
+                        break;
+                    case JsonArray a:
+                        AddRow(child, "json", a.ToJsonString());
+                        break;
+                    default:
+                        AddScalarRow(child, kv.Value);
+                        break;
                 }
-                else
-                    AddScalarRow(path.Concat(new[] { kv.Key }).ToArray(), kv.Value);
+            }
         }
         else
         {
             AddRow(path, "json", node.ToJsonString());
         }
     }
+
+    private static string ScalarText(JsonNode? v) => v switch
+    {
+        null => "",
+        JsonValue jv when jv.TryGetValue<string>(out var s) => s ?? "",
+        _ => v.ToJsonString()
+    };
 
     private void AddScalarRow(string[] path, JsonNode? node)
     {
@@ -143,30 +165,48 @@ public partial class PluginConfigWindow : Window
         }
     }
 
-    private void AddRow(string[] path, string kind, string text)
+    // Заголовок секции (имя вложенного объекта)
+    private void AddHeaderRow(string title, int depth)
+    {
+        var accent = (Brush)FindResource("B.Accent");
+        var border = (Brush)FindResource("B.Border");
+        var header = new TextBlock
+        {
+            Text = title.ToUpperInvariant(),
+            Foreground = accent, FontSize = 11, FontWeight = FontWeights.Bold,
+            Margin = new Thickness(0, depth <= 1 ? 4 : 12, 0, 0)
+        };
+        var line = new Border { Height = 1, Background = border, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
+        var row = new DockPanel();
+        DockPanel.SetDock(header, Dock.Left);
+        row.Children.Add(header);
+        row.Children.Add(line);
+        Rows.Children.Add(row);
+    }
+
+    private void AddRow(string[] path, string kind, string text, bool listStrings = false)
     {
         var dim = (Brush)FindResource("B.TextDim");
-        var accent = (Brush)FindResource("B.Accent");
         var label = new TextBlock
         {
-            Text = string.Join(" › ", path.Skip(1)), // корневой ключ не показываем дважды
-            Foreground = dim, FontSize = 12, VerticalAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.Wrap, ToolTip = string.Join(".", path), MaxWidth = 300
+            Text = path[^1],
+            Foreground = dim, FontSize = 12, VerticalAlignment = VerticalAlignment.Top,
+            TextWrapping = TextWrapping.Wrap, ToolTip = string.Join(".", path),
+            Width = 300, Margin = new Thickness(0, 5, 10, 0)
         };
-        if (path.Length <= 1) { label.Text = path.LastOrDefault() ?? "(root)"; label.FontWeight = FontWeights.SemiBold; label.Foreground = accent; }
 
         FrameworkElement editor = kind switch
         {
             "bool" => MakeCheck(text == "true"),
-            "num" => MakeTextBox(text, 140, true),
-            "json" => MakeTextBox(text, 420, false, true),
+            "num" => MakeTextBox(text, 140, false),
+            "list" => MakeTextBox(text, 420, false, true, 90),
+            "json" => MakeTextBox(text, 420, false, true, 120),
             _ => MakeTextBox(text, 420, false),
         };
-        _rows.Add(new CfgRow { Segments = path, Kind = kind, Editor = editor });
+        _rows.Add(new CfgRow { Segments = path, Kind = kind, Editor = editor, ListStrings = listStrings });
 
-        var row = new DockPanel { Margin = new Thickness(4 + Math.Min(path.Length - 1, 8) * 12, 2, 4, 2) };
+        var row = new DockPanel { Margin = new Thickness(4 + Math.Min(path.Length - 1, 8) * 14, 3, 6, 3) };
         DockPanel.SetDock(label, Dock.Left);
-        label.Width = 300;
         row.Children.Add(label);
         row.Children.Add(editor);
         Rows.Children.Add(row);
@@ -180,7 +220,7 @@ public partial class PluginConfigWindow : Window
         return cb;
     }
 
-    private TextBox MakeTextBox(string text, double width, bool numeric, bool json = false)
+    private TextBox MakeTextBox(string text, double width, bool numeric, bool multi = false, double maxHeight = 120)
     {
         var tb = new TextBox
         {
@@ -188,13 +228,13 @@ public partial class PluginConfigWindow : Window
             Foreground = (Brush)FindResource("B.Text"),
             Background = (Brush)FindResource("B.Bg2"),
             BorderBrush = (Brush)FindResource("B.Border"),
-            BorderThickness = new Thickness(1), Padding = new Thickness(8, 3, 8, 3),
-            VerticalContentAlignment = VerticalAlignment.Center,
-            FontFamily = json ? new FontFamily("Consolas") : new FontFamily("Segoe UI"),
-            AcceptsReturn = json, TextWrapping = json ? TextWrapping.Wrap : TextWrapping.NoWrap,
-            MaxHeight = json ? 120 : double.NaN
+            BorderThickness = new Thickness(1), Padding = new Thickness(8, 4, 8, 4),
+            VerticalContentAlignment = multi ? VerticalAlignment.Top : VerticalAlignment.Center,
+            FontFamily = multi ? new FontFamily("Consolas") : new FontFamily("Segoe UI"),
+            AcceptsReturn = multi, TextWrapping = multi ? TextWrapping.Wrap : TextWrapping.NoWrap,
+            MaxHeight = multi ? maxHeight : double.NaN
         };
-        if (json) { tb.MinHeight = 30; tb.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; }
+        if (multi) { tb.MinHeight = 26; tb.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; }
         tb.TextChanged += (_, _) => MarkDirty();
         return tb;
     }
@@ -254,6 +294,7 @@ public partial class PluginConfigWindow : Window
     {
         foreach (var r in _rows)
         {
+            if (r.Kind == "header") continue;
             JsonNode? parent = _root;
             for (var i = 0; i < r.Segments.Length - 1; i++)
                 parent = parent![r.Segments[i]];
@@ -264,11 +305,28 @@ public partial class PluginConfigWindow : Window
             {
                 "bool" => JsonValue.Create((r.Editor as CheckBox)!.IsChecked == true),
                 "num" => NumValue((r.Editor as TextBox)!.Text.Trim()),
+                "list" => ListValue((r.Editor as TextBox)!.Text, r.ListStrings),
                 "json" => JsonNode.Parse((r.Editor as TextBox)!.Text),
                 _ => JsonValue.Create((r.Editor as TextBox)!.Text),
             };
             parent[key] = value;
         }
+    }
+
+    // Многострочный редактор → JsonArray; строковые списки сохраняем строками,
+    // прочие элементы пробуем распарсить как JSON-скаляр (число/bool/null)
+    private static JsonNode ListValue(string text, bool strings)
+    {
+        var arr = new JsonArray();
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.Trim('\r');
+            if (line.Length == 0) continue;
+            if (strings) { arr.Add(line); continue; }
+            try { arr.Add(JsonNode.Parse(line)); }
+            catch { arr.Add(line); }
+        }
+        return arr;
     }
 
     private static JsonNode NumValue(string s)
