@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using Oxide.Core;
 using UnityEngine;
@@ -9,8 +10,8 @@ namespace Oxide.Plugins
     // OctaTP — телепортация в домовом стиле OctavianRSM.
     // Писался как компактная замена NTeleportation (nivex): без сканера монументов
     // и интеграций с кланами — только дома, запросы игрокам, возврат и админ-tp.
-    [Info("OctaTP", "Octavian", "1.0.0")]
-    [Description("Телепортация: дома (sethome/home/delhome), запросы tpr/tpa, возврат tpb, админские tp/tphere, кулдауны и отсчёт")]
+    [Info("OctaTP", "Octavian", "1.1.0")]
+    [Description("Телепортация: дома (sethome/home/delhome), запросы tpr/tpa, возврат tpb, города outpost/bandit, админские tp/tphere и телепорт по метке карты /tpm")]
     public class OctaTP : RustPlugin
     {
         private const string PermUse    = "octatp.use";    // дома и запросы
@@ -44,6 +45,18 @@ namespace Oxide.Plugins
 
             [JsonProperty("Разрешить /tpb — возврат на точку до телепорта")]
             public bool AllowTpBack = true;
+
+            [JsonProperty("Разрешить /outpost и /bandit")]
+            public bool MonumentTp = true;
+
+            [JsonProperty("Блокировать телепорт в города пока игрок в розыске (hostile)")]
+            public bool BlockWhenHostile = true;
+
+            [JsonProperty("Имена маркеров карты: Город NPC (Outpost)")]
+            public string[] OutpostMarkers = { "compound", "outpost" };
+
+            [JsonProperty("Имена маркеров карты: Лагерь бандитов")]
+            public string[] BanditMarkers = { "bandit_town" };
 
             [JsonProperty("Префикс сообщений в чате")]
             public string ChatPrefix = "<color=#E8B84B>◆ OctaTP</color>";
@@ -101,6 +114,10 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, ulong> _requests = new();          // цель -> проситель
         private readonly Dictionary<ulong, float> _requestTime = new();       // цель -> unix-время запроса
         private readonly HashSet<ulong> _damaged = new();                     // получил урон во время отсчёта
+        private readonly HashSet<ulong> _mapTp = new();                       // админы с включённым тп по метке
+
+        private Vector3? _outpostPos;  // ищем один раз при загрузке по маркерам карты
+        private Vector3? _banditPos;
 
         private void Init()
         {
@@ -116,7 +133,29 @@ namespace Oxide.Plugins
             _requests.Clear();
             _requestTime.Clear();
             _damaged.Clear();
+            _mapTp.Clear();
             SaveData();
+        }
+
+        private void OnServerInitialized()
+        {
+            // маркер монумента на карте: prefab id 1724395471, категория = имя города
+            _outpostPos = FindMonumentPos(_cfg.OutpostMarkers);
+            _banditPos = FindMonumentPos(_cfg.BanditMarkers);
+        }
+
+        private static Vector3? FindMonumentPos(string[] markers)
+        {
+            foreach (var prefab in World.Serialization.world.prefabs)
+            {
+                if (prefab.id == 1724395471 && markers.Contains(prefab.category))
+                {
+                    var pos = new Vector3(prefab.position.x, prefab.position.y, prefab.position.z);
+                    var ground = TerrainMeta.HeightMap.GetHeight(pos);
+                    return pos.y < ground ? new Vector3(pos.x, ground + 1f, pos.z) : pos;
+                }
+            }
+            return null;
         }
 
         private void OnPlayerDisconnected(BasePlayer player)
@@ -152,9 +191,6 @@ namespace Oxide.Plugins
                 Msg(player, "Телепорт отменён");
                 return;
             }
-
-            Get(player).Back = Pack(player.transform.position);
-            SaveData();
 
             if (isAdmin || _cfg.CountdownSec <= 0)
             {
@@ -211,8 +247,10 @@ namespace Oxide.Plugins
             var mount = player.GetMounted();
             if (mount != null) mount.DismountPlayer(player, false);
             player.SetParent(null);
+            Get(player).Back = Pack(player.transform.position); // точка для /tpb — любой телепорт
             player.Teleport(pos);
             player.SendNetworkUpdateImmediate();
+            SaveData();
             if (!HasPerm(player, PermAdmin) && _cfg.CooldownSec > 0)
                 _cooldown[player.userID] = TimeStamp() + _cfg.CooldownSec;
         }
@@ -246,7 +284,8 @@ namespace Oxide.Plugins
         private void Help(BasePlayer p) => Msg(p,
             "<color=#E8B84B>/sethome имя</color> · <color=#E8B84B>/home имя</color> · " +
             "<color=#E8B84B>/delhome имя</color> · <color=#E8B84B>/homes</color> · " +
-            "<color=#E8B84B>/tpr игрок</color> · <color=#E8B84B>/tpa</color> · <color=#E8B84B>/tpb</color>");
+            "<color=#E8B84B>/tpr игрок</color> · <color=#E8B84B>/tpa</color> · <color=#E8B84B>/tpb</color> · " +
+            "<color=#E8B84B>/outpost</color> · <color=#E8B84B>/bandit</color>");
 
         // ── Дома ────────────────────────────────────────────────────────────
 
@@ -428,6 +467,64 @@ namespace Oxide.Plugins
             if (t == null) { Msg(player, "Игрок не найден"); return; }
             DoTeleport(t, player.transform.position);
             Msg(player, $"<color=#E8B84B>{t.displayName}</color> телепортирован к вам");
+        }
+
+        // ── Города: /outpost и /bandit ──────────────────────────────────────
+
+        [ChatCommand("outpost")]
+        private void CmdOutpost(BasePlayer player, string command, string[] args) => MonumentTeleport(player, _outpostPos, "Город NPC");
+
+        [ChatCommand("bandit")]
+        private void CmdBandit(BasePlayer player, string command, string[] args) => MonumentTeleport(player, _banditPos, "Лагерь бандитов");
+
+        private void MonumentTeleport(BasePlayer player, Vector3? pos, string label)
+        {
+            if (!HasPerm(player, PermUse)) { Msg(player, "Нет доступа (<color=#E06666>octatp.use</color>)"); return; }
+            if (!_cfg.MonumentTp) { Msg(player, "Телепорты в города отключены в конфиге"); return; }
+            if (pos == null) { Msg(player, $"Метка <color=#E06666>{label}</color> не найдена на этой карте"); return; }
+            if (_cfg.BlockWhenHostile && !HasPerm(player, PermAdmin) && player.unHostileTime > Time.time)
+            {
+                Msg(player, "Вы в <color=#E06666>розыске</color> — сначала отойдите от городов");
+                return;
+            }
+            StartTeleport(player, pos.Value);
+            Msg(player, $"Цель: <color=#E8B84B>{label}</color>");
+        }
+
+        // ── Админ: телепорт по метке на карте (/tpm вкл/выкл) ───────────────
+
+        [ChatCommand("tpm")]
+        private void CmdTpMarker(BasePlayer player, string command, string[] args)
+        {
+            if (!HasPerm(player, PermAdmin)) { Msg(player, "Нет доступа (<color=#E06666>octatp.admin</color>)"); return; }
+            if (_mapTp.Remove(player.userID))
+                Msg(player, "Телепорт по метке <color=#E06666>выключен</color> — метки работают как обычно");
+            else
+            {
+                _mapTp.Add(player.userID);
+                Msg(player, "Телепорт по метке <color=#59C073>включён</color> — поставьте метку на карте (правый клик)");
+            }
+        }
+
+        // хук создания метки на карте; false — метка не ставится, вместо неё телепорт
+        private object OnMapMarkerAdd(BasePlayer player, ProtoBuf.MapNote note)
+        {
+            if (player == null || !_mapTp.Contains(player.userID)) return null;
+            var pos = note.worldPosition;
+
+            // земля или крыша: луч сверху вниз, берём самую высокую поверхность
+            float y = TerrainMeta.HeightMap.GetHeight(pos);
+            var top = TerrainMeta.HighestPoint.y + 250f;
+            var hits = Physics.RaycastAll(new Vector3(pos.x, top, pos.z), Vector3.down, top,
+                Rust.Layers.Mask.World | Rust.Layers.Mask.Terrain | Rust.Layers.Mask.Default,
+                QueryTriggerInteraction.Ignore);
+            if (hits.Length > 0) y = hits.Max(h => h.point.y);
+            if (player.IsFlying) y = Mathf.Max(y, player.transform.position.y);
+
+            player.PauseFlyHackDetection(15f); // чтобы античит не кикнул за мгновенный прыжок
+            DoTeleport(player, new Vector3(pos.x, y + 1f, pos.z));
+            Msg(player, $"Телепорт по метке: <color=#E8B84B>{pos.x:0} {y:0} {pos.z:0}</color>");
+            return false;
         }
     }
 }
