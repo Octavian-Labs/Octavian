@@ -28,6 +28,9 @@ public class RsmSettings
     public string ServerUrl { get; set; } = "";
     public string HeaderImage { get; set; } = "";
     public string LogoImage { get; set; } = "";
+    // Домен сервера (A-запись, напр. rust.example.com): подключение по DNS SRV
+    // и server.favoritesEndpoint — избранное переживает смену IP/порта
+    public string ServerDomain { get; set; } = "";
     public string ExtraTags { get; set; } = ""; // свободные теги через запятую (после wipe/mode)
 
     public string Hostname { get; set; } = "OCTAVIAN RUST";

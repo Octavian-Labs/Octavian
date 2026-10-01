@@ -56,6 +56,27 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
+                                <TextBlock Text="Домен сервера (server.favoritesEndpoint)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="In_Domain" ToolTip="A-запись, напр. rust.example.com — подключение и избранное по домену (нужны A+SRV записи)"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                                <DockPanel LastChildFill="False">
+                                    <ui:Button Content="❔ КАК НАСТРОИТЬ ДОМЕН" Style="{StaticResource OctaCmdBtn}"
+                                               DockPanel.Dock="Left" Click="DomainGuide_Click"
+                                               ToolTip="Гайд: A + SRV записи (Cloudflare и др.)"/>
+                                    <TextBlock Text="client.connect rust.example.com"
+                                               Foreground="{StaticResource B.TextDim}" FontSize="11"
+                                               FontFamily="Consolas" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                </DockPanel>
+                            </StackPanel>
+                        </Grid>
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="16"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
                                 <TextBlock Text="Баннер (server.headerimage URL)" Style="{StaticResource OctaFieldLabel}"/>
                                 <TextBox x:Name="In_Header"/>
                             </StackPanel>

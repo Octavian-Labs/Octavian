@@ -314,12 +314,15 @@ public partial class DashboardPage : Page
     // ── Подключение: адрес для игроков ─────────────────────────────────────
     private string? _connectAddr; // "ip:port"
 
-    // Приоритет адреса: remote → RconHost; заданный ServerIp → он;
-    // иначе LAN сразу + попытка узнать внешний IP через ipwho.is.
+    // Приоритет адреса: remote → RconHost; заданный домен → он (SRV-запись
+    // сама резолвит порт); заданный ServerIp → он; иначе LAN сразу +
+    // попытка узнать внешний IP через ipwho.is.
     private async Task DetectConnectAddress()
     {
         var s = App.Settings;
         if (s.IsRemoteMode) { SetConnect(s.RconHost, "УДАЛЬНЫЙ СЕРВЕР — подключение в игре (F1)"); return; }
+        if (!string.IsNullOrWhiteSpace(s.ServerDomain))
+        { SetConnectDomain(s.ServerDomain.Trim()); return; }
         if (!string.IsNullOrWhiteSpace(s.ServerIp) && s.ServerIp != "0.0.0.0")
         { SetConnect(s.ServerIp, "АДРЕС СЕРВЕРА — подключение в игре (F1)"); return; }
 
@@ -327,6 +330,18 @@ public partial class DashboardPage : Page
         SetConnect(lan, "ЛОКАЛЬНЫЙ АДРЕС (LAN) — подключение в игре (F1)");
         var pub = await PublicIPv4Async();
         if (pub != null) SetConnect(pub, "ВНЕШНИЙ IP — подключение в игре (F1)");
+    }
+
+    // Подключение по домену: порт не пишем — SRV-запись отдаёт его сама
+    private void SetConnectDomain(string domain)
+    {
+        if (Dispatcher.HasShutdownStarted) return;
+        Dispatcher.Invoke(() =>
+        {
+            _connectAddr = domain;
+            TxtConnectLabel.Text = "ДОМЕН СЕРВЕРА (DNS SRV) — подключение в игре (F1)";
+            TxtConnect.Text = $"client.connect {domain}";
+        });
     }
 
     private void SetConnect(string ip, string label)
@@ -376,6 +391,8 @@ public partial class DashboardPage : Page
     private void SteamConnect_Click(object sender, RoutedEventArgs e)
     {
         var addr = _connectAddr ?? $"127.0.0.1:{App.Settings.GamePort}";
+        // домен хранится без порта, а steam://connect требует host:port
+        if (!addr.Contains(':')) addr += $":{App.Settings.GamePort}";
         try
         {
             Process.Start(new ProcessStartInfo($"steam://connect/{addr}") { UseShellExecute = true });

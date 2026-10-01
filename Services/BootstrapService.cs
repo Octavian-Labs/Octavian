@@ -178,6 +178,8 @@ public class BootstrapService
         cfg["server.url"] = _s.ServerUrl;
         cfg["server.headerimage"] = _s.HeaderImage;
         cfg["server.logoimage"] = _s.LogoImage;
+        if (!string.IsNullOrWhiteSpace(_s.ServerDomain))
+            cfg["server.favoritesEndpoint"] = _s.ServerDomain.Trim();
         cfg["server.tags"] = ServerProfiles.BuildTags(_s);
         cfg["server.maxplayers"] = _s.MaxPlayers.ToString();
         cfg["server.worldsize"] = _s.WorldSize.ToString();

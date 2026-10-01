@@ -56,6 +56,7 @@ public partial class SetupWizardWindow : Window
         TxtHostname.Text = _s.Hostname;
         TxtIdentity.Text = _s.Identity;
         TxtDescription.Text = _s.Description;
+        TxtDomain.Text = _s.ServerDomain;
         TxtGamePort.Text = _s.GamePort.ToString();
         TxtQueryPort.Text = _s.QueryPort.ToString();
         TxtRconPort.Text = _s.RconPort.ToString();
@@ -393,7 +394,11 @@ public partial class SetupWizardWindow : Window
             return Warn("Порты должны быть разными.");
         if (TxtRconPassword.Text.Length < 8)
             return Warn("RCON пароль — минимум 8 символов.");
+        var domain = TxtDomain.Text.Trim().ToLowerInvariant();
+        if (domain.Length > 0 && Uri.CheckHostName(domain) != UriHostNameType.Dns)
+            return Warn("Домен: нужен вид rust.example.com (без http:// и порта).");
         _s.Hostname = host; _s.Identity = ident;
+        _s.ServerDomain = domain;
         _s.Description = TxtDescription.Text.Trim();
         _s.GamePort = gp; _s.QueryPort = qp; _s.RconPort = rp;
         _s.RconPassword = TxtRconPassword.Text;

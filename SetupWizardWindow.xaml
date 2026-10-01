@@ -262,6 +262,9 @@
                             <TextBox x:Name="TxtRconPort"/>
                         </StackPanel>
                     </UniformGrid>
+                    <TextBlock Text="Домен сервера (опционально — A+SRV записи, напр. rust.example.com)" Style="{StaticResource OctaFieldLabel}"/>
+                    <TextBox x:Name="TxtDomain" Margin="0,0,0,10"
+                             ToolTip="Если настроен домен — подключение и избранное по домену; гайд: «Серв. конфиг» → «КАК НАСТРОИТЬ ДОМЕН»"/>
                     <TextBlock Text="RCON пароль" Style="{StaticResource OctaFieldLabel}"/>
                     <DockPanel Margin="0,0,0,10">
                         <ui:Button x:Name="BtnGenPass" DockPanel.Dock="Right" Content="СГЕНЕРИРОВАТЬ"

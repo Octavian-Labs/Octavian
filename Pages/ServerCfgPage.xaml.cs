@@ -27,7 +27,7 @@ public partial class ServerCfgPage : Page
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
         "server.hostname", "server.description", "server.url", "server.tags",
-        "server.headerimage", "server.logoimage",
+        "server.headerimage", "server.logoimage", "server.favoritesendpoint",
         "server.maxplayers", "server.saveinterval", "server.idlekick",
         "server.pve", "censorplayerlist.enabled", "radiation.enabled",
         "server.levelurl", "server.seed", "server.worldsize",
@@ -61,6 +61,7 @@ public partial class ServerCfgPage : Page
         In_Tags.Text = cfg["server.tags"];
         In_Header.Text = cfg["server.headerimage"];
         In_Logo.Text = cfg["server.logoimage"];
+        In_Domain.Text = Val("server.favoritesendpoint", s.ServerDomain);
         In_MaxPlayers.Text = Val("server.maxplayers", s.MaxPlayers.ToString());
         In_SaveInterval.Text = Val("server.saveinterval", s.SaveInterval.ToString());
         In_IdleKick.Text = Val("server.idlekick", "30");
@@ -121,6 +122,7 @@ public partial class ServerCfgPage : Page
         cfg["server.tags"] = In_Tags.Text.Trim();
         cfg["server.headerimage"] = In_Header.Text.Trim();
         cfg["server.logoimage"] = In_Logo.Text.Trim();
+        cfg["server.favoritesendpoint"] = In_Domain.Text.Trim().ToLowerInvariant();
         Set("server.maxplayers", In_MaxPlayers.Text.Trim());
         Set("server.saveinterval", In_SaveInterval.Text.Trim());
         Set("server.idlekick", In_IdleKick.Text.Trim());
@@ -153,6 +155,8 @@ public partial class ServerCfgPage : Page
         // hostname/description живут и в launch-аргументах — держим настройки в синхроне
         App.Settings.Hostname = In_Hostname.Text.Trim();
         App.Settings.Description = In_Description.Text.Trim();
+        // Домен нужен и менеджеру: строка подключения на дашборде
+        App.Settings.ServerDomain = In_Domain.Text.Trim().ToLowerInvariant();
         App.Settings.Save(App.SettingsPath);
         TxtStatus.Text = "✓ сохранено";
     }
@@ -202,11 +206,56 @@ public partial class ServerCfgPage : Page
         if (tags.Length > 4) errors.Add("В server browser отображаются только первые четыре тега.");
         if (new[] { App.Settings.GamePort, App.Settings.QueryPort, App.Settings.RconPort }.Distinct().Count() != 3)
             errors.Add("Game, Query и RCON порты должны различаться.");
+        var domain = In_Domain.Text.Trim();
+        if (domain.Length > 0 && !Uri.CheckHostName(domain).Equals(UriHostNameType.Dns))
+            errors.Add("Домен: нужен вид rust.example.com (A-запись, без http:// и порта).");
         return errors;
     }
 
     private static string PortState(HashSet<int> ports, int port)
         => ports.Contains(port) ? $"{port} OK" : $"{port} НЕ СЛУШАЕТ";
+
+    // Встроенный гайд по DNS (сокращённая версия Docs/DOMAIN.md в репозитории)
+    private void DomainGuide_Click(object s, RoutedEventArgs e)
+        => new InfoWindow("Свой домен для сервера", DomainGuideText, Window.GetWindow(this)).Show();
+
+    private const string DomainGuideText =
+@"Rust умеет подключаться к серверу по домену через DNS SRV-запись
+(wiki.facepunch.com/rust/dns-records). Нужны ДВЕ записи у вашего
+DNS-провайдера (Cloudflare, GoDaddy, reg.ru и т.п.):
+
+  1) A-запись:    rust.example.com  ->  IPv4 сервера
+  2) SRV-запись:  _rust._udp.<имя A-записи>  ->  target: rust.example.com,
+                  port: ваш server.port
+
+ПРИМЕР ДЛЯ CLOUDFLARE  (DNS -> Records -> Add record):
+
+  • Type A:    Name = rust, IPv4 = ваш IP,
+               Proxy status = DNS only  <-- важно, серое облако!
+  • Type SRV:  Service = _rust, Proto = _udp, Name = rust,
+               Priority = 0, Weight = 0,
+               Port = ваш server.port, Target = rust.example.com
+
+ВАЖНО:
+  • Оранжевое облако (проксирование Cloudflare) у A-записи ВЫКЛЮЧИТЬ —
+    игровой трафик Rust не HTTP и через HTTP-прокси не пойдёт.
+  • Туннель cloudflared для игрового UDP-трафика не нужен:
+    достаточно обычных DNS-записей.
+  • На сервере должен быть открыт/проброшен UDP-порт server.port
+    (и query-порт для списка серверов).
+
+ПОСЛЕ НАСТРОЙКИ:
+  • Подключение из консоли клиента (F1):
+        client.connect rust.example.com
+    Порт указывать не нужно — SRV-запись отдаёт его сама.
+  • Впишите домен в поле слева — RSM пропишет
+    server.favoritesEndpoint в server.cfg: игроки, добавившие
+    сервер в избранное, найдут его даже после смены IP/порта.
+  • На дашборде строка «client.connect» начнёт показывать домен.
+
+ПРОВЕРКА ЗАПИСЕЙ (cmd/PowerShell):
+    nslookup -type=SRV _rust._udp.rust.example.com
+    Resolve-DnsName -Type SRV _rust._udp.rust.example.com";
 
     private static async Task<string> QueryA2s(int port)
     {
