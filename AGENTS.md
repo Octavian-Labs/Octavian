@@ -1,0 +1,25 @@
+# Octavian RSM — заметки для агента
+
+## Сборка
+
+- Обычная сборка: `dotnet build -c Release` → `bin\Release\net8.0-windows\`
+- **После каждого изменения собирать portable-EXE сразу:**
+  ```
+  dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o bin\publish-portable
+  ```
+  Результат: `bin\publish-portable\OctavianRSM.exe` (~76 МБ self-contained single-file)
+- Если запущенный менеджер держит `bin\Release` — собирать проверку в `bin\checkN` и сообщать пользователю.
+- Тест-хук окна конфига плагина: `OctavianRSM.exe --test-config <ИмяПлагина>`.
+
+## Git
+
+- Репозиторий самодостаточен: плагин OctaAdminTools встраивается из `..\..\Server\carbon\plugins` в дев-окружении, иначе из `plugins/` внутри проекта.
+- Пушим в `main` напрямую. Релизы — через `gh release create` + загрузка `bin\publish-portable\OctavianRSM-v<версия>-win-x64.exe` (копия publish-EXE с версией в имени).
+
+## Правила проекта
+
+- Из коробки встраивается ТОЛЬКО OctaAdminTools — других плагинов в ресурсах быть не должно.
+- Конфиги плагинов — редактор по ⚙ на вкладке «Плагины» (таблица + JSON, поле OctaDes).
+- Сырые конфиги сервера/ядра Carbon — вкладка «РЕДАКТОР ФАЙЛОВ» в «Серв. конфиг».
+- Все окна — WindowStyle=None + OctaTitleBar (кастомная шапка).
+- Ошибки редактора конфигов пишутся в `data\config-errors.log`.
