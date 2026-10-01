@@ -1,43 +1,49 @@
+// OctaESP — админский ESP в домовом стиле OctavianRSM.
+// Переработанный AdminESP (FineINK 0.3.01): исправлены наследование компонента,
+// потерянный хук дисконнекта, дёргание флага IsAdmin на каждую отрисовку,
+// плюс добавлены подсветка цели, смотрящей на админа, и отображение оружия.
+// v2.0.0 — интерфейс переведён на Chaos UIFramework (требуется Oxide.Ext.Chaos).
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
-using System.Text;
 using Newtonsoft.Json;
 using Oxide.Core;
-using Oxide.Game.Rust.Cui;
 using UnityEngine;
+using Oxide.Ext.Chaos;
+using Oxide.Ext.Chaos.Data;
+using Oxide.Ext.Chaos.UIFramework;
+using Chaos = Oxide.Ext.Chaos;
+using UIColor = Oxide.Ext.Chaos.UIFramework.Color;
+using Font = Oxide.Ext.Chaos.UIFramework.Font;
+using UIAnchor = Oxide.Ext.Chaos.UIFramework.Anchor;
+using Offset = Oxide.Ext.Chaos.UIFramework.Offset;
+using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    // OctaESP — админский ESP в домовом стиле OctavianRSM.
-    // Переработанный AdminESP (FineINK 0.3.01): исправлены наследование компонента,
-    // потерянный хук дисконнекта, дёргание флага IsAdmin на каждую отрисовку,
-    // плюс добавлены подсветка цели, смотрящей на админа, и отображение оружия.
-    [Info("OctaESP", "Octavian", "1.1.1")]
-    [Description("Админский ESP: имена/здоровье/оружие, боксы, линия взгляда, спящие. HUD-меню, привязка на клавишу через octaesp.toggle")]
-    public class OctaESP : RustPlugin
+    [Info("OctaESP", "Octavian", "2.0.0")]
+    [Description("Админский ESP: имена/здоровье/оружие, боксы, линия взгляда, спящие, NPC. Chaos-меню, бинд через octaesp.toggle")]
+    public class OctaESP : ChaosPlugin
     {
-        private const string PermUse  = "octaesp.use";
-        private const string UiButton = "OctaESP.Button";
-        private const string UiMenu   = "OctaESP.Menu";
-        // полноэкранная подложка под меню — клик вне меню закрывает его
-        private const string UiMenuBg = "OctaESP.Menu.Bg";
+        [Chaos.Permission] private const string PermUse = "octaesp.use";
 
-        // палитра Octavian: тёмная панель + золотой акцент
-        private const string ColPanel  = "0.05 0.07 0.10 0.92";
-        private const string ColRow    = "0.10 0.13 0.18 0.80";
-        private const string ColAccent = "0.91 0.72 0.29 1";
-        private const string ColOn     = "0.35 0.75 0.45 0.9";
-        private const string ColOff    = "0.75 0.30 0.30 0.9";
-        private const string ColText   = "0.92 0.94 0.97 1";
-        private const string ColDim    = "0.55 0.60 0.68 1";
+        private const string UiMenu   = "OCTAESP_UI";
+        private const string UiButton = "OCTAESP_BUTTON";
+        private const string UiMenuBg = "OCTAESP_UI_BG";
+
+        private CommandCallbackHandler m_Callbacks;
+        private Datafile<EspData> m_Data;
 
         private static OctaESP _i; // компонент отрисовки читает конфиг через инстанс
 
-        // ── Настройки: глобальный конфиг + per-player ────────────────────────
+        // ── Конфиг (Chaos ConfigurationFile) ────────────────────────────────
 
-        private sealed class PluginConfig
+        private ConfigData Configuration => ConfigurationData as ConfigData;
+
+        protected override ConfigurationFile OnLoadConfig(ref ConfigurationFile configurationFile) =>
+            configurationFile = new ConfigurationFile<ConfigData>(Config);
+
+        protected class ConfigData : BaseConfigData
         {
             [JsonProperty("Показывать HUD-кнопку ◆ ESP слева внизу")]
             public bool HudButton = true;
@@ -67,20 +73,13 @@ namespace Oxide.Plugins
             public string ChatPrefix = "<color=#E8B84B>◆ OctaESP</color>";
         }
 
-        private PluginConfig _cfg;
-
-        protected override void LoadDefaultConfig() => _cfg = new PluginConfig();
-        protected override void LoadConfig()
+        // индивидуальные настройки каждого админа — data/OctaESP.json через Chaos Datafile
+        protected class EspData
         {
-            base.LoadConfig();
-            try { _cfg = Config.ReadObject<PluginConfig>() ?? new PluginConfig(); }
-            catch { _cfg = new PluginConfig(); }
-            SaveConfig();
+            public Dictionary<ulong, EspSettings> Players = new();
         }
-        protected override void SaveConfig() => Config.WriteObject(_cfg, true);
 
-        // индивидуальные настройки каждого админа — живут в data/OctaESP.json
-        private sealed class EspSettings
+        protected class EspSettings
         {
             public bool Enabled;
             public float Interval;
@@ -95,38 +94,34 @@ namespace Oxide.Plugins
             public bool Npcs;
         }
 
-        private Dictionary<ulong, EspSettings> _sets = new();
-        private readonly HashSet<ulong> _menuOpen = new();
-        // живые NPC на сервере — ведём сами через хуки, чтобы не сканить serverEntities каждый тик
-        private readonly HashSet<NPCPlayer> _npcs = new();
-
-        private EspSettings Get(BasePlayer p) => _sets.TryGetValue(p.userID, out var s)
+        private EspSettings Get(BasePlayer p) => m_Data.Data.Players.TryGetValue(p.userID, out var s)
             ? s
-            : _sets[p.userID] = new EspSettings
+            : m_Data.Data.Players[p.userID] = new EspSettings
             {
-                Interval = _cfg.DefaultInterval,
-                Distance = _cfg.DefaultDistance,
-                EyeLength = _cfg.DefaultEyeLength
+                Interval = Configuration.DefaultInterval,
+                Distance = Configuration.DefaultDistance,
+                EyeLength = Configuration.DefaultEyeLength
             };
 
-        private void LoadData()
-        {
-            try { _sets = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, EspSettings>>(Name) ?? new(); }
-            catch { _sets = new(); }
-        }
-
-        private void SaveData() => Interface.Oxide.DataFileSystem.WriteObject(Name, _sets);
+        // живые NPC — ведём сами через хуки, чтобы не сканить serverEntities каждый тик
+        private readonly HashSet<NPCPlayer> _npcs = new();
+        private readonly HashSet<ulong> _menuOpen = new();
 
         private void Msg(BasePlayer p, string text) =>
-            p.ChatMessage($"{_cfg.ChatPrefix} <color=#9AA4B2>—</color> {text}");
+            p.ChatMessage($"{Configuration.ChatPrefix} <color=#9AA4B2>—</color> {text}");
+
+        // ChaosPlugin требует словарь фраз — сообщения шлём напрямую, словарь минимальный
+        protected override void PopulatePhrases() => m_Messages = new Dictionary<string, string>();
 
         // ── Жизненный цикл ──────────────────────────────────────────────────
 
         private void Init()
         {
             _i = this;
-            LoadData();
-            permission.RegisterPermission(PermUse, this);
+            m_Callbacks = new CommandCallbackHandler(this);
+            // путь отличается от старого data/OctaESP.json — там был плоский словарь
+            m_Data = new Datafile<EspData>("OctaESP/settings");
+            cmd.AddChatCommand("esp", this, CmdEsp);
         }
 
         private void OnServerInitialized()
@@ -148,6 +143,8 @@ namespace Oxide.Plugins
             if (ent is NPCPlayer npc) _npcs.Remove(npc);
         }
 
+        private void OnServerSave() => m_Data.Save();
+
         private void Unload()
         {
             foreach (var p in BasePlayer.activePlayerList)
@@ -159,7 +156,7 @@ namespace Oxide.Plugins
             }
             _menuOpen.Clear();
             _npcs.Clear();
-            SaveData();
+            m_Data.Save();
             _i = null;
         }
 
@@ -177,11 +174,11 @@ namespace Oxide.Plugins
             if (!permission.UserHasPermission(player.UserIDString, PermUse))
             {
                 // право отобрали — забываем настройки, чтобы не таскать хвост
-                if (_sets.Remove(player.userID)) SaveData();
+                if (m_Data.Data.Players.Remove(player.userID)) m_Data.Save();
                 return;
             }
-            if (_cfg.HudButton) BuildButton(player);
-            if (_sets.TryGetValue(player.userID, out var s) && s.Enabled) SetEnabled(player, true, silent: true);
+            if (Configuration.HudButton) BuildButton(player);
+            if (m_Data.Data.Players.TryGetValue(player.userID, out var s) && s.Enabled) SetEnabled(player, true, silent: true);
         }
 
         private void OnPlayerDisconnected(BasePlayer player)
@@ -194,8 +191,7 @@ namespace Oxide.Plugins
         }
 
         // ddraw.* рендерится только на клиенте с флагом IsAdmin. Ставим флаг на
-        // время работы ESP одним сетевым обновлением — оригинал дёргал его на
-        // каждый вызов отрисовки, что спамило сеть. authLevel сервера не трогаем.
+        // время работы ESP одним сетевым обновлением. authLevel сервера не трогаем.
         private static void AdminFlag(BasePlayer player, bool on)
         {
             if (player == null || player.Connection == null) return;
@@ -224,13 +220,12 @@ namespace Oxide.Plugins
                 if (comp != null) UnityEngine.Object.Destroy(comp);
                 AdminFlag(player, false);
             }
-            SaveData();
+            m_Data.Save();
             if (!silent) Msg(player, on ? "ESP <color=#59C073>включён</color>" : "ESP <color=#E06666>выключен</color>");
         }
 
         // ── Команды ─────────────────────────────────────────────────────────
 
-        [ChatCommand("esp")]
         private void CmdEsp(BasePlayer player, string command, string[] args)
         {
             if (!permission.UserHasPermission(player.UserIDString, PermUse))
@@ -265,54 +260,7 @@ namespace Oxide.Plugins
             SetEnabled(player, !Get(player).Enabled);
         }
 
-        [ConsoleCommand("octaesp.ui")]
-        private void CmdUi(ConsoleSystem.Arg arg)
-        {
-            var player = arg.Player() ?? arg.Connection?.player as BasePlayer;
-            if (player == null || !permission.UserHasPermission(player.UserIDString, PermUse)) return;
-            ToggleMenu(player);
-        }
-
-        // общий приёмник настроек из меню: octaesp.set <ключ> <значение>
-        [ConsoleCommand("octaesp.set")]
-        private void CmdSet(ConsoleSystem.Arg arg)
-        {
-            var player = arg.Player();
-            if (player == null || !permission.UserHasPermission(player.UserIDString, PermUse)) return;
-            if (arg.Args.Length < 2) return;
-
-            // в текущем Rust arg.Args — span, а не string[]: берём строки через GetString
-            var s = Get(player);
-            var key = arg.GetString(0).ToLowerInvariant();
-            var val = arg.GetString(1);
-            var on = val == "1" || val.Equals("true", StringComparison.OrdinalIgnoreCase);
-
-            switch (key)
-            {
-                case "enable":   SetEnabled(player, on); break;
-                case "names":    s.Names = on; break;
-                case "boxes":    s.Boxes = on; break;
-                case "eyeline":  s.EyeLine = on; break;
-                case "sleepers": s.Sleepers = on; break;
-                case "admins":   s.ShowAdmins = on; break;
-                case "weapon":   s.Weapon = on; break;
-                case "npcs":     s.Npcs = on; break;
-                case "distance":
-                    if (int.TryParse(val, out var d)) s.Distance = Math.Clamp(d, 50, _cfg.MaxDistance);
-                    break;
-                case "eyelen":
-                    if (int.TryParse(val, out var l)) s.EyeLength = Math.Clamp(l, 10, 300);
-                    break;
-                case "interval":
-                    if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out var f))
-                        s.Interval = Math.Clamp(f, _cfg.MinInterval, 2f);
-                    break;
-            }
-            SaveData();
-            if (_menuOpen.Contains(player.userID)) BuildMenu(player);
-        }
-
-        // ── Компонент отрисовки ─────────────────────────────────────────────
+        // ── Компонент отрисовки (без изменений) ─────────────────────────────
 
         private sealed class EspDrawer : MonoBehaviour
         {
@@ -353,7 +301,7 @@ namespace Oxide.Plugins
 
             private void DrawList(IEnumerable<BasePlayer> list, float ttl, bool npcs = false)
             {
-                var cfg = _i._cfg;
+                var cfg = _i.Configuration;
                 foreach (var t in list)
                 {
                     if (t == null || t == _self || t.transform == null) continue;
@@ -362,7 +310,7 @@ namespace Oxide.Plugins
                     if (t.IsAdmin && !_s.ShowAdmins) continue;
 
                     var sleeping = t.IsSleeping();
-                    var color = npcs ? new Color(1f, 0.6f, 0.15f) : sleeping ? Color.white : Color.cyan;
+                    var color = npcs ? new UnityEngine.Color(1f, 0.6f, 0.15f) : sleeping ? UnityEngine.Color.white : UnityEngine.Color.cyan;
                     var aimed = false;
 
                     // цель смотрит на админа: маленький угол между взглядом и направлением на нас
@@ -373,15 +321,15 @@ namespace Oxide.Plugins
                             Vector3.Angle(t.eyes.HeadRay().direction, toMe) < 6f)
                         {
                             aimed = true;
-                            color = Color.red;
+                            color = UnityEngine.Color.red;
                         }
                     }
 
                     if (_s.Names)
                     {
                         var name = string.IsNullOrEmpty(t.displayName) ? t.ShortPrefabName : t.displayName;
-                        var sb = new StringBuilder(96);
-                        sb.Append("<size=").Append(_i._cfg.LabelSize).Append('>');
+                        var sb = new System.Text.StringBuilder(96);
+                        sb.Append("<size=").Append(cfg.LabelSize).Append('>');
                         if (aimed) sb.Append("⚠ ");
                         sb.Append(name).Append(" · ").Append(dist.ToString("0")).Append(" м");
                         if (sleeping) sb.Append(" · СПИТ");
@@ -399,7 +347,7 @@ namespace Oxide.Plugins
                             t.transform.position + new Vector3(0, 1f, 0),
                             BasePlayer.GetHeight(t.modelState.ducked));
                     if (_s.EyeLine && !sleeping && t.eyes != null)
-                        _self.SendConsoleCommand("ddraw.line", ttl, aimed ? Color.red : new Color(1f, 0.8f, 0.2f),
+                        _self.SendConsoleCommand("ddraw.line", ttl, aimed ? UnityEngine.Color.red : new UnityEngine.Color(1f, 0.8f, 0.2f),
                             t.eyes.position, t.eyes.position + t.eyes.HeadRay().direction * _s.EyeLength);
                 }
             }
@@ -413,192 +361,194 @@ namespace Oxide.Plugins
                 return $"<color={col}>{new string('█', full)}{new string('░', 8 - full)}</color> {t.health:0}";
             }
 
-            private void DDraw(string cmd, float ttl, Color color, Vector3 pos, string text) =>
+            private void DDraw(string cmd, float ttl, UnityEngine.Color color, Vector3 pos, string text) =>
                 _self.SendConsoleCommand(cmd, ttl, color, pos, text);
         }
 
-        // ── HUD: кнопка и меню ──────────────────────────────────────────────
+        // ── Chaos UI ────────────────────────────────────────────────────────
 
+        private static readonly Style m_PanelStyle = new Style
+        {
+            ImageColor = new UIColor(0.05f, 0.07f, 0.10f, 0.94f),
+            Material = Materials.BackgroundBlur
+        };
+
+        private static readonly Style m_RowStyle = new Style
+        {
+            ImageColor = new UIColor(0.10f, 0.13f, 0.18f, 0.85f),
+            Material = Materials.GreyOut
+        };
+
+        private static readonly Style m_TitleStyle = new Style
+        {
+            Font = Font.RobotoCondensedBold,
+            FontSize = 16,
+            FontColor = new UIColor(0.91f, 0.72f, 0.29f, 1f), // золото Octavian
+            Alignment = TextAnchor.MiddleCenter
+        };
+
+        private static readonly Style m_LabelStyle = new Style
+        {
+            Font = Font.RobotoCondensedRegular,
+            FontSize = 13,
+            FontColor = new UIColor(0.92f, 0.94f, 0.97f, 1f),
+            Alignment = TextAnchor.MiddleLeft
+        };
+
+        private static readonly Style m_ValueStyle = new Style
+        {
+            Font = Font.RobotoCondensedBold,
+            FontSize = 13,
+            FontColor = new UIColor(0.91f, 0.72f, 0.29f, 1f),
+            Alignment = TextAnchor.MiddleCenter
+        };
+
+        private static readonly Style m_MasterOnStyle = new Style
+        {
+            ImageColor = new UIColor(0.35f, 0.75f, 0.45f, 0.9f),
+            Material = Materials.GreyOut,
+            Font = Font.RobotoCondensedBold,
+            FontSize = 14,
+            FontColor = new UIColor(1f, 1f, 1f, 1f),
+            Alignment = TextAnchor.MiddleCenter
+        };
+
+        private static readonly Style m_MasterOffStyle = new Style
+        {
+            ImageColor = new UIColor(0.75f, 0.30f, 0.30f, 0.9f),
+            Material = Materials.GreyOut,
+            Font = Font.RobotoCondensedBold,
+            FontSize = 14,
+            FontColor = new UIColor(1f, 1f, 1f, 1f),
+            Alignment = TextAnchor.MiddleCenter
+        };
+
+        // маленькая кнопка ◆ ESP в левом нижнем углу
         private void BuildButton(BasePlayer player)
         {
-            CuiHelper.DestroyUi(player, UiButton);
-            var ui = new CuiElementContainer();
-            ui.Add(new CuiPanel
-            {
-                Image = { Color = ColPanel },
-                RectTransform = { AnchorMin = "0.008 0.022", AnchorMax = "0.066 0.052" },
-                CursorEnabled = false
-            }, "Hud.Menu", UiButton);
-            ui.Add(new CuiButton
-            {
-                Button = { Color = "0 0 0 0", Command = "octaesp.ui" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
-                Text = { Text = "◆ ESP", Color = ColAccent, FontSize = 13, Align = TextAnchor.MiddleCenter, Font = "robotocondensed-bold.ttf" }
-            }, UiButton);
-            CuiHelper.AddUi(player, ui);
+            var root = BaseContainer.Create(UiButton, Layer.HudMenu, UIAnchor.BottomLeft, new Offset(10, 12, 82, 34));
+            ChaosPrefab.TextButton(root, UIAnchor.FullStretch, Offset.zero, "◆ ESP", m_LabelStyle, ChaosStyle.BlackOutline)
+                .WithCallback(m_Callbacks, arg => ToggleMenu(player), $"{player.userID}.button");
+            ChaosUI.Show(player, root);
         }
 
         private void ToggleMenu(BasePlayer player)
         {
             if (_menuOpen.Remove(player.userID))
             {
-                CuiHelper.DestroyUi(player, UiMenu);
-                CuiHelper.DestroyUi(player, UiMenuBg);
+                ChaosUI.Destroy(player, UiMenu);
+                ChaosUI.Destroy(player, UiMenuBg);
                 return;
             }
             _menuOpen.Add(player.userID);
             BuildMenu(player);
         }
 
-        private static string F(float v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+        private const int RowH = 26;   // высота строки настроек
+        private const int RowGap = 4;
+        private const int HeadH = 84;  // шапка + мастер-кнопка
 
-        // якоря i-й строки сверху вниз; header занимает верхние 12% панели
-        private static (string min, string max) RowAnchors(int i, int total)
+        // строка с чекбоксом: [x] Подпись
+        private void AddToggleRow(BaseContainer body, int i, BasePlayer player, string label, Func<EspSettings, bool> get, Action<EspSettings, bool> set, string key)
         {
-            const float top = 0.88f;
-            var h = top / total;
-            var y2 = top - h * i - 0.004f;
-            var y1 = y2 - h + 0.008f;
-            return ($"0.03 {F(y1)}", $"0.97 {F(y2)}");
+            var y = HeadH + i * (RowH + RowGap);
+            ChaosPrefab.Panel(body, UIAnchor.TopStretch, new Offset(8, -y, -8, -(y + RowH)), m_RowStyle)
+                .WithChildren(row =>
+                {
+                    var s = Get(player);
+                    ChaosPrefab.Toggle(row, UIAnchor.CenterLeft, new Offset(8, -10, 28, 10), get(s))
+                        ?.WithCallback(m_Callbacks, arg =>
+                        {
+                            var cur = Get(player);
+                            set(cur, !get(cur));
+                            m_Data.Save();
+                            BuildMenu(player);
+                        }, $"{player.userID}.{key}");
+
+                    TextContainer.Create(row, label, m_LabelStyle, UIAnchor.LeftStretch, new Offset(36, 4, -8, -4));
+                });
         }
 
-        private void AddToggleRow(CuiElementContainer ui, int i, int total, string label, bool on, string key)
+        // строка со значением: Подпись  [−] val [+]
+        private void AddValueRow(BaseContainer body, int i, BasePlayer player, string label, string value, Action<EspSettings> minus, Action<EspSettings> plus, string key)
         {
-            var (min, max) = RowAnchors(i, total);
-            var row = $"{UiMenu}.row{i}";
-            ui.Add(new CuiPanel { Image = { Color = ColRow }, RectTransform = { AnchorMin = min, AnchorMax = max } }, UiMenu, row);
-            ui.Add(new CuiElement
-            {
-                Parent = row,
-                Components =
+            var y = HeadH + i * (RowH + RowGap);
+            ChaosPrefab.Panel(body, UIAnchor.TopStretch, new Offset(8, -y, -8, -(y + RowH)), m_RowStyle)
+                .WithChildren(row =>
                 {
-                    new CuiTextComponent { Text = label, FontSize = 12, Align = TextAnchor.MiddleLeft, Color = ColText },
-                    new CuiRectTransformComponent { AnchorMin = "0.04 0", AnchorMax = "0.7 1" }
-                }
-            });
-            ui.Add(new CuiButton
-            {
-                Button = { Color = on ? ColOn : ColOff, Command = $"octaesp.set {key} {(!on).ToString().ToLowerInvariant()}" },
-                RectTransform = { AnchorMin = "0.72 0.12", AnchorMax = "0.97 0.88" },
-                Text = { Text = on ? "ON" : "OFF", FontSize = 11, Align = TextAnchor.MiddleCenter, Font = "robotocondensed-bold.ttf" }
-            }, row);
-        }
+                    TextContainer.Create(row, label, m_LabelStyle, UIAnchor.LeftStretch, new Offset(10, 4, -120, -4));
 
-        private void AddValueRow(CuiElementContainer ui, int i, int total, string label, string value, string key, float minus, float plus)
-        {
-            var (min, max) = RowAnchors(i, total);
-            var row = $"{UiMenu}.row{i}";
-            ui.Add(new CuiPanel { Image = { Color = ColRow }, RectTransform = { AnchorMin = min, AnchorMax = max } }, UiMenu, row);
-            ui.Add(new CuiElement
-            {
-                Parent = row,
-                Components =
-                {
-                    new CuiTextComponent { Text = label, FontSize = 12, Align = TextAnchor.MiddleLeft, Color = ColText },
-                    new CuiRectTransformComponent { AnchorMin = "0.04 0", AnchorMax = "0.55 1" }
-                }
-            });
-            ui.Add(new CuiButton
-            {
-                Button = { Color = "1 1 1 0.15", Command = $"octaesp.set {key} {F(minus)}" },
-                RectTransform = { AnchorMin = "0.58 0.12", AnchorMax = "0.70 0.88" },
-                Text = { Text = "−", FontSize = 15, Align = TextAnchor.MiddleCenter, Font = "robotocondensed-bold.ttf" }
-            }, row);
-            ui.Add(new CuiElement
-            {
-                Parent = row,
-                Components =
-                {
-                    new CuiTextComponent { Text = value, FontSize = 12, Align = TextAnchor.MiddleCenter, Color = ColAccent },
-                    new CuiRectTransformComponent { AnchorMin = "0.70 0", AnchorMax = "0.85 1" }
-                }
-            });
-            ui.Add(new CuiButton
-            {
-                Button = { Color = "1 1 1 0.15", Command = $"octaesp.set {key} {F(plus)}" },
-                RectTransform = { AnchorMin = "0.85 0.12", AnchorMax = "0.97 0.88" },
-                Text = { Text = "+", FontSize = 15, Align = TextAnchor.MiddleCenter, Font = "robotocondensed-bold.ttf" }
-            }, row);
+                    ChaosPrefab.TextButton(row, UIAnchor.CenterRight, new Offset(-96, 3, -70, -3), "−", m_LabelStyle, ChaosStyle.BlackOutline)
+                        .WithCallback(m_Callbacks, arg => { minus(Get(player)); m_Data.Save(); BuildMenu(player); }, $"{player.userID}.{key}.minus");
+
+                    TextContainer.Create(row, value, m_ValueStyle, UIAnchor.CenterRight, new Offset(-66, 4, -36, -4));
+
+                    ChaosPrefab.TextButton(row, UIAnchor.CenterRight, new Offset(-32, 3, -6, -3), "+", m_LabelStyle, ChaosStyle.BlackOutline)
+                        .WithCallback(m_Callbacks, arg => { plus(Get(player)); m_Data.Save(); BuildMenu(player); }, $"{player.userID}.{key}.plus");
+                });
         }
 
         private void BuildMenu(BasePlayer player)
         {
-            CuiHelper.DestroyUi(player, UiMenu);
-            CuiHelper.DestroyUi(player, UiMenuBg);
             var s = Get(player);
-            const int total = 11; // включить + 7 тоглов + 3 числовых
-            var ui = new CuiElementContainer();
 
-            // невидимый полноэкранный слой под меню: клик мимо панели закрывает её.
-            // идёт первым элементом — рисуется под меню, клики по меню проходят к нему
-            ui.Add(new CuiElement
+            // прозрачный фуллскрин-слой позади меню: клик мимо закрывает его.
+            // шлём до меню — меню рисуется поверх и клики идут на него
+            var bg = ButtonContainer.Create(UiMenuBg, Layer.HudMenu, UIAnchor.FullStretch, Offset.zero)
+                .WithColor(new UIColor(0f, 0f, 0f, 0f))
+                .WithCallback(m_Callbacks, arg => ToggleMenu(player), $"{player.userID}.bg");
+            ChaosUI.Show(player, bg);
+
+            var root = ChaosPrefab.Background(UiMenu, Layer.HudMenu, UIAnchor.Center,
+                new Offset(-170, -250, 170, 250), m_PanelStyle);
+
+            root.WithChildren(body =>
             {
-                Parent = "Hud.Menu",
-                Name = UiMenuBg,
-                Components =
-                {
-                    new CuiButtonComponent { Color = "0 0 0 0", Command = "octaesp.ui" },
-                    new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" }
-                }
-            });
+                ChaosPrefab.Title(body, UIAnchor.TopStretch, new Offset(8, -8, -44, -34), "◆ OCTAVIAN ESP", m_TitleStyle);
 
-            ui.Add(new CuiPanel
-            {
-                Image = { Color = ColPanel },
-                RectTransform = { AnchorMin = "0.072 0.02", AnchorMax = "0.30 0.40" },
-                CursorEnabled = true
-            }, "Hud.Menu", UiMenu);
+                ChaosPrefab.CloseButton(body, UIAnchor.TopRight, new Offset(-36, -6, -8, -34), ChaosStyle.BlackOutline)
+                    .WithCallback(m_Callbacks, arg => ToggleMenu(player), $"{player.userID}.close");
 
-            ui.Add(new CuiElement
-            {
-                Parent = UiMenu,
-                Components =
-                {
-                    new CuiTextComponent { Text = "◆ OCTA ESP", FontSize = 14, Align = TextAnchor.MiddleCenter,
-                                           Color = ColAccent, Font = "robotocondensed-bold.ttf" },
-                    new CuiRectTransformComponent { AnchorMin = "0 0.88", AnchorMax = "0.86 1" }
-                }
-            });
+                // мастер-выключатель
+                ChaosPrefab.TextButton(body, UIAnchor.TopStretch, new Offset(8, -44, -8, -74),
+                        s.Enabled ? "ВЫКЛЮЧИТЬ ESP" : "ВКЛЮЧИТЬ ESP",
+                        s.Enabled ? m_MasterOffStyle : m_MasterOnStyle, ChaosStyle.BlackOutline)
+                    .WithCallback(m_Callbacks, arg =>
+                    {
+                        SetEnabled(player, !Get(player).Enabled);
+                        BuildMenu(player);
+                    }, $"{player.userID}.master");
 
-            // явная кнопка закрытия в шапке
-            ui.Add(new CuiButton
-            {
-                Button = { Color = "0 0 0 0", Command = "octaesp.ui" },
-                RectTransform = { AnchorMin = "0.86 0.88", AnchorMax = "0.99 1" },
-                Text = { Text = "✕", Color = ColDim, FontSize = 13, Align = TextAnchor.MiddleCenter,
-                         Font = "robotocondensed-bold.ttf" }
-            }, UiMenu);
+                var i = 0;
+                AddToggleRow(body, i++, player, "Имена и здоровье",  s => s.Names,    (s, v) => s.Names = v,    "names");
+                AddToggleRow(body, i++, player, "Боксы",            s => s.Boxes,    (s, v) => s.Boxes = v,    "boxes");
+                AddToggleRow(body, i++, player, "Линия взгляда",    s => s.EyeLine,  (s, v) => s.EyeLine = v,  "eyeline");
+                AddToggleRow(body, i++, player, "Спящие игроки",    s => s.Sleepers, (s, v) => s.Sleepers = v, "sleepers");
+                AddToggleRow(body, i++, player, "Показывать админов", s => s.ShowAdmins, (s, v) => s.ShowAdmins = v, "admins");
+                AddToggleRow(body, i++, player, "Оружие в руках",   s => s.Weapon,   (s, v) => s.Weapon = v,   "weapon");
+                AddToggleRow(body, i++, player, "Боты (NPC)",       s => s.Npcs,     (s, v) => s.Npcs = v,     "npcs");
+                i++; // зазор перед числовыми строками
+                AddValueRow(body, i++, player, "Дистанция, м", s.Distance.ToString(),
+                    x => x.Distance = Math.Clamp(x.Distance - 50, 50, Configuration.MaxDistance),
+                    x => x.Distance = Math.Clamp(x.Distance + 50, 50, Configuration.MaxDistance), "distance");
+                AddValueRow(body, i++, player, "Длина линии, м", s.EyeLength.ToString(),
+                    x => x.EyeLength = Math.Clamp(x.EyeLength - 10, 10, 300),
+                    x => x.EyeLength = Math.Clamp(x.EyeLength + 10, 10, 300), "eyelen");
+                AddValueRow(body, i++, player, "Интервал, сек", s.Interval.ToString("0.00", CultureInfo.InvariantCulture),
+                    x => x.Interval = Math.Clamp(x.Interval - 0.05f, Configuration.MinInterval, 2f),
+                    x => x.Interval = Math.Clamp(x.Interval + 0.05f, Configuration.MinInterval, 2f), "interval");
+            })
+            .NeedsCursor()
+            .DestroyExisting();
 
-            var i = 0;
-            // главный выключатель — первой строкой
-            var (min, max) = RowAnchors(i++, total);
-            ui.Add(new CuiButton
-            {
-                Button = { Color = s.Enabled ? ColOff : ColOn, Command = $"octaesp.set enable {(!s.Enabled).ToString().ToLowerInvariant()}" },
-                RectTransform = { AnchorMin = min, AnchorMax = max },
-                Text = { Text = s.Enabled ? "ВЫКЛЮЧИТЬ ESP" : "ВКЛЮЧИТЬ ESP", FontSize = 13,
-                         Align = TextAnchor.MiddleCenter, Font = "robotocondensed-bold.ttf" }
-            }, UiMenu);
-
-            AddToggleRow(ui, i++, total, "Имена и здоровье", s.Names, "names");
-            AddToggleRow(ui, i++, total, "Боксы", s.Boxes, "boxes");
-            AddToggleRow(ui, i++, total, "Линия взгляда", s.EyeLine, "eyeline");
-            AddToggleRow(ui, i++, total, "Спящие игроки", s.Sleepers, "sleepers");
-            AddToggleRow(ui, i++, total, "Показывать админов", s.ShowAdmins, "admins");
-            AddToggleRow(ui, i++, total, "Оружие в руках", s.Weapon, "weapon");
-            AddToggleRow(ui, i++, total, "Боты (NPC)", s.Npcs, "npcs");
-            AddValueRow(ui, i++, total, "Дистанция, м", s.Distance.ToString(), "distance", s.Distance - 50, s.Distance + 50);
-            AddValueRow(ui, i++, total, "Длина линии, м", s.EyeLength.ToString(), "eyelen", s.EyeLength - 10, s.EyeLength + 10);
-            AddValueRow(ui, i++, total, "Интервал, сек", s.Interval.ToString("0.0"), "interval", s.Interval - 0.05f, s.Interval + 0.05f);
-
-            CuiHelper.AddUi(player, ui);
+            ChaosUI.Show(player, root);
         }
 
         private void DestroyUi(BasePlayer player)
         {
-            CuiHelper.DestroyUi(player, UiButton);
-            CuiHelper.DestroyUi(player, UiMenu);
-            CuiHelper.DestroyUi(player, UiMenuBg);
+            ChaosUI.Destroy(player, UiButton);
+            ChaosUI.Destroy(player, UiMenu);
+            ChaosUI.Destroy(player, UiMenuBg);
         }
     }
 }
