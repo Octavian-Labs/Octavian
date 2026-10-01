@@ -29,7 +29,6 @@ namespace Oxide.Plugins
 
         private const string UiMenu   = "OCTAESP_UI";
         private const string UiButton = "OCTAESP_BUTTON";
-        private const string UiMenuBg = "OCTAESP_UI_BG";
 
         private CommandCallbackHandler m_Callbacks;
         private Datafile<EspData> m_Data;
@@ -367,60 +366,48 @@ namespace Oxide.Plugins
 
         // ── Chaos UI ────────────────────────────────────────────────────────
 
-        private static readonly Style m_PanelStyle = new Style
+        // Все стили клонируются из пресетов Chaos — "голый" new Style без спрайта/материала не рендерится
+        private static readonly Style m_PanelStyle = new Style(ChaosStyle.Panel)
         {
             ImageColor = new UIColor(0.05f, 0.07f, 0.10f, 0.94f),
             Material = Materials.BackgroundBlur
         };
 
-        private static readonly Style m_RowStyle = new Style
+        private static readonly Style m_RowStyle = new Style(ChaosStyle.Panel)
         {
-            ImageColor = new UIColor(0.10f, 0.13f, 0.18f, 0.85f),
-            Material = Materials.GreyOut
+            ImageColor = new UIColor(0.10f, 0.13f, 0.18f, 0.85f)
         };
 
-        private static readonly Style m_TitleStyle = new Style
+        private static readonly Style m_TitleStyle = new Style(ChaosStyle.Title)
         {
-            Font = Font.RobotoCondensedBold,
+            Font = Font.RobotoCondensedBold, // пресет Title тащит рукописный PermanentMarker — заменяем
             FontSize = 16,
             FontColor = new UIColor(0.91f, 0.72f, 0.29f, 1f), // золото Octavian
             Alignment = TextAnchor.MiddleCenter
         };
 
-        private static readonly Style m_LabelStyle = new Style
+        private static readonly Style m_LabelStyle = new Style(ChaosStyle.Button)
         {
-            Font = Font.RobotoCondensedRegular,
             FontSize = 13,
             FontColor = new UIColor(0.92f, 0.94f, 0.97f, 1f),
             Alignment = TextAnchor.MiddleLeft
         };
 
-        private static readonly Style m_ValueStyle = new Style
+        private static readonly Style m_ValueStyle = new Style(ChaosStyle.Button)
         {
-            Font = Font.RobotoCondensedBold,
             FontSize = 13,
             FontColor = new UIColor(0.91f, 0.72f, 0.29f, 1f),
             Alignment = TextAnchor.MiddleCenter
         };
 
-        private static readonly Style m_MasterOnStyle = new Style
+        private static readonly Style m_MasterOnStyle = new Style(ChaosStyle.Button)
         {
-            ImageColor = new UIColor(0.35f, 0.75f, 0.45f, 0.9f),
-            Material = Materials.GreyOut,
-            Font = Font.RobotoCondensedBold,
-            FontSize = 14,
-            FontColor = new UIColor(1f, 1f, 1f, 1f),
-            Alignment = TextAnchor.MiddleCenter
+            ImageColor = new UIColor(0.35f, 0.75f, 0.45f, 0.9f)
         };
 
-        private static readonly Style m_MasterOffStyle = new Style
+        private static readonly Style m_MasterOffStyle = new Style(ChaosStyle.Button)
         {
-            ImageColor = new UIColor(0.75f, 0.30f, 0.30f, 0.9f),
-            Material = Materials.GreyOut,
-            Font = Font.RobotoCondensedBold,
-            FontSize = 14,
-            FontColor = new UIColor(1f, 1f, 1f, 1f),
-            Alignment = TextAnchor.MiddleCenter
+            ImageColor = new UIColor(0.75f, 0.30f, 0.30f, 0.9f)
         };
 
         // маленькая кнопка ◆ ESP в левом нижнем углу
@@ -437,7 +424,6 @@ namespace Oxide.Plugins
             if (_menuOpen.Remove(player.userID))
             {
                 ChaosUI.Destroy(player, UiMenu);
-                ChaosUI.Destroy(player, UiMenuBg);
                 return;
             }
             _menuOpen.Add(player.userID);
@@ -449,10 +435,12 @@ namespace Oxide.Plugins
         private const int HeadH = 84;  // шапка + мастер-кнопка
 
         // строка с чекбоксом: [x] Подпись
+        // ВАЖНО: у stretch-якорей Chaos xMin/xMax — абсолютные пиксели от краёв,
+        // поэтому для текста используем CenterLeft/CenterRight с явной шириной
         private void AddToggleRow(BaseContainer body, int i, BasePlayer player, string label, Func<EspSettings, bool> get, Action<EspSettings, bool> set, string key)
         {
             var y = HeadH + i * (RowH + RowGap);
-            ChaosPrefab.Panel(body, UIAnchor.TopStretch, new Offset(8, -y, -8, -(y + RowH)), m_RowStyle)
+            ChaosPrefab.Panel(body, UIAnchor.TopStretch, new Offset(8, -(y + RowH), -8, -y), m_RowStyle)
                 .WithChildren(row =>
                 {
                     var s = Get(player);
@@ -465,7 +453,7 @@ namespace Oxide.Plugins
                             BuildMenu(player);
                         }, $"{player.userID}.{key}");
 
-                    TextContainer.Create(row, label, m_LabelStyle, UIAnchor.LeftStretch, new Offset(36, 4, -8, -4));
+                    TextContainer.Create(row, label, m_LabelStyle, UIAnchor.CenterLeft, new Offset(36, -10, 260, 10));
                 });
         }
 
@@ -473,17 +461,17 @@ namespace Oxide.Plugins
         private void AddValueRow(BaseContainer body, int i, BasePlayer player, string label, string value, Action<EspSettings> minus, Action<EspSettings> plus, string key)
         {
             var y = HeadH + i * (RowH + RowGap);
-            ChaosPrefab.Panel(body, UIAnchor.TopStretch, new Offset(8, -y, -8, -(y + RowH)), m_RowStyle)
+            ChaosPrefab.Panel(body, UIAnchor.TopStretch, new Offset(8, -(y + RowH), -8, -y), m_RowStyle)
                 .WithChildren(row =>
                 {
-                    TextContainer.Create(row, label, m_LabelStyle, UIAnchor.LeftStretch, new Offset(10, 4, -120, -4));
+                    TextContainer.Create(row, label, m_LabelStyle, UIAnchor.CenterLeft, new Offset(10, -10, 180, 10));
 
-                    ChaosPrefab.TextButton(row, UIAnchor.CenterRight, new Offset(-96, 3, -70, -3), "−", m_LabelStyle, ChaosStyle.BlackOutline)
+                    ChaosPrefab.TextButton(row, UIAnchor.CenterRight, new Offset(-96, -11, -70, 11), "−", m_LabelStyle, ChaosStyle.BlackOutline)
                         .WithCallback(m_Callbacks, arg => { minus(Get(player)); m_Data.Save(); BuildMenu(player); }, $"{player.userID}.{key}.minus");
 
-                    TextContainer.Create(row, value, m_ValueStyle, UIAnchor.CenterRight, new Offset(-66, 4, -36, -4));
+                    TextContainer.Create(row, value, m_ValueStyle, UIAnchor.CenterRight, new Offset(-66, -10, -36, 10));
 
-                    ChaosPrefab.TextButton(row, UIAnchor.CenterRight, new Offset(-32, 3, -6, -3), "+", m_LabelStyle, ChaosStyle.BlackOutline)
+                    ChaosPrefab.TextButton(row, UIAnchor.CenterRight, new Offset(-32, -11, -6, 11), "+", m_LabelStyle, ChaosStyle.BlackOutline)
                         .WithCallback(m_Callbacks, arg => { plus(Get(player)); m_Data.Save(); BuildMenu(player); }, $"{player.userID}.{key}.plus");
                 });
         }
@@ -492,25 +480,18 @@ namespace Oxide.Plugins
         {
             var s = Get(player);
 
-            // прозрачный фуллскрин-слой позади меню: клик мимо закрывает его.
-            // шлём до меню — меню рисуется поверх и клики идут на него
-            var bg = ButtonContainer.Create(UiMenuBg, Layer.HudMenu, UIAnchor.FullStretch, Offset.zero)
-                .WithColor(new UIColor(0f, 0f, 0f, 0f))
-                .WithCallback(m_Callbacks, arg => ToggleMenu(player), $"{player.userID}.bg");
-            ChaosUI.Show(player, bg);
-
             var root = ChaosPrefab.Background(UiMenu, Layer.HudMenu, UIAnchor.Center,
                 new Offset(-170, -250, 170, 250), m_PanelStyle);
 
             root.WithChildren(body =>
             {
-                ChaosPrefab.Title(body, UIAnchor.TopStretch, new Offset(8, -8, -44, -34), "◆ OCTAVIAN ESP", m_TitleStyle);
+                ChaosPrefab.Title(body, UIAnchor.TopStretch, new Offset(8, -34, -44, -8), "◆ OCTAVIAN ESP", m_TitleStyle);
 
-                ChaosPrefab.CloseButton(body, UIAnchor.TopRight, new Offset(-36, -6, -8, -34), ChaosStyle.BlackOutline)
+                ChaosPrefab.CloseButton(body, UIAnchor.TopRight, new Offset(-36, -34, -8, -6), ChaosStyle.BlackOutline)
                     .WithCallback(m_Callbacks, arg => ToggleMenu(player), $"{player.userID}.close");
 
                 // мастер-выключатель
-                ChaosPrefab.TextButton(body, UIAnchor.TopStretch, new Offset(8, -44, -8, -74),
+                ChaosPrefab.TextButton(body, UIAnchor.TopStretch, new Offset(8, -74, -8, -44),
                         s.Enabled ? "ВЫКЛЮЧИТЬ ESP" : "ВКЛЮЧИТЬ ESP",
                         s.Enabled ? m_MasterOffStyle : m_MasterOnStyle, ChaosStyle.BlackOutline)
                     .WithCallback(m_Callbacks, arg =>
@@ -548,7 +529,6 @@ namespace Oxide.Plugins
         {
             ChaosUI.Destroy(player, UiButton);
             ChaosUI.Destroy(player, UiMenu);
-            ChaosUI.Destroy(player, UiMenuBg);
         }
     }
 }
