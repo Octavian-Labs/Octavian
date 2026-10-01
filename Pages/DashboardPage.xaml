@@ -38,7 +38,7 @@
                                        ToolTip="Скопировать команду client.connect в буфер обмена"/>
                             <ui:Button x:Name="BtnSteamConnect" Content="▶ В STEAM" Padding="16,8" Margin="8,0,0,0"
                                        Click="SteamConnect_Click"
-                                       ToolTip="steam://connect — запустить Rust и сразу подключиться"/>
+                                       ToolTip="steam://run — запустить клиент Rust и сразу подключиться"/>
                         </StackPanel>
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock x:Name="TxtConnectLabel" Text="АДРЕС СЕРВЕРА — вставьте в консоль F1"

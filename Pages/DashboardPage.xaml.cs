@@ -414,12 +414,15 @@ public partial class DashboardPage : Page
     private void SteamConnect_Click(object sender, RoutedEventArgs e)
     {
         var addr = _connectAddr ?? $"127.0.0.1:{App.Settings.GamePort}";
-        // домен хранится без порта, а steam://connect требует host:port
-        if (!addr.Contains(':')) addr += $":{App.Settings.GamePort}";
+        // steam://connect не умеет DNS SRV и ругается «invalid app» на домене —
+        // запускаем сам клиент Rust (appid 252490) с +connect: SRV-резолв сделает игра.
+        // Домен передаём без порта — SRV-запись отдаёт его сама.
+        var url = $"steam://run/252490//+connect%20{addr}";
         try
         {
-            Process.Start(new ProcessStartInfo($"steam://connect/{addr}") { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            Note("Запускаю Rust через Steam…");
         }
-        catch (Exception ex) { Note($"steam://connect не открылся: {ex.Message}"); }
+        catch (Exception ex) { Note($"Не удалось вызвать Steam: {ex.Message}"); }
     }
 }
