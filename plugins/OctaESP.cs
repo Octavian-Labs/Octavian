@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using Newtonsoft.Json;
 using Oxide.Core;
 using Oxide.Game.Rust.Cui;
@@ -13,7 +14,7 @@ namespace Oxide.Plugins
     // Переработанный AdminESP (FineINK 0.3.01): исправлены наследование компонента,
     // потерянный хук дисконнекта, дёргание флага IsAdmin на каждую отрисовку,
     // плюс добавлены подсветка цели, смотрящей на админа, и отображение оружия.
-    [Info("OctaESP", "Octavian", "1.1.0")]
+    [Info("OctaESP", "Octavian", "1.1.1")]
     [Description("Админский ESP: имена/здоровье/оружие, боксы, линия взгляда, спящие. HUD-меню, привязка на клавишу через octaesp.toggle")]
     public class OctaESP : RustPlugin
     {
@@ -58,6 +59,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("Максимальная дистанция ESP (м)")]
             public int MaxDistance = 1000;
+
+            [JsonProperty("Размер шрифта меток ESP")]
+            public int LabelSize = 12;
 
             [JsonProperty("Префикс сообщений в чате")]
             public string ChatPrefix = "<color=#E8B84B>◆ OctaESP</color>";
@@ -376,14 +380,19 @@ namespace Oxide.Plugins
                     if (_s.Names)
                     {
                         var name = string.IsNullOrEmpty(t.displayName) ? t.ShortPrefabName : t.displayName;
-                        var text = $"{(aimed ? "⚠ " : "")}{name} ({dist:0} м)\n{(sleeping ? "СПИТ · " : "")}{t.health:0} HP";
+                        var sb = new StringBuilder(96);
+                        sb.Append("<size=").Append(_i._cfg.LabelSize).Append('>');
+                        if (aimed) sb.Append("⚠ ");
+                        sb.Append(name).Append(" · ").Append(dist.ToString("0")).Append(" м");
+                        if (sleeping) sb.Append(" · СПИТ");
                         if (_s.Weapon && !sleeping)
                         {
                             var held = t.GetActiveItem();
                             var wname = held?.info?.displayName?.english ?? held?.info?.shortname;
-                            if (!string.IsNullOrEmpty(wname)) text += $" · {wname}";
+                            if (!string.IsNullOrEmpty(wname)) sb.Append(" · ").Append(wname);
                         }
-                        DDraw("ddraw.text", ttl, color, t.eyes.position + new Vector3(0, 0.45f, 0), text);
+                        sb.Append('\n').Append(HealthBar(t)).Append("</size>");
+                        DDraw("ddraw.text", ttl, color, t.eyes.position + new Vector3(0, 0.45f, 0), sb.ToString());
                     }
                     if (_s.Boxes)
                         _self.SendConsoleCommand("ddraw.box", ttl, color,
@@ -393,6 +402,15 @@ namespace Oxide.Plugins
                         _self.SendConsoleCommand("ddraw.line", ttl, aimed ? Color.red : new Color(1f, 0.8f, 0.2f),
                             t.eyes.position, t.eyes.position + t.eyes.HeadRay().direction * _s.EyeLength);
                 }
+            }
+
+            // HP-полоска блочными символами; цвет зелёный → жёлтый → красный
+            private static string HealthBar(BasePlayer t)
+            {
+                var frac = Mathf.Clamp01(t.health / Math.Max(1f, t.MaxHealth()));
+                var full = Mathf.RoundToInt(frac * 8f);
+                var col = frac > 0.6f ? "#59C073" : frac > 0.3f ? "#E8B84B" : "#E06666";
+                return $"<color={col}>{new string('█', full)}{new string('░', 8 - full)}</color> {t.health:0}";
             }
 
             private void DDraw(string cmd, float ttl, Color color, Vector3 pos, string text) =>
