@@ -271,7 +271,9 @@
                                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                             <ContentPresenter Margin="10,0,26,0" HorizontalAlignment="Left"
                                                               VerticalAlignment="Center"
-                                                              Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"/>
+                                                              Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                              ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                              ContentStringFormat="{Binding SelectionBoxItemStringFormat, RelativeSource={RelativeSource AncestorType=ComboBox}}"/>
                                         </Grid>
                                     </Border>
                                     <ControlTemplate.Triggers>

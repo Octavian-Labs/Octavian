@@ -29,4 +29,7 @@ public class PlayerInfo
     public string CountryTip => string.IsNullOrEmpty(CountryName) ? "геолокация…" : CountryName;
     public string TotalText => OctavianRSM.Services.KnownPlayer.Fmt(TotalSecondsBase + ConnectedSeconds);
     private static string TimeSpanText(int sec) => $"{sec / 3600}ч {(sec % 3600) / 60}м";
+
+    // ComboBox без DisplayMemberPath/шаблона рисует элемент через ToString()
+    public override string ToString() => DisplayName;
 }
