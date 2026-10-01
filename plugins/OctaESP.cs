@@ -13,7 +13,7 @@ namespace Oxide.Plugins
     // Переработанный AdminESP (FineINK 0.3.01): исправлены наследование компонента,
     // потерянный хук дисконнекта, дёргание флага IsAdmin на каждую отрисовку,
     // плюс добавлены подсветка цели, смотрящей на админа, и отображение оружия.
-    [Info("OctaESP", "Octavian", "1.0.1")]
+    [Info("OctaESP", "Octavian", "1.1.0")]
     [Description("Админский ESP: имена/здоровье/оружие, боксы, линия взгляда, спящие. HUD-меню, привязка на клавишу через octaesp.toggle")]
     public class OctaESP : RustPlugin
     {
@@ -88,10 +88,13 @@ namespace Oxide.Plugins
             public int EyeLength;
             public bool Sleepers = true;
             public bool Weapon = true;
+            public bool Npcs;
         }
 
         private Dictionary<ulong, EspSettings> _sets = new();
         private readonly HashSet<ulong> _menuOpen = new();
+        // живые NPC на сервере — ведём сами через хуки, чтобы не сканить serverEntities каждый тик
+        private readonly HashSet<NPCPlayer> _npcs = new();
 
         private EspSettings Get(BasePlayer p) => _sets.TryGetValue(p.userID, out var s)
             ? s
@@ -126,6 +129,19 @@ namespace Oxide.Plugins
         {
             // при загрузке на живом сервере вернуть кнопку/ESP тем, у кого было включено
             foreach (var p in BasePlayer.activePlayerList) timer.Once(2f, () => OnPlayerReady(p));
+            // боты, заспавненные до загрузки плагина
+            foreach (var e in BaseNetworkable.serverEntities)
+                if (e is NPCPlayer npc) _npcs.Add(npc);
+        }
+
+        private void OnEntitySpawned(BaseNetworkable ent)
+        {
+            if (ent is NPCPlayer npc) _npcs.Add(npc);
+        }
+
+        private void OnEntityKill(BaseNetworkable ent)
+        {
+            if (ent is NPCPlayer npc) _npcs.Remove(npc);
         }
 
         private void Unload()
@@ -138,6 +154,7 @@ namespace Oxide.Plugins
                 AdminFlag(p, false);
             }
             _menuOpen.Clear();
+            _npcs.Clear();
             SaveData();
             _i = null;
         }
@@ -275,6 +292,7 @@ namespace Oxide.Plugins
                 case "sleepers": s.Sleepers = on; break;
                 case "admins":   s.ShowAdmins = on; break;
                 case "weapon":   s.Weapon = on; break;
+                case "npcs":     s.Npcs = on; break;
                 case "distance":
                     if (int.TryParse(val, out var d)) s.Distance = Math.Clamp(d, 50, _cfg.MaxDistance);
                     break;
@@ -297,6 +315,8 @@ namespace Oxide.Plugins
             private BasePlayer _self;
             private EspSettings _s;
             private float _acc;
+            private readonly List<BasePlayer> _npcBuf = new();
+            private readonly List<NPCPlayer> _stale = new();
 
             public void Setup(BasePlayer self, EspSettings s) { _self = self; _s = s; }
 
@@ -310,9 +330,24 @@ namespace Oxide.Plugins
                 var ttl = _s.Interval + 0.08f;
                 DrawList(BasePlayer.activePlayerList, ttl);
                 if (_s.Sleepers) DrawList(BasePlayer.sleepingPlayerList, ttl);
+                if (_s.Npcs) DrawNpcs(ttl);
             }
 
-            private void DrawList(IEnumerable<BasePlayer> list, float ttl)
+            // NPCPlayer живут в общем сете плагина; мёртвых/деспавнувших чистим по ходу
+            private void DrawNpcs(float ttl)
+            {
+                _npcBuf.Clear();
+                _stale.Clear();
+                foreach (var npc in _i._npcs)
+                {
+                    if (npc == null || npc.IsDestroyed || npc.IsDead()) { _stale.Add(npc); continue; }
+                    _npcBuf.Add(npc);
+                }
+                foreach (var n in _stale) _i._npcs.Remove(n);
+                if (_npcBuf.Count > 0) DrawList(_npcBuf, ttl, npcs: true);
+            }
+
+            private void DrawList(IEnumerable<BasePlayer> list, float ttl, bool npcs = false)
             {
                 var cfg = _i._cfg;
                 foreach (var t in list)
@@ -323,7 +358,7 @@ namespace Oxide.Plugins
                     if (t.IsAdmin && !_s.ShowAdmins) continue;
 
                     var sleeping = t.IsSleeping();
-                    var color = sleeping ? Color.white : Color.cyan;
+                    var color = npcs ? new Color(1f, 0.6f, 0.15f) : sleeping ? Color.white : Color.cyan;
                     var aimed = false;
 
                     // цель смотрит на админа: маленький угол между взглядом и направлением на нас
@@ -340,7 +375,8 @@ namespace Oxide.Plugins
 
                     if (_s.Names)
                     {
-                        var text = $"{(aimed ? "⚠ " : "")}{t.displayName} ({dist:0} м)\n{(sleeping ? "СПИТ · " : "")}{t.health:0} HP";
+                        var name = string.IsNullOrEmpty(t.displayName) ? t.ShortPrefabName : t.displayName;
+                        var text = $"{(aimed ? "⚠ " : "")}{name} ({dist:0} м)\n{(sleeping ? "СПИТ · " : "")}{t.health:0} HP";
                         if (_s.Weapon && !sleeping)
                         {
                             var held = t.GetActiveItem();
@@ -472,7 +508,7 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, UiMenu);
             CuiHelper.DestroyUi(player, UiMenuBg);
             var s = Get(player);
-            const int total = 10; // включить + 6 тоглов + 3 числовых
+            const int total = 11; // включить + 7 тоглов + 3 числовых
             var ui = new CuiElementContainer();
 
             // невидимый полноэкранный слой под меню: клик мимо панели закрывает её.
@@ -532,6 +568,7 @@ namespace Oxide.Plugins
             AddToggleRow(ui, i++, total, "Спящие игроки", s.Sleepers, "sleepers");
             AddToggleRow(ui, i++, total, "Показывать админов", s.ShowAdmins, "admins");
             AddToggleRow(ui, i++, total, "Оружие в руках", s.Weapon, "weapon");
+            AddToggleRow(ui, i++, total, "Боты (NPC)", s.Npcs, "npcs");
             AddValueRow(ui, i++, total, "Дистанция, м", s.Distance.ToString(), "distance", s.Distance - 50, s.Distance + 50);
             AddValueRow(ui, i++, total, "Длина линии, м", s.EyeLength.ToString(), "eyelen", s.EyeLength - 10, s.EyeLength + 10);
             AddValueRow(ui, i++, total, "Интервал, сек", s.Interval.ToString("0.0"), "interval", s.Interval - 0.05f, s.Interval + 0.05f);
