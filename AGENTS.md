@@ -7,7 +7,8 @@
   ```
   dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o bin\publish-portable
   ```
-  Результат: `bin\publish-portable\OctavianRSM.exe` (~76 МБ self-contained single-file)
+  Результат: `bin\publish-portable\OctavianRSM.exe` (~76 МБ self-contained single-file).
+  Всегда один файл — пользователь сам копирует его в тестовую папку, версионных копий не держать.
 - Если запущенный менеджер держит `bin\Release` — собирать проверку в `bin\checkN` и сообщать пользователю.
 - Тест-хук окна конфига плагина: `OctavianRSM.exe --test-config <ИмяПлагина>`.
 
