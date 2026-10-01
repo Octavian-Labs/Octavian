@@ -17,8 +17,8 @@
 
         <DockPanel Grid.ColumnSpan="2" Margin="0,0,0,14" LastChildFill="False">
             <StackPanel>
-                <TextBlock Style="{StaticResource OctaPageTitle}" Text="Конфиги"/>
-                <TextBlock Style="{StaticResource OctaPageSub}" Text="server.cfg • carbon — подсветка, Ctrl+S сохранить"/>
+                <TextBlock Style="{StaticResource OctaPageTitle}" Text="Конфиги сервера"/>
+                <TextBlock Style="{StaticResource OctaPageSub}" Text="server/&lt;identity&gt;/cfg • ядро carbon — таблица или текст, Ctrl+S сохранить"/>
             </StackPanel>
             <ui:TextBox DockPanel.Dock="Right" x:Name="TxtSearch" Width="220" PlaceholderText="фильтр файлов…"
                         VerticalAlignment="Center" TextChanged="Search_Changed"/>
@@ -48,13 +48,23 @@
                                        Foreground="{StaticResource B.Accent}" FontWeight="SemiBold" FontFamily="Consolas"/>
                             <TextBlock x:Name="TxtDirty" Text="" Foreground="{StaticResource B.Warn}" Margin="10,0,0,0"/>
                         </StackPanel>
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ui:Button x:Name="BtnTable" Content="▦ ТАБЛИЦА" Padding="12,5"
+                                       Margin="0,0,6,0" Click="ModeTable_Click"/>
+                            <ui:Button x:Name="BtnText" Content="{}{ } ТЕКСТ" Padding="12,5"
+                                       Margin="0,0,12,0" Click="ModeText_Click"/>
                             <ui:Button Content="ОТКАТИТЬ" Click="Reload_Click" Padding="12,5" Margin="0,0,8,0"/>
                             <ui:Button Content="СОХРАНИТЬ" Appearance="Primary" Click="Save_Click" Padding="16,5"/>
                         </StackPanel>
                     </DockPanel>
                 </Border>
 
+                <!-- Режим таблицы: ключ → значение -->
+                <ScrollViewer x:Name="PaneTable" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="CfgRows" Margin="14,8"/>
+                </ScrollViewer>
+
+                <!-- Режим текста -->
                 <avalon:TextEditor x:Name="Editor" Grid.Row="1"
                                    ShowLineNumbers="True"
                                    FontFamily="Consolas" FontSize="13.5"
@@ -63,6 +73,7 @@
                                    HorizontalScrollBarVisibility="Auto"
                                    VerticalScrollBarVisibility="Auto"
                                    BorderThickness="0"
+                                   Visibility="Collapsed"
                                    PreviewKeyDown="Editor_KeyDown"
                                    TextChanged="Editor_TextChanged"/>
 
