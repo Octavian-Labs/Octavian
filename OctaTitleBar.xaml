@@ -1,0 +1,24 @@
+<UserControl x:Class="OctavianRSM.OctaTitleBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root" Height="36">
+    <Border Background="#0D1118"
+            BorderBrush="{StaticResource B.Border}" BorderThickness="0,0,0,1"
+            MouseLeftButtonDown="Bar_MouseDown">
+        <DockPanel LastChildFill="False">
+            <TextBlock Margin="14,0,0,0" FontSize="13" FontWeight="Bold" VerticalAlignment="Center">
+                <Run Text="◆ " Foreground="{StaticResource B.Accent}"/>
+                <Run Text="{Binding TitleText, ElementName=Root}" Foreground="{StaticResource B.Text}"/>
+                <Run Text="{Binding TitleSuffix, ElementName=Root}" Foreground="{StaticResource B.Accent2}" FontSize="10"/>
+            </TextBlock>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="BtnMin" Content="—" Width="46" Click="Min_Click"
+                        Style="{StaticResource OctaWinBtn}"/>
+                <Button x:Name="BtnMax" Content="▢" Width="46" Click="Max_Click"
+                        Style="{StaticResource OctaWinBtn}"/>
+                <Button Content="✕" Width="46" Click="Close_Click"
+                        Style="{StaticResource OctaWinBtnClose}"/>
+            </StackPanel>
+        </DockPanel>
+    </Border>
+</UserControl>

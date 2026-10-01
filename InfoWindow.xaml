@@ -2,10 +2,23 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:octa="clr-namespace:OctavianRSM"
         Title="OctavianRSM" Width="560" Height="460"
         WindowStartupLocation="CenterOwner"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip" AllowsTransparency="False"
         Background="{StaticResource B.Bg1}" Foreground="{StaticResource B.Text}">
-    <Grid Margin="16">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="8"
+                      GlassFrameThickness="0" CornerRadius="0"
+                      UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="36"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <octa:OctaTitleBar x:Name="TitleBar" TitleText="OCTAVIAN" TitleSuffix="  RSM"/>
+    <Grid Grid.Row="1" Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -21,5 +34,6 @@
         </Border>
         <ui:Button Grid.Row="2" Content="ЗАКРЫТЬ" Appearance="Secondary"
                    HorizontalAlignment="Right" Padding="18,6" Click="Close_Click"/>
+    </Grid>
     </Grid>
 </Window>

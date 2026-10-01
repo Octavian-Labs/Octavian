@@ -14,6 +14,7 @@ using System.Xml;
 using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Highlighting.Xshd;
 using OctavianRSM.Services;
+using System.Text.Json.Serialization.Metadata;
 
 namespace OctavianRSM;
 
@@ -37,6 +38,14 @@ public partial class PluginConfigWindow : Window
     private bool _loading;
     private bool _dirty;
     private static IHighlightingDefinition? _jsonHl;
+
+    // В .NET 8 сериализация JsonNode-графа с JsonValue.Create требует явного
+    // TypeInfoResolver — иначе "must specify a TypeInfoResolver setting"
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
 
     public PluginConfigWindow(string pluginName)
     {
@@ -95,7 +104,37 @@ public partial class PluginConfigWindow : Window
     {
         _rows.Clear();
         Rows.Children.Clear();
+        AddDescriptionBlock();
         if (_root != null) Flatten(_root, Array.Empty<string>(), 0);
+    }
+
+    // Блок описания из поля "OctaDes" в корне конфига: строка или массив строк.
+    // Это наше служебное поле — плагин его игнорирует, менеджер показывает сверху.
+    private void AddDescriptionBlock()
+    {
+        if (_root is not JsonObject root || root["OctaDes"] is not { } node) return;
+        var text = node is JsonArray arr
+            ? string.Join("\n", arr.Select(ScalarText))
+            : ScalarText(node);
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        var accent = (Brush)FindResource("B.Accent2");
+        Rows.Children.Add(new Border
+        {
+            BorderBrush = accent, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 10, 14, 10),
+            Margin = new Thickness(4, 4, 4, 10), Background = (Brush)FindResource("B.Bg2"),
+            Child = new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock { Text = "ОПИСАНИЕ НАСТРОЕК", Foreground = accent,
+                        FontSize = 10, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 0, 0, 6) },
+                    new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap,
+                        Foreground = (Brush)FindResource("B.Text"), FontSize = 12.5 }
+                }
+            }
+        });
     }
 
     // Раскладка: объект → заголовок секции + рекурсия; скалярный массив → список
@@ -109,6 +148,9 @@ public partial class PluginConfigWindow : Window
                 AddRow(path, "json", "{ }");
             foreach (var kv in obj)
             {
+                // OctaDes — наш служебный блок описания настроек: показывается
+                // отдельной панелью сверху, в таблицу строк не попадает
+                if (depth == 0 && kv.Key == "OctaDes") continue;
                 var child = path.Concat(new[] { kv.Key }).ToArray();
                 switch (kv.Value)
                 {
@@ -264,7 +306,7 @@ public partial class PluginConfigWindow : Window
             if (_tableMode && _root != null)
             {
                 ApplyRows();
-                text = _root!.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                text = _root!.ToJsonString(JsonOpts);
             }
             else
             {
@@ -375,7 +417,7 @@ public partial class PluginConfigWindow : Window
         if (!_tableMode) return;
         try
         {
-            if (_root != null) { ApplyRows(); Editor.Text = _root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }); }
+            if (_root != null) { ApplyRows(); Editor.Text = _root.ToJsonString(JsonOpts); }
         }
         catch { /* строки не применились — JSON-режим покажет старый текст ниже */ }
         SetMode(false);
