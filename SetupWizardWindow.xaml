@@ -338,6 +338,13 @@
                                  Minimum="0" Maximum="100" IsIndeterminate="True"
                                  Foreground="{StaticResource B.Accent}"
                                  Background="{StaticResource B.Bg3}"/>
+                    <!-- Причина провала — видна только при ошибке цепочки -->
+                    <Border x:Name="PnlError" Visibility="Collapsed" Margin="0,8,0,0" Padding="10,8"
+                            Background="#26E15555" BorderBrush="{StaticResource B.Danger}"
+                            BorderThickness="1" CornerRadius="6">
+                        <TextBlock x:Name="TxtError" FontSize="11" FontFamily="Consolas"
+                                   Foreground="{StaticResource B.Danger}" TextWrapping="Wrap"/>
+                    </Border>
                 </StackPanel>
                 <Border Style="{StaticResource OctaPanel}" Padding="10">
                     <ScrollViewer x:Name="LogScroll" VerticalScrollBarVisibility="Auto">

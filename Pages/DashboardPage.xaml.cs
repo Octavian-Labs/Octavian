@@ -1,6 +1,10 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
@@ -28,6 +32,11 @@ public partial class DashboardPage : Page
         TxtSub.Text = App.Settings.IsRemoteMode
             ? $"{App.Settings.Hostname} • удалённый RCON {App.Settings.RconHost}:{App.Settings.RconPort}"
             : $"{App.Settings.Hostname} • {App.Settings.ServerDirPath}";
+        var s0 = App.Settings;
+        TxtPorts.Text = s0.IsRemoteMode
+            ? $"rcon {s0.RconHost}:{s0.RconPort}  ·  игровой порт: {s0.GamePort}"
+            : $"игра {s0.GamePort}  ·  query {s0.QueryPort}  ·  rcon {s0.RconPort}  ·  app {s0.AppPort}";
+        _ = DetectConnectAddress();
         App.Server.OnOutput += Server_OnOutput;
         App.Server.OnStateChanged += Server_OnStateChanged;
         // NavigationView пересоздаёт страницы — при уходе гасим фон и отписываемся,
@@ -368,12 +377,75 @@ public partial class DashboardPage : Page
         UpdateState();
     }
 
-    private async void Q(object sender, RoutedEventArgs e)
+    // ── Подключение: адрес для игроков ─────────────────────────────────────
+    private string? _connectAddr; // "ip:port"
+
+    // Приоритет адреса: remote → RconHost; заданный ServerIp → он;
+    // иначе LAN сразу + попытка узнать внешний IP через ipwho.is.
+    private async Task DetectConnectAddress()
     {
-        if (sender is not Button b) return;
-        var cmd = b.Tag?.ToString() ?? b.Content?.ToString() ?? "";
-        TxtQuickResult.Text = "> " + cmd;
-        var resp = await App.Rcon.SendAsync(cmd);
-        TxtQuickResult.Text = $"> {cmd}\n{resp}";
+        var s = App.Settings;
+        if (s.IsRemoteMode) { SetConnect(s.RconHost, "УДАЛЬНЫЙ СЕРВЕР — подключение в игре (F1)"); return; }
+        if (!string.IsNullOrWhiteSpace(s.ServerIp) && s.ServerIp != "0.0.0.0")
+        { SetConnect(s.ServerIp, "АДРЕС СЕРВЕРА — подключение в игре (F1)"); return; }
+
+        var lan = LocalIPv4() ?? "127.0.0.1";
+        SetConnect(lan, "ЛОКАЛЬНЫЙ АДРЕС (LAN) — подключение в игре (F1)");
+        var pub = await PublicIPv4Async();
+        if (pub != null) SetConnect(pub, "ВНЕШНИЙ IP — подключение в игре (F1)");
+    }
+
+    private void SetConnect(string ip, string label)
+    {
+        if (Dispatcher.HasShutdownStarted) return;
+        Dispatcher.Invoke(() =>
+        {
+            _connectAddr = $"{ip}:{App.Settings.GamePort}";
+            TxtConnectLabel.Text = label;
+            TxtConnect.Text = $"client.connect {_connectAddr}";
+        });
+    }
+
+    private static string? LocalIPv4()
+    {
+        try
+        {
+            return Dns.GetHostEntry(Dns.GetHostName()).AddressList
+                .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork
+                                  && !IPAddress.IsLoopback(a))?.ToString();
+        }
+        catch { return null; }
+    }
+
+    // Свой публичный IP — тот же ipwho.is, что и геолокация игроков
+    private static async Task<string?> PublicIPv4Async()
+    {
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+            var json = await http.GetStringAsync("https://ipwho.is/?fields=ip");
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("ip", out var ip) ? ip.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    private async void CopyConnect_Click(object sender, RoutedEventArgs e)
+    {
+        var addr = _connectAddr ?? $"127.0.0.1:{App.Settings.GamePort}";
+        Clipboard.SetText($"client.connect {addr}");
+        BtnCopyConnect.Content = "✔ СКОПИРОВАНО";
+        await Task.Delay(1500);
+        BtnCopyConnect.Content = "📋 КОПИРОВАТЬ";
+    }
+
+    private void SteamConnect_Click(object sender, RoutedEventArgs e)
+    {
+        var addr = _connectAddr ?? $"127.0.0.1:{App.Settings.GamePort}";
+        try
+        {
+            Process.Start(new ProcessStartInfo($"steam://connect/{addr}") { UseShellExecute = true });
+        }
+        catch (Exception ex) { AppendLog($"[RSM] steam://connect не открылся: {ex.Message}", "err"); }
     }
 }

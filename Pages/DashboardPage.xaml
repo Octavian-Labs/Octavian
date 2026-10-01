@@ -14,6 +14,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -36,9 +37,32 @@
             </StackPanel>
         </DockPanel>
 
+        <!-- ПОДКЛЮЧЕНИЕ: адрес для игроков + копирование команды -->
+        <TextBlock Grid.Row="1" Text="ПОДКЛЮЧЕНИЕ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+        <Border Grid.Row="2" Style="{StaticResource OctaPanelAccent}" Padding="16,12" Margin="0,0,0,14">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                            VerticalAlignment="Center" Margin="16,0,0,0">
+                    <ui:Button x:Name="BtnCopyConnect" Content="📋 КОПИРОВАТЬ" Appearance="Primary"
+                               Padding="16,8" Click="CopyConnect_Click"
+                               ToolTip="Скопировать команду client.connect в буфер обмена"/>
+                    <ui:Button x:Name="BtnSteamConnect" Content="▶ В STEAM" Padding="16,8" Margin="8,0,0,0"
+                               Click="SteamConnect_Click"
+                               ToolTip="steam://connect — запустить Rust и сразу подключиться"/>
+                </StackPanel>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="TxtConnectLabel" Text="АДРЕС СЕРВЕРА — вставьте в консоль F1"
+                               Style="{StaticResource OctaStatLabel}"/>
+                    <TextBlock x:Name="TxtConnect" Text="определяю адрес…" FontSize="20" FontWeight="Bold"
+                               FontFamily="Consolas" Foreground="{StaticResource B.Accent}" Margin="0,4,0,2"/>
+                    <TextBlock x:Name="TxtPorts" Style="{StaticResource OctaPageSub}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
         <!-- СЕРВЕР: состояние, аптайм, вайп, канал управления -->
-        <TextBlock Grid.Row="1" Text="СЕРВЕР" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-        <UniformGrid Grid.Row="2" Columns="4" Margin="0,0,0,14">
+        <TextBlock Grid.Row="3" Text="СЕРВЕР" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+        <UniformGrid Grid.Row="4" Columns="4" Margin="0,0,0,14">
             <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" BorderBrush="{StaticResource B.Accent2}">
                 <StackPanel>
                     <TextBlock Text="СОСТОЯНИЕ" Style="{StaticResource OctaStatLabel}"/>
@@ -69,8 +93,8 @@
         </UniformGrid>
 
         <!-- ИГРОКИ И НАГРУЗКА: онлайн, очередь, кадры, сущности -->
-        <TextBlock Grid.Row="3" Text="ИГРОКИ И НАГРУЗКА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-        <UniformGrid Grid.Row="4" Columns="4" Margin="0,0,0,14">
+        <TextBlock Grid.Row="5" Text="ИГРОКИ И НАГРУЗКА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+        <UniformGrid Grid.Row="6" Columns="4" Margin="0,0,0,14">
             <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0">
                 <StackPanel>
                     <TextBlock Text="ОНЛАЙН" Style="{StaticResource OctaStatLabel}"/>
@@ -100,8 +124,8 @@
         </UniformGrid>
 
         <!-- РЕСУРСЫ ХОСТА: процесс и диск (в remote — только serverinfo) -->
-        <TextBlock Grid.Row="5" Text="РЕСУРСЫ ХОСТА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-        <UniformGrid Grid.Row="6" Columns="4" Margin="0,0,0,14">
+        <TextBlock Grid.Row="7" Text="РЕСУРСЫ ХОСТА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+        <UniformGrid Grid.Row="8" Columns="4" Margin="0,0,0,14">
             <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0">
                 <StackPanel>
                     <TextBlock Text="CPU ПРОЦЕССА" Style="{StaticResource OctaStatLabel}"/>
@@ -128,23 +152,8 @@
             </Border>
         </UniformGrid>
 
-        <!-- Быстрые действия -->
-        <Border Grid.Row="7" Style="{StaticResource OctaPanel}" Margin="0,0,0,14" Padding="16,12">
-            <StackPanel>
-                <TextBlock Text="БЫСТРЫЕ КОМАНДЫ" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,8"/>
-                <WrapPanel>
-                    <ui:Button Content="say Привет!" Click="Q" Tag="say [OCTAVIAN] Привет!" Margin="0,0,8,0" Padding="12,5"/>
-                    <ui:Button Content="server.save" Click="Q" Tag="server.save" Margin="0,0,8,0" Padding="12,5"/>
-                    <ui:Button Content="serverinfo" Click="Q" Tag="serverinfo" Margin="0,0,8,0" Padding="12,5"/>
-                    <ui:Button Content="c.plugins" Click="Q" Tag="c.plugins" Margin="0,0,8,0" Padding="12,5"/>
-                    <ui:Button Content="o.reload all" Click="Q" Tag="o.reload *" Margin="0,0,8,0" Padding="12,5"/>
-                </WrapPanel>
-                <TextBlock x:Name="TxtQuickResult" Text="" Style="{StaticResource OctaPageSub}" Margin="0,8,0,0" MaxHeight="60" TextWrapping="Wrap"/>
-            </StackPanel>
-        </Border>
-
         <!-- Живой лог: выделение строк, копирование, автоскролл -->
-        <Border Grid.Row="8" Style="{StaticResource OctaPanel}" Padding="0">
+        <Border Grid.Row="9" Style="{StaticResource OctaPanel}" Padding="0">
             <DockPanel>
                 <DockPanel DockPanel.Dock="Top" LastChildFill="False" Margin="16,10,16,0">
                     <TextBlock Text="ЖУРНАЛ" Style="{StaticResource OctaStatLabel}" DockPanel.Dock="Left" VerticalAlignment="Center"/>

@@ -76,18 +76,41 @@ public class BootstrapService
             CreateNoWindow = true
         };
         using var p = Process.Start(psi)!;
+        // метка активности вывода: steamcmd без консоли может молча ждать ввод —
+        // тогда цепочка висела бы вечно; тишина > 3 мин = прерываем с ошибкой
+        var lastTick = new[] { DateTime.UtcNow.Ticks };
+        void Activity() => Interlocked.Exchange(ref lastTick[0], DateTime.UtcNow.Ticks);
         p.OutputDataReceived += (_, e) =>
         {
             if (e.Data == null) return;
+            Activity();
             // steamcmd пишет прогресс вида "Update state (0x61) downloading, progress: 42.10 (x / y)"
             var pct = ParseSteamProgress(e.Data);
             progress.Report(new("SteamCMD", e.Data, pct));
         };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) progress.Report(new("SteamCMD", e.Data, null)); };
+        p.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            Activity();
+            progress.Report(new("SteamCMD", e.Data, null));
+        };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
         await using var reg = ct.Register(() => { try { p.Kill(); } catch { } });
-        await p.WaitForExitAsync(ct);
+        var exited = p.WaitForExitAsync(ct);
+        while (!exited.IsCompleted)
+        {
+            await Task.WhenAny(exited, Task.Delay(5000));
+            if (exited.IsCompleted) break;
+            var silentSec = (DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastTick[0]))).TotalSeconds;
+            if (silentSec > 180)
+            {
+                progress.Report(new("SteamCMD",
+                    "Нет вывода более 3 минут — процесс завис или ждёт ввод. Прервано, нажмите ПОВТОРИТЬ.", null));
+                try { p.Kill(); } catch { }
+            }
+        }
+        await exited;
         return p.ExitCode;
     }
 

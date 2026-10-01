@@ -31,6 +31,8 @@ public partial class SetupWizardWindow : Window
     private int _step;
     private bool _chainDone, _chainOk;
     private List<ProfileCardVm> _profileCards = new();
+    // строки лога с ошибками — показываются на шаге «Установка» при провале
+    private readonly List<string> _chainErrors = new();
 
     // Псевдо-maximize как в MainWindow: системный Maximized у WindowStyle=None
     // уходит за пределы рабочей области и прячет низ окна под панелью задач —
@@ -108,7 +110,7 @@ public partial class SetupWizardWindow : Window
         TxtStepNo.Text = step is PageMode or PageRemote ? "" : $"ШАГ {step} / 4";
         BtnBack.Visibility = step is > PageMode and not PageRemote ? Visibility.Visible
                            : step == PageRemote ? Visibility.Visible : Visibility.Collapsed;
-        BtnBack.IsEnabled = step != PageInstall || _chainDone; // не дёргаем шаги во время записи конфигов
+        BtnBack.IsEnabled = true; // навигация не блокируется загрузкой — лог всегда доступен
         BtnNext.Visibility = step == PageMode ? Visibility.Collapsed : Visibility.Visible;
         BtnNext.Content = step is PageInstall or PageRemote ? "ГОТОВО" : "ДАЛЕЕ →";
         // мини-индикатор загрузки виден на всех шагах, кроме «Установка» —
@@ -147,7 +149,17 @@ public partial class SetupWizardWindow : Window
         BtnNext.IsEnabled = _chainDone && _chainOk;
         BtnNext.Content = _chainDone ? "ГОТОВО" : "ОЖИДАНИЕ…";
         BtnRetry.Visibility = _chainDone && !_chainOk ? Visibility.Visible : Visibility.Collapsed;
-        BtnBack.IsEnabled = _chainDone;
+        BtnBack.IsEnabled = true; // при ошибке всегда можно вернуться и поправить настройки
+        // Причина провала — выносим строки с ошибкой из лога в отдельную панель
+        if (_chainDone && !_chainOk)
+        {
+            TxtError.Text = _chainErrors.Count > 0
+                ? "Строки с ошибкой из установщика:\n" +
+                  string.Join("\n", _chainErrors.Skip(Math.Max(0, _chainErrors.Count - 8)))
+                : "Причина не выделена — смотрите полный лог ниже.";
+            PnlError.Visibility = Visibility.Visible;
+        }
+        else PnlError.Visibility = Visibility.Collapsed;
     }
 
     // ── Шаг 0: выбор режима ────────────────────────────────────────────────
@@ -175,8 +187,15 @@ public partial class SetupWizardWindow : Window
         {
             _chainDone = true;
             _chainOk = t.Status == TaskStatus.RanToCompletion && t.Result;
+            var fatal = t.Exception?.GetBaseException()?.Message;
             Dispatcher.Invoke(() =>
             {
+                if (fatal != null)
+                {
+                    var line = $"Исключение установщика: {fatal}";
+                    if (_chainErrors.Count < 20) _chainErrors.Add(line);
+                    TxtInstallLog.Text += $"[Установка] {line}\n";
+                }
                 if (_chainOk) TxtPhase.Text = "Загрузка завершена — можно завершать настройку";
                 else TxtPhase.Text = t.Status == TaskStatus.Canceled || _cts.IsCancellationRequested
                     ? "Загрузка отменена" : "Ошибка загрузки — нажмите ПОВТОРИТЬ";
@@ -215,6 +234,9 @@ public partial class SetupWizardWindow : Window
             PbMini.Value = Math.Clamp(pct, 0, 100);
             TxtMiniPct.Text = $"{pct:0}%";
         }
+        // строки с ошибкой запоминаем — покажем причину на шаге «Установка»
+        if (LooksLikeError(p.Detail) && _chainErrors.Count < 20)
+            _chainErrors.Add($"[{p.Phase}] {p.Detail}");
         var line = $"[{p.Phase}] {p.Detail}\n";
         TxtInstallLog.Text += line;
         if (TxtInstallLog.Text.Length > 60_000)
@@ -222,12 +244,22 @@ public partial class SetupWizardWindow : Window
         LogScroll.ScrollToEnd();
     }
 
+    private static bool LooksLikeError(string s)
+        => s.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0
+        || s.IndexOf("failed", StringComparison.OrdinalIgnoreCase) >= 0
+        || s.IndexOf("denied", StringComparison.OrdinalIgnoreCase) >= 0
+        || s.IndexOf("fatal", StringComparison.OrdinalIgnoreCase) >= 0
+        || s.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0
+        || s.IndexOf("Ошибка", StringComparison.OrdinalIgnoreCase) >= 0
+        || s.IndexOf("завис", StringComparison.OrdinalIgnoreCase) >= 0;
+
     private void Retry_Click(object sender, RoutedEventArgs e)
     {
         if (_chain is { IsCompleted: false }) return;
         _cts.Dispose();
         _cts = new CancellationTokenSource();
         _chain = null; _chainDone = false; _chainOk = false;
+        _chainErrors.Clear();
         PbInstall.IsIndeterminate = true;
         TxtPhase.Text = "Повторная попытка…";
         StartDownloadChain();
