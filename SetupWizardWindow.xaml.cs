@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -293,31 +295,52 @@ public partial class SetupWizardWindow : Window
     }
 
     // Модель карточки профиля: пресет + редактируемые поля точной настройки.
-    // Для "custom" поля предзаполняются текущими настройками.
-    private sealed class ProfileCardVm
+    // Для "custom" поля предзаполняются текущими настройками. INPC — сводка
+    // на лице карточки обновляется прямо при вводе в развёрнутых полях.
+    private sealed class ProfileCardVm : INotifyPropertyChanged
     {
+        private string _gather = "", _stack = "", _craft = "", _maxPlayers = "", _worldSize = "";
+        private bool _pve;
+
         public ProfileCardVm(ServerProfile p, RsmSettings s)
         {
             Profile = p;
             var custom = p.Key == "custom";
             var inv = CultureInfo.InvariantCulture;
-            Gather = (custom || p.Gather <= 0 ? s.GatherRate : p.Gather).ToString("0.#", inv);
-            Stack = (custom || p.Stack <= 0 ? s.StackMultiplier : p.Stack).ToString("0.#", inv);
-            Craft = (custom || p.CraftTimescale <= 0 ? s.CraftTimescale : p.CraftTimescale).ToString("0.#", inv);
-            Pve = custom ? s.ServerPve : p.Pve;
-            MaxPlayers = (custom || p.MaxPlayers <= 0 ? s.MaxPlayers : p.MaxPlayers).ToString();
-            WorldSize = (custom || p.WorldSize <= 0 ? s.WorldSize : p.WorldSize).ToString();
+            _gather = (custom || p.Gather <= 0 ? s.GatherRate : p.Gather).ToString("0.#", inv);
+            _stack = (custom || p.Stack <= 0 ? s.StackMultiplier : p.Stack).ToString("0.#", inv);
+            _craft = (custom || p.CraftTimescale <= 0 ? s.CraftTimescale : p.CraftTimescale).ToString("0.#", inv);
+            _pve = custom ? s.ServerPve : p.Pve;
+            _maxPlayers = (custom || p.MaxPlayers <= 0 ? s.MaxPlayers : p.MaxPlayers).ToString();
+            _worldSize = (custom || p.WorldSize <= 0 ? s.WorldSize : p.WorldSize).ToString();
         }
 
         public ServerProfile Profile { get; }
         public string Title => Profile.Title;
         public string Subtitle => Profile.Subtitle;
-        public string Gather { get; set; }
-        public string Stack { get; set; }
-        public string Craft { get; set; }
-        public bool Pve { get; set; }
-        public string MaxPlayers { get; set; }
-        public string WorldSize { get; set; }
+
+        // Лицевая сводка рейтов — пересчитывается при каждом вводе
+        public string Summary =>
+            $"сбор ×{Gather} · стаки ×{Stack} · крафт ×{Craft}" + (Pve ? " · PvE" : "");
+
+        // Теги пресета + живые лимиты
+        public string Meta => string.Join(" · ", new[]
+        {
+            Profile.WipeTag, Profile.ModeTag,
+            MaxPlayers.Length > 0 ? $"{MaxPlayers} слот." : "",
+            WorldSize.Length > 0 ? $"мир {WorldSize}" : ""
+        }.Where(t => t.Length > 0));
+
+        public string Gather { get => _gather; set { _gather = value; Changed(); Changed(nameof(Summary)); } }
+        public string Stack { get => _stack; set { _stack = value; Changed(); Changed(nameof(Summary)); } }
+        public string Craft { get => _craft; set { _craft = value; Changed(); Changed(nameof(Summary)); } }
+        public bool Pve { get => _pve; set { _pve = value; Changed(); Changed(nameof(Summary)); } }
+        public string MaxPlayers { get => _maxPlayers; set { _maxPlayers = value; Changed(); Changed(nameof(Meta)); } }
+        public string WorldSize { get => _worldSize; set { _worldSize = value; Changed(); Changed(nameof(Meta)); } }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void Changed([CallerMemberName] string? name = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     // ── Валидация ───────────────────────────────────────────────────────────
