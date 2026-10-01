@@ -10,23 +10,68 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <DockPanel Margin="0,0,0,14" LastChildFill="False">
+        <DockPanel Margin="0,0,0,10" LastChildFill="False">
             <StackPanel>
                 <TextBlock Style="{StaticResource OctaPageTitle}" Text="Логи"/>
-                <TextBlock Style="{StaticResource OctaPageSub}" Text="server.log и логи Carbon"/>
-            </StackPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <ComboBox x:Name="CmbLog" Width="260" SelectionChanged="CmbLog_Changed" VerticalContentAlignment="Center"/>
-                <ui:TextBox x:Name="TxtFilter" Width="240" PlaceholderText="фильтр по подстроке…" Margin="10,0" VerticalContentAlignment="Center" KeyDown="Filter_KeyDown"/>
-                <ui:Button Content="ПРИМЕНИТЬ" Click="Refresh_Click" Padding="14,6"/>
+                <TextBlock x:Name="TxtSub" Style="{StaticResource OctaPageSub}"
+                           Text="живой журнал сервера и файлы логов Carbon / RSM"/>
             </StackPanel>
         </DockPanel>
 
-        <Border Grid.Row="1" Style="{StaticResource OctaPanel}" Padding="0">
-            <ScrollViewer x:Name="Scroll" Margin="12">
-                <TextBlock x:Name="TxtLog" FontFamily="Consolas" FontSize="12"
-                           Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap"/>
-            </ScrollViewer>
-        </Border>
+        <TabControl Grid.Row="1">
+            <!-- ЖИВОЙ ЖУРНАЛ: stdout процесса + tail server.log + история из БД -->
+            <TabItem Header="ЖУРНАЛ СЕРВЕРА">
+                <Border Style="{StaticResource OctaPanel}" Padding="0">
+                    <DockPanel>
+                        <DockPanel DockPanel.Dock="Top" LastChildFill="False" Margin="16,10,16,8">
+                            <TextBlock Text="вывод сервера и RCON в реальном времени"
+                                       Style="{StaticResource OctaStatLabel}" DockPanel.Dock="Left"
+                                       VerticalAlignment="Center"/>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <CheckBox x:Name="ChkAuto" Content="автоскролл" IsChecked="True"
+                                          Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"/>
+                                <ui:Button Content="КОПИРОВАТЬ" FontSize="11" Padding="10,3" Margin="12,0,0,0"
+                                           Click="CopyLog_Click"/>
+                            </StackPanel>
+                        </DockPanel>
+                        <ListBox x:Name="LogItems" Background="Transparent" BorderThickness="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" KeyDown="LogItems_KeyDown"
+                                 ScrollViewer.ScrollChanged="Log_ScrollChanged">
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Копировать строку" Click="CopyRow_Click"/>
+                                    <MenuItem Header="Копировать всё" Click="CopyLog_Click"/>
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                        </ListBox>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <!-- ФАЙЛЫ: server.log, логи Carbon, логи самого RSM -->
+            <TabItem Header="ФАЙЛЫ ЛОГОВ">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <ComboBox x:Name="CmbLog" Width="300" SelectionChanged="CmbLog_Changed"
+                                  VerticalContentAlignment="Center"/>
+                        <ui:TextBox x:Name="TxtFilter" Width="240" PlaceholderText="фильтр по подстроке…"
+                                    Margin="10,0" VerticalContentAlignment="Center" KeyDown="Filter_KeyDown"/>
+                        <ui:Button Content="ПРИМЕНИТЬ" Click="Refresh_Click" Padding="14,6"/>
+                        <ui:Button Content="ОБНОВИТЬ СПИСОК" Click="ReloadList_Click" Padding="14,6" Margin="8,0,0,0"
+                                   ToolTip="Пересканировать файлы логов"/>
+                    </StackPanel>
+                    <Border Grid.Row="1" Style="{StaticResource OctaPanel}" Padding="0">
+                        <ScrollViewer x:Name="Scroll" Margin="12">
+                            <TextBlock x:Name="TxtLog" FontFamily="Consolas" FontSize="12"
+                                       Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap"/>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
     </Grid>
 </Page>

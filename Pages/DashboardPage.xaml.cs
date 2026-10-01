@@ -19,12 +19,7 @@ public partial class DashboardPage : Page
     private CancellationTokenLike _tail = new();
     private TimeSpan? _prevCpu;
     private DateTime _prevCpuAt;
-    // прилипание журнала: _bulk — заливка истории без прокрутки,
-    // _stick — держим низ; пользователь уходит вверх → пауза, возврат через ScrollResumeDelay
-    private bool _bulk;
-    private bool _stick = true;
-    private DateTime _lastUserScroll = DateTime.MinValue;
-    private static readonly TimeSpan ScrollResumeDelay = TimeSpan.FromSeconds(18);
+    private bool _optsReady;
 
     public DashboardPage()
     {
@@ -37,58 +32,30 @@ public partial class DashboardPage : Page
             ? $"rcon {s0.RconHost}:{s0.RconPort}  ·  игровой порт: {s0.GamePort}"
             : $"игра {s0.GamePort}  ·  query {s0.QueryPort}  ·  rcon {s0.RconPort}  ·  app {s0.AppPort}";
         _ = DetectConnectAddress();
-        App.Server.OnOutput += Server_OnOutput;
+        LoadOptions();
         App.Server.OnStateChanged += Server_OnStateChanged;
         // NavigationView пересоздаёт страницы — при уходе гасим фон и отписываемся,
         // иначе каждая загрузка дашборда плодит вечные циклы и подписчиков
         Unloaded += DashboardPage_Unloaded;
-        Loaded += (_, _) => JumpToEnd(); // вход на вкладку — журнал сразу на последней строке
         UpdateState();
         RefreshUpdateButton();
         App.Updater.OnChecked += Updater_OnChecked;
         _ = App.Updater.CheckAsync(); // повторная проверка при входе на вкладку (с троттлингом)
-        LoadHistory(); // журнал переживает переходы по вкладкам — читаем из SQLite
-        _ = StartTailWhenNeeded();
         _ = LoopStats();
         _ = ConnectRcon();
-    }
-
-    private void LoadHistory()
-    {
-        _bulk = true;
-        foreach (var (ts, type, msg) in App.Db.RecentLogs(300))
-        {
-            var kind = type == "server" ? Guess(msg)
-                     : type.EndsWith("Chat") ? "chat"
-                     : type.EndsWith("Error") ? "err" : "log";
-            AppendLog(msg, kind, ts.Length >= 19 ? ts[11..] : ts);
-        }
-        _bulk = false;
-    }
-
-    // ScrollViewer внутри дефолтного шаблона ListBox: Border → ScrollViewer
-    private ScrollViewer? LogScroll()
-        => VisualTreeHelper.GetChildrenCount(LogItems) > 0
-            ? (VisualTreeHelper.GetChild(LogItems, 0) as Border)?.Child as ScrollViewer
-            : null;
-
-    private void JumpToEnd() => LogScroll()?.ScrollToEnd();
-
-    private void Log_ScrollChanged(object sender, ScrollChangedEventArgs e)
-    {
-        if (e.VerticalChange == 0) return; // вырос контент при добавлении — не жест пользователя
-        if (e.OriginalSource is not ScrollViewer sv) return;
-        if (sv.VerticalOffset >= sv.ScrollableHeight - 4) _stick = true;
-        else { _stick = false; _lastUserScroll = DateTime.UtcNow; }
     }
 
     private void DashboardPage_Unloaded(object sender, RoutedEventArgs e)
     {
         _tail.Cancel();
-        App.Server.OnOutput -= Server_OnOutput;
         App.Server.OnStateChanged -= Server_OnStateChanged;
         App.Updater.OnChecked -= Updater_OnChecked;
     }
+
+    private void Server_OnStateChanged(bool running) => Dispatcher.Invoke(UpdateState);
+
+    // Однострочный фидбек действий (бывший журнал переехал во вкладку «Логи»)
+    private void Note(string msg) => TxtActionResult.Text = msg;
 
     // ── Самообновление ──────────────────────────────────────────────────────
     private void Updater_OnChecked()
@@ -130,89 +97,7 @@ public partial class DashboardPage : Page
             _updating = false;
             BtnUpdate.IsEnabled = true;
             RefreshUpdateButton();
-            AppendLog($"[RSM] Обновление не удалось: {ex.Message}", "err");
-        }
-    }
-
-    // Tail server.log — fallback: если процесс запущен не нами и stdout нам недоступен,
-    // либо Unity молчит в stdout. Если сервер наш и консоль пишет — tail не нужен (дубли строк).
-    private async Task StartTailWhenNeeded()
-    {
-        if (App.Settings.IsRemoteMode) return;
-        for (int i = 0; i < 20 && !_tail.Cancelled; i++)
-        {
-            if (App.Server.OwnedByUs && App.Server.ConsoleOutputSeen) return;
-            await Task.Delay(500);
-        }
-        if (_tail.Cancelled) return;
-        // server.log — из -logfile при запуске через менеджер; фолбэк — лог start.bat (server\<identity>\server.log)
-        var s = App.Settings;
-        var candidates = new[]
-        {
-            Path.Combine(s.ServerDirPath, "server.log"),
-            Path.Combine(s.ServerDirPath, "server", s.Identity, "server.log"),
-        };
-        var logPath = candidates.FirstOrDefault(File.Exists) ?? candidates[0];
-        await App.Server.TailLogAsync(logPath,
-            line => Dispatcher.Invoke(() => AppendLog(line, Guess(line))), _tail);
-    }
-
-    private void Server_OnOutput(string line) => Dispatcher.Invoke(() => AppendLog(line, "sys"));
-    private void Server_OnStateChanged(bool running) => Dispatcher.Invoke(UpdateState);
-
-    private static string Guess(string line)
-    {
-        if (line.Contains("[ERRO") || line.Contains("Error")) return "err";
-        if (line.Contains("[WARN") || line.Contains("Warning")) return "warn";
-        if (line.Contains("joined") || line.Contains("[CHAT")) return "chat";
-        return "log";
-    }
-
-    private void AppendLog(string line, string kind, string? stamp = null)
-    {
-        var brush = (SolidColorBrush)FindResource(kind switch
-        {
-            "err" => "B.Danger",
-            "warn" => "B.Warn",
-            "chat" => "B.Success",
-            "sys" => "B.Cyan",
-            _ => "B.TextDim"
-        });
-        var item = new TextBlock
-        {
-            Text = $"[{(stamp ?? DateTime.Now.ToString("HH:mm:ss"))}] {line}",
-            Foreground = brush,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap
-        };
-        LogItems.Items.Add(item);
-        while (LogItems.Items.Count > 500) LogItems.Items.RemoveAt(0);
-        // прокрутка вниз — только при включённом автоскролле и прилипании к последней строке
-        if (!_bulk && _stick && ChkAuto.IsChecked == true) JumpToEnd();
-    }
-
-    private void CopyRow_Click(object sender, RoutedEventArgs e)
-    {
-        if (LogItems.SelectedItem is TextBlock t) Clipboard.SetText(t.Text);
-    }
-
-    private void CopyLog_Click(object sender, RoutedEventArgs e)
-    {
-        var text = string.Join(Environment.NewLine,
-            LogItems.Items.Cast<object>().OfType<TextBlock>().Select(t => t.Text));
-        if (text.Length > 0) Clipboard.SetText(text);
-    }
-
-    private void LogItems_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
-    {
-        // Ctrl+C копирует выделенные строки журнала
-        if (e.Key == System.Windows.Input.Key.C &&
-            (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
-        {
-            var sel = LogItems.SelectedItems.Cast<object>().OfType<TextBlock>().Select(t => t.Text);
-            var text = string.Join(Environment.NewLine, sel);
-            if (text.Length > 0) Clipboard.SetText(text);
+            Note($"Обновление не удалось: {ex.Message}");
         }
     }
 
@@ -223,9 +108,13 @@ public partial class DashboardPage : Page
         BtnStart.IsEnabled = local && !running;
         BtnStop.IsEnabled = local && running;
         BtnKill.IsEnabled = local && running;
+        BtnRestart.IsEnabled = local && running;
+        BtnForceSave.IsEnabled = App.Rcon.IsConnected;
+        // в remote нет локального процесса — кнопки питания прячем, FORCE SAVE остаётся (RCON)
         BtnStart.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
         BtnStop.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
         BtnKill.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+        BtnRestart.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
         if (!running)
         {
             StatOnline.Text = "—"; StatFps.Text = "—"; StatUptime.Text = "—"; StatRcon.Text = "OFF";
@@ -259,16 +148,6 @@ public partial class DashboardPage : Page
             }
             catch { }
             await Task.Delay(5000);
-            // пользователь отпустил журнал — через паузу возвращаем прилипание к последней строке
-            if (!_stick)
-                Dispatcher.Invoke(() =>
-                {
-                    if (ChkAuto.IsChecked == true && DateTime.UtcNow - _lastUserScroll > ScrollResumeDelay)
-                    {
-                        _stick = true;
-                        JumpToEnd();
-                    }
-                });
         }
     }
 
@@ -302,7 +181,7 @@ public partial class DashboardPage : Page
             StatEntities.Text = $"{ents:N0} сущностей";
             var ts = TimeSpan.FromSeconds(uptime);
             StatUptime.Text = ts.Days > 0 ? $"{ts.Days}д {ts.Hours}ч" : $"{ts.Hours}ч {ts.Minutes}м";
-            StatMap.Text = string.IsNullOrEmpty(map) ? "карта —" : map;
+            StatMap.Text = string.IsNullOrEmpty(map) ? "" : map;
             StatRcon.Text = "ON";
             StatQueue.Text = $"{queued} / {joining}";
             StatNet.Text = $"{FmtBytes(netIn)}/{FmtBytes(netOut)}";
@@ -342,6 +221,7 @@ public partial class DashboardPage : Page
          : b >= 1L << 20 ? $"{b / 1048576} MB"
          : b >= 1L << 10 ? $"{b / 1024} KB" : $"{b} B";
 
+    // ── Кнопки управления ───────────────────────────────────────────────────
     private async void BtnKill_Click(object sender, RoutedEventArgs e)
     {
         if (MessageBox.Show("УБИТЬ процесс сервера (без сохранения)?", "OctavianRSM",
@@ -363,7 +243,7 @@ public partial class DashboardPage : Page
             if (ask == MessageBoxResult.Yes)
             {
                 var (moved, dir) = wipe.Execute(full);
-                AppendLog($"[RSM] Автовайп: перемещено {moved} файлов → {dir}", "sys");
+                Note($"Автовайп: перемещено {moved} файлов → {dir}");
             }
         }
         if (App.Server.Start()) { UpdateState(); _ = ConnectRcon(); }
@@ -375,6 +255,60 @@ public partial class DashboardPage : Page
         await Task.Delay(4000);
         await App.Server.StopAsync();
         UpdateState();
+    }
+
+    // Рестарт: сохранить → quit → дождаться остановки → поднять заново.
+    // StopAsync помечает остановку намеренной (watchdog молчит), Start её снимает.
+    private async void BtnRestart_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("Перезапустить сервер? Игроков кикнет, мир сохранится.",
+                "OctavianRSM — рестарт", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        Note("Рестарт: сохранение и остановка…");
+        if (App.Rcon.IsConnected) { await App.Rcon.FireAsync("server.save"); await App.Rcon.FireAsync("quit"); }
+        await App.Server.StopAsync();
+        for (int i = 0; i < 40 && App.Server.IsRunning; i++) await Task.Delay(500);
+        if (App.Server.IsRunning) await App.Server.StopAsync(force: true);
+        if (App.Server.Start()) { UpdateState(); _ = ConnectRcon(); Note("✔ сервер перезапущен"); }
+        else Note("✘ не удалось запустить сервер — смотрите «Логи»");
+    }
+
+    private async void ForceSave_Click(object sender, RoutedEventArgs e)
+    {
+        if (!App.Rcon.IsConnected) { Note("RCON не подключён — сохранение недоступно"); return; }
+        Note("> server.save");
+        await App.Rcon.FireAsync("server.save");
+        Note("✔ server.save отправлен");
+    }
+
+    // ── Опции автоматики: сохраняются сразу, watchdog читает их вживую ──────
+    private void LoadOptions()
+    {
+        var s = App.Settings;
+        ChkWatchdog.IsChecked = s.WatchdogEnabled;
+        TxtWatchdogDelay.Text = s.WatchdogDelaySec.ToString();
+        ChkAutoRestart.IsChecked = s.AutoRestartEnabled;
+        TxtRestartTimes.Text = s.AutoRestartTimes;
+        TxtRestartWarn.Text = s.AutoRestartWarnSec.ToString();
+        ChkAutoWipe.IsChecked = s.AutoWipeEnabled;
+        TxtWipeDays.Text = s.AutoWipeIntervalDays.ToString();
+        ChkAutoWipeFull.IsChecked = s.AutoWipeFull;
+        _optsReady = true;
+    }
+
+    private void Opt_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_optsReady) return;
+        var s = App.Settings;
+        s.WatchdogEnabled = ChkWatchdog.IsChecked == true;
+        if (int.TryParse(TxtWatchdogDelay.Text, out var wd) && wd >= 3) s.WatchdogDelaySec = wd;
+        s.AutoRestartEnabled = ChkAutoRestart.IsChecked == true;
+        s.AutoRestartTimes = TxtRestartTimes.Text.Trim();
+        if (int.TryParse(TxtRestartWarn.Text, out var rw) && rw >= 0) s.AutoRestartWarnSec = rw;
+        s.AutoWipeEnabled = ChkAutoWipe.IsChecked == true;
+        if (int.TryParse(TxtWipeDays.Text, out var dd) && dd >= 1) s.AutoWipeIntervalDays = dd;
+        s.AutoWipeFull = ChkAutoWipeFull.IsChecked == true;
+        s.Save(App.SettingsPath);
+        TxtOptSaved.Text = $"✔ сохранено · {DateTime.Now:HH:mm:ss}";
     }
 
     // ── Подключение: адрес для игроков ─────────────────────────────────────
@@ -446,6 +380,6 @@ public partial class DashboardPage : Page
         {
             Process.Start(new ProcessStartInfo($"steam://connect/{addr}") { UseShellExecute = true });
         }
-        catch (Exception ex) { AppendLog($"[RSM] steam://connect не открылся: {ex.Message}", "err"); }
+        catch (Exception ex) { Note($"steam://connect не открылся: {ex.Message}"); }
     }
 }

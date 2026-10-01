@@ -5,175 +5,247 @@
       ScrollViewer.CanContentScroll="False"
       Title="Дашборд">
     <Grid Margin="20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" MinWidth="480"/>
+            <ColumnDefinition Width="284"/>
+        </Grid.ColumnDefinitions>
 
-        <!-- Шапка: бренд + кнопки питания -->
-        <DockPanel Margin="0,0,0,16" LastChildFill="False">
+        <!-- ══ Центральная колонка: подключение, управление, опции ══ -->
+        <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
             <StackPanel>
-                <TextBlock Style="{StaticResource OctaPageTitle}">
-                    <Run Text="Дашборд"/>
-                </TextBlock>
-                <TextBlock x:Name="TxtSub" Style="{StaticResource OctaPageSub}" Text="сервер Octavian RUST"/>
-            </StackPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <ui:Button x:Name="BtnUpdate" Content="⬆ ОБНОВИТЬ" Margin="4" Padding="16,8"
-                           Click="BtnUpdate_Click" Visibility="Collapsed"
-                           Background="{StaticResource B.AccentSoft}" BorderBrush="{StaticResource B.Accent}"
-                           ToolTip="Доступна новая версия менеджера"/>
-                <ui:Button x:Name="BtnStart" Content="▶ ЗАПУСТИТЬ" Appearance="Primary" Margin="4" Padding="16,8" Click="BtnStart_Click"/>
-                <ui:Button x:Name="BtnStop" Content="■ ОСТАНОВИТЬ" Appearance="Danger" Margin="4" Padding="16,8" Click="BtnStop_Click" IsEnabled="False"/>
-                <ui:Button x:Name="BtnKill" Content="✕ KILL" Appearance="Secondary" Margin="4" Padding="16,8" Click="BtnKill_Click" IsEnabled="False"/>
-            </StackPanel>
-        </DockPanel>
 
-        <!-- ПОДКЛЮЧЕНИЕ: адрес для игроков + копирование команды -->
-        <TextBlock Grid.Row="1" Text="ПОДКЛЮЧЕНИЕ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-        <Border Grid.Row="2" Style="{StaticResource OctaPanelAccent}" Padding="16,12" Margin="0,0,0,14">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
-                            VerticalAlignment="Center" Margin="16,0,0,0">
-                    <ui:Button x:Name="BtnCopyConnect" Content="📋 КОПИРОВАТЬ" Appearance="Primary"
-                               Padding="16,8" Click="CopyConnect_Click"
-                               ToolTip="Скопировать команду client.connect в буфер обмена"/>
-                    <ui:Button x:Name="BtnSteamConnect" Content="▶ В STEAM" Padding="16,8" Margin="8,0,0,0"
-                               Click="SteamConnect_Click"
-                               ToolTip="steam://connect — запустить Rust и сразу подключиться"/>
-                </StackPanel>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock x:Name="TxtConnectLabel" Text="АДРЕС СЕРВЕРА — вставьте в консоль F1"
-                               Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="TxtConnect" Text="определяю адрес…" FontSize="20" FontWeight="Bold"
-                               FontFamily="Consolas" Foreground="{StaticResource B.Accent}" Margin="0,4,0,2"/>
-                    <TextBlock x:Name="TxtPorts" Style="{StaticResource OctaPageSub}"/>
-                </StackPanel>
-            </DockPanel>
-        </Border>
-
-        <!-- СЕРВЕР: состояние, аптайм, вайп, канал управления -->
-        <TextBlock Grid.Row="3" Text="СЕРВЕР" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-        <UniformGrid Grid.Row="4" Columns="4" Margin="0,0,0,14">
-            <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0" BorderBrush="{StaticResource B.Accent2}">
-                <StackPanel>
-                    <TextBlock Text="СОСТОЯНИЕ" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatState" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                    <TextBlock x:Name="StatStateSub" Text="ожидание данных" Style="{StaticResource OctaPageSub}"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
-                <StackPanel>
-                    <TextBlock Text="АПТАЙМ" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatUptime" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                    <TextBlock x:Name="StatMap" Text="карта —" Style="{StaticResource OctaPageSub}"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
-                <StackPanel>
-                    <TextBlock Text="ПОСЛЕДНИЙ ВАЙП" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatWipe" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0">
-                <StackPanel>
-                    <TextBlock Text="RCON" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatRcon" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                    <TextBlock x:Name="StatRconSub" Text="websocket" Style="{StaticResource OctaPageSub}"/>
-                </StackPanel>
-            </Border>
-        </UniformGrid>
-
-        <!-- ИГРОКИ И НАГРУЗКА: онлайн, очередь, кадры, сущности -->
-        <TextBlock Grid.Row="5" Text="ИГРОКИ И НАГРУЗКА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-        <UniformGrid Grid.Row="6" Columns="4" Margin="0,0,0,14">
-            <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0">
-                <StackPanel>
-                    <TextBlock Text="ОНЛАЙН" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatOnline" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                    <TextBlock x:Name="StatOnlineSub" Text="игроков" Style="{StaticResource OctaPageSub}"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
-                <StackPanel>
-                    <TextBlock Text="ОЧЕРЕДЬ / ВХОД" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatQueue" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
-                <StackPanel>
-                    <TextBlock Text="FPS" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatFps" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                    <TextBlock x:Name="StatEntities" Text="сущностей —" Style="{StaticResource OctaPageSub}"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0">
-                <StackPanel>
-                    <TextBlock Text="СЕТЬ IN / OUT" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatNet" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                </StackPanel>
-            </Border>
-        </UniformGrid>
-
-        <!-- РЕСУРСЫ ХОСТА: процесс и диск (в remote — только serverinfo) -->
-        <TextBlock Grid.Row="7" Text="РЕСУРСЫ ХОСТА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-        <UniformGrid Grid.Row="8" Columns="4" Margin="0,0,0,14">
-            <Border Style="{StaticResource OctaPanel}" Margin="0,0,8,0">
-                <StackPanel>
-                    <TextBlock Text="CPU ПРОЦЕССА" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatCpu" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
-                <StackPanel>
-                    <TextBlock Text="RAM ПРОЦЕССА" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatRam" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="4,0">
-                <StackPanel>
-                    <TextBlock Text="ДИСК СВОБОДНО" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatDisk" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                </StackPanel>
-            </Border>
-            <Border Style="{StaticResource OctaPanel}" Margin="8,0,0,0">
-                <StackPanel>
-                    <TextBlock Text="RAM СЕРВЕРА (serverinfo)" Style="{StaticResource OctaStatLabel}"/>
-                    <TextBlock x:Name="StatMem" Text="—" Style="{StaticResource OctaStatValue}" FontSize="24"/>
-                </StackPanel>
-            </Border>
-        </UniformGrid>
-
-        <!-- Живой лог: выделение строк, копирование, автоскролл -->
-        <Border Grid.Row="9" Style="{StaticResource OctaPanel}" Padding="0">
-            <DockPanel>
-                <DockPanel DockPanel.Dock="Top" LastChildFill="False" Margin="16,10,16,0">
-                    <TextBlock Text="ЖУРНАЛ" Style="{StaticResource OctaStatLabel}" DockPanel.Dock="Left" VerticalAlignment="Center"/>
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                        <CheckBox x:Name="ChkAuto" Content="автоскролл" IsChecked="True"
-                                  Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"/>
-                        <ui:Button Content="КОПИРОВАТЬ" FontSize="11" Padding="10,3" Margin="12,0,0,0" Click="CopyLog_Click"/>
+                <!-- Шапка -->
+                <DockPanel Margin="0,0,0,16" LastChildFill="False">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource OctaPageTitle}" Text="Дашборд"/>
+                        <TextBlock x:Name="TxtSub" Style="{StaticResource OctaPageSub}" Text="сервер Octavian RUST"/>
                     </StackPanel>
+                    <ui:Button x:Name="BtnUpdate" Content="⬆ ОБНОВИТЬ" Margin="4" Padding="16,8"
+                               Click="BtnUpdate_Click" Visibility="Collapsed"
+                               Background="{StaticResource B.AccentSoft}" BorderBrush="{StaticResource B.Accent}"
+                               DockPanel.Dock="Right" VerticalAlignment="Center"
+                               ToolTip="Доступна новая версия менеджера"/>
                 </DockPanel>
-                <ListBox x:Name="LogItems" Background="Transparent" BorderThickness="0"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" KeyDown="LogItems_KeyDown"
-                         ScrollViewer.ScrollChanged="Log_ScrollChanged">
-                    <ListBox.ContextMenu>
-                        <ContextMenu>
-                            <MenuItem Header="Копировать строку" Click="CopyRow_Click"/>
-                            <MenuItem Header="Копировать всё" Click="CopyLog_Click"/>
-                        </ContextMenu>
-                    </ListBox.ContextMenu>
-                </ListBox>
-            </DockPanel>
+
+                <!-- ПОДКЛЮЧЕНИЕ: адрес для игроков + копирование команды -->
+                <TextBlock Text="ПОДКЛЮЧЕНИЕ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+                <Border Style="{StaticResource OctaPanelAccent}" Padding="16,12" Margin="0,0,0,14">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                    VerticalAlignment="Center" Margin="16,0,0,0">
+                            <ui:Button x:Name="BtnCopyConnect" Content="📋 КОПИРОВАТЬ" Appearance="Primary"
+                                       Padding="16,8" Click="CopyConnect_Click"
+                                       ToolTip="Скопировать команду client.connect в буфер обмена"/>
+                            <ui:Button x:Name="BtnSteamConnect" Content="▶ В STEAM" Padding="16,8" Margin="8,0,0,0"
+                                       Click="SteamConnect_Click"
+                                       ToolTip="steam://connect — запустить Rust и сразу подключиться"/>
+                        </StackPanel>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="TxtConnectLabel" Text="АДРЕС СЕРВЕРА — вставьте в консоль F1"
+                                       Style="{StaticResource OctaStatLabel}"/>
+                            <TextBlock x:Name="TxtConnect" Text="определяю адрес…" FontSize="20" FontWeight="Bold"
+                                       FontFamily="Consolas" Foreground="{StaticResource B.Accent}" Margin="0,4,0,2"/>
+                            <TextBlock x:Name="TxtPorts" Style="{StaticResource OctaPageSub}"/>
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+
+                <!-- УПРАВЛЕНИЕ: крупные кнопки действий -->
+                <TextBlock Text="УПРАВЛЕНИЕ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+                <Border Style="{StaticResource OctaPanel}" Padding="14" Margin="0,0,0,14">
+                    <StackPanel>
+                        <UniformGrid Columns="3">
+                            <ui:Button x:Name="BtnStart" Content="▶ ЗАПУСТИТЬ" Appearance="Primary"
+                                       Margin="0,0,6,0" Padding="16,12" FontSize="13" Click="BtnStart_Click"/>
+                            <ui:Button x:Name="BtnStop" Content="■ ОСТАНОВИТЬ" Appearance="Danger"
+                                       Margin="3,0" Padding="16,12" FontSize="13" Click="BtnStop_Click" IsEnabled="False"/>
+                            <ui:Button x:Name="BtnRestart" Content="↻ ПЕРЕЗАПУСТИТЬ" Appearance="Secondary"
+                                       Margin="6,0,0,0" Padding="16,12" FontSize="13" Click="BtnRestart_Click"
+                                       IsEnabled="False"
+                                       ToolTip="Сохранить, остановить и запустить заново"/>
+                        </UniformGrid>
+                        <UniformGrid Columns="2" Margin="0,8,0,0">
+                            <ui:Button x:Name="BtnForceSave" Content="💾 FORCE SAVE" Appearance="Secondary"
+                                       Margin="0,0,4,0" Padding="16,10" Click="ForceSave_Click"
+                                       IsEnabled="False" ToolTip="server.save через RCON"/>
+                            <ui:Button x:Name="BtnKill" Content="✕ KILL" Appearance="Secondary"
+                                       Margin="4,0,0,0" Padding="16,10" Click="BtnKill_Click" IsEnabled="False"
+                                       ToolTip="Убить процесс без сохранения"/>
+                        </UniformGrid>
+                        <TextBlock x:Name="TxtActionResult" Style="{StaticResource OctaPageSub}"
+                                   Margin="2,8,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ОПЦИИ: переключатели автоматики — сохраняются сразу -->
+                <TextBlock Text="ОПЦИИ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+                <Border Style="{StaticResource OctaPanel}" Padding="16,12" Margin="0,0,0,14">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,12">
+                            <CheckBox x:Name="ChkWatchdog" VerticalAlignment="Top" Click="Opt_Changed"
+                                      Foreground="{StaticResource B.Text}"/>
+                            <StackPanel Margin="8,0,0,0">
+                                <TextBlock Text="Автоподнятие при падении (watchdog)" FontSize="12"
+                                           FontWeight="SemiBold" Foreground="{StaticResource B.Text}"/>
+                                <TextBlock Text="перезапустит сервер, если он умер не по команде" FontSize="11"
+                                           Foreground="{StaticResource B.TextDim}"/>
+                            </StackPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="задержка" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                           VerticalAlignment="Center"/>
+                                <ui:TextBox x:Name="TxtWatchdogDelay" Width="56" Margin="6,0,0,0"
+                                            LostFocus="Opt_Changed" TextAlignment="Center"/>
+                                <TextBlock Text="сек" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <DockPanel Margin="0,0,0,12">
+                            <CheckBox x:Name="ChkAutoRestart" VerticalAlignment="Top" Click="Opt_Changed"
+                                      Foreground="{StaticResource B.Text}"/>
+                            <StackPanel Margin="8,0,0,0">
+                                <TextBlock Text="Авторестарт по расписанию" FontSize="12"
+                                           FontWeight="SemiBold" Foreground="{StaticResource B.Text}"/>
+                                <TextBlock Text="restart с предупреждением игроков в заданные часы" FontSize="11"
+                                           Foreground="{StaticResource B.TextDim}"/>
+                            </StackPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="время" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                           VerticalAlignment="Center"/>
+                                <ui:TextBox x:Name="TxtRestartTimes" Width="110" Margin="6,0,0,0"
+                                            LostFocus="Opt_Changed" TextAlignment="Center"
+                                            ToolTip="HH:mm через запятую, например 04:00, 16:00"/>
+                                <TextBlock Text="warn" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                           VerticalAlignment="Center" Margin="10,0,0,0"/>
+                                <ui:TextBox x:Name="TxtRestartWarn" Width="50" Margin="6,0,0,0"
+                                            LostFocus="Opt_Changed" TextAlignment="Center"/>
+                                <TextBlock Text="сек" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <DockPanel>
+                            <CheckBox x:Name="ChkAutoWipe" VerticalAlignment="Top" Click="Opt_Changed"
+                                      Foreground="{StaticResource B.Text}"/>
+                            <StackPanel Margin="8,0,0,0">
+                                <TextBlock Text="Автовайп по расписанию" FontSize="12"
+                                           FontWeight="SemiBold" Foreground="{StaticResource B.Text}"/>
+                                <TextBlock Text="при старте сервера, если вайп просрочен — предложит выполнить" FontSize="11"
+                                           Foreground="{StaticResource B.TextDim}"/>
+                            </StackPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="каждые" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                           VerticalAlignment="Center"/>
+                                <ui:TextBox x:Name="TxtWipeDays" Width="50" Margin="6,0,0,0"
+                                            LostFocus="Opt_Changed" TextAlignment="Center"/>
+                                <TextBlock Text="дн." FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                <CheckBox x:Name="ChkAutoWipeFull" Content="полный" FontSize="11"
+                                          Foreground="{StaticResource B.Text}" Margin="12,0,0,0"
+                                          Click="Opt_Changed" VerticalAlignment="Center"
+                                          ToolTip="Полный вайп (карта + BP) или только карта"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <TextBlock x:Name="TxtOptSaved" FontSize="10" Foreground="{StaticResource B.Success}"
+                                   Margin="0,8,0,0" HorizontalAlignment="Right"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ══ Правая колонка: информация о сервере ══ -->
+        <Border Grid.Column="1" Style="{StaticResource OctaPanel}" Margin="16,0,0,0" Padding="14,12">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="ИНФОРМАЦИЯ О СЕРВЕРЕ" Style="{StaticResource OctaStatLabel}"
+                               Margin="0,0,0,12"/>
+
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="Состояние" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                            <TextBlock x:Name="StatState" Text="—" FontSize="13" FontWeight="Bold"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.Text}"/>
+                            <TextBlock x:Name="StatStateSub" Text="" FontSize="10" HorizontalAlignment="Right"
+                                       Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="Онлайн" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                            <TextBlock x:Name="StatOnline" Text="—" FontSize="13" FontWeight="Bold"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.Text}"/>
+                            <TextBlock x:Name="StatOnlineSub" Text="игроков" FontSize="10"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="Очередь / вход" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <TextBlock x:Name="StatQueue" Text="—" FontSize="13" FontWeight="SemiBold"
+                                   DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="FPS" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                            <TextBlock x:Name="StatFps" Text="—" FontSize="13" FontWeight="Bold"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.Text}"/>
+                            <TextBlock x:Name="StatEntities" Text="" FontSize="10"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="Сеть in / out" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <TextBlock x:Name="StatNet" Text="—" FontSize="13" FontWeight="SemiBold"
+                                   DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="RAM процесса" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                            <TextBlock x:Name="StatRam" Text="—" FontSize="13" FontWeight="SemiBold"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.Text}"/>
+                            <TextBlock x:Name="StatMem" Text="" FontSize="10"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="CPU процесса" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <TextBlock x:Name="StatCpu" Text="—" FontSize="13" FontWeight="SemiBold"
+                                   DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="Диск свободно" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <TextBlock x:Name="StatDisk" Text="—" FontSize="13" FontWeight="SemiBold"
+                                   DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="Аптайм" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                            <TextBlock x:Name="StatUptime" Text="—" FontSize="13" FontWeight="Bold"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.Text}"/>
+                            <TextBlock x:Name="StatMap" Text="" FontSize="10"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="Последний вайп" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <TextBlock x:Name="StatWipe" Text="—" FontSize="13" FontWeight="SemiBold"
+                                   DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,9">
+                        <TextBlock Text="RCON" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
+                        <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                            <TextBlock x:Name="StatRcon" Text="—" FontSize="13" FontWeight="Bold"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.Text}"/>
+                            <TextBlock x:Name="StatRconSub" Text="websocket" FontSize="10"
+                                       HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <Border Height="1" Background="{StaticResource B.Border}" Margin="0,6,0,10"/>
+                    <TextBlock Text="порты и адрес — в блоке «Подключение» слева"
+                               FontSize="10" Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap"/>
+                </StackPanel>
+            </ScrollViewer>
         </Border>
     </Grid>
 </Page>
