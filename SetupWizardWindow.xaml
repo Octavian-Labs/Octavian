@@ -40,6 +40,10 @@
                         Style="{StaticResource OctaWinBtnClose}"
                         DockPanel.Dock="Right"
                         WindowChrome.IsHitTestVisibleInChrome="True"/>
+                <Button x:Name="BtnMax" Content="▢" Width="46" Click="Max_Click"
+                        Style="{StaticResource OctaWinBtn}"
+                        DockPanel.Dock="Right"
+                        WindowChrome.IsHitTestVisibleInChrome="True"/>
             </DockPanel>
         </Border>
 

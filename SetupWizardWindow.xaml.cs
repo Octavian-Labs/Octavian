@@ -32,6 +32,12 @@ public partial class SetupWizardWindow : Window
     private bool _chainDone, _chainOk;
     private List<ProfileCardVm> _profileCards = new();
 
+    // Псевдо-maximize как в MainWindow: системный Maximized у WindowStyle=None
+    // уходит за пределы рабочей области и прячет низ окна под панелью задач —
+    // разворачиваем сами ровно по SystemParameters.WorkArea
+    private bool _pseudoMax, _suppressState;
+    private Rect _restoredBounds = Rect.Empty;
+
     public SetupWizardWindow(RsmSettings settings, bool hadSettings)
     {
         InitializeComponent();
@@ -74,6 +80,7 @@ public partial class SetupWizardWindow : Window
             if (!ConfirmCancel()) { e.Cancel = true; return; }
             _cts.Cancel();
         };
+        StateChanged += (_, _) => OnStateChangedEx();
         ShowStep(PageMode);
     }
 
@@ -472,5 +479,59 @@ public partial class SetupWizardWindow : Window
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    // ── Псевдо-разворачивание (см. MainWindow) ─────────────────────────────
+    private void Max_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pseudoMax || WindowState == WindowState.Maximized) Unmaximize();
+        else MaximizeBounds();
+    }
+
+    private void MaximizeBounds()
+    {
+        var rb = RestoreBounds;
+        _restoredBounds = (WindowState == WindowState.Normal || rb.IsEmpty)
+            ? new Rect(Left, Top, Width, Height) : rb;
+        if (WindowState != WindowState.Normal)
+        {
+            _suppressState = true;
+            WindowState = WindowState.Normal;
+            _suppressState = false;
+        }
+        var wa = SystemParameters.WorkArea;
+        Left = wa.Left; Top = wa.Top; Width = wa.Width; Height = wa.Height;
+        _pseudoMax = true;
+        BtnMax.Content = "❐";
+    }
+
+    private void Unmaximize()
+    {
+        _pseudoMax = false;
+        if (WindowState != WindowState.Normal)
+        {
+            _suppressState = true;
+            WindowState = WindowState.Normal;
+            _suppressState = false;
+        }
+        if (!_restoredBounds.IsEmpty && _restoredBounds.Width > 0)
+        {
+            Left = _restoredBounds.Left; Top = _restoredBounds.Top;
+            Width = _restoredBounds.Width; Height = _restoredBounds.Height;
+        }
+        BtnMax.Content = "▢";
+    }
+
+    // Системный разворот (даблклик по шапке, Aero Snap) конвертируем в
+    // псевдо-maximize; повторный системный запрос при развёрнутом окне —
+    // это даблклик «вернуть обратно».
+    private void OnStateChangedEx()
+    {
+        if (_suppressState) return;
+        if (WindowState == WindowState.Maximized)
+        {
+            if (_pseudoMax) Unmaximize();
+            else MaximizeBounds();
+        }
+    }
 }
 

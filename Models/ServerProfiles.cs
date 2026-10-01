@@ -6,7 +6,8 @@ namespace OctavianRSM.Models;
 
 // Согласованный пресет роли сервера: рейты, режим, теги и рекомендованный мир.
 // Собран по официальным тегам server.browser (Facepunch wiki) и практике
-// популярных профилей 1x/2x/5x/10x/PvE/Hardcore. Gather/stack — это Carbon-плагины,
+// популярных форматов: 1x/2x/5x/10x, аркадные 1000x и x1000000 (battlefield),
+// training, builds, roleplay, PvE и Hardcore. Gather/stack — это Carbon-плагины,
 // поэтому пресет пишет и в server.cfg, и в конфиги плагинов (см. BootstrapService).
 public sealed record ServerProfile(
     string Key,
@@ -35,8 +36,20 @@ public static class ServerProfiles
             5, 5, 2, false, "vanilla", "weekly", "", 75, 3500, true),
         new("heavy10x", "ТЯЖЁЛЫЙ 10x", "Аркадный гринд: сбор x10, стаки x10, крафт x5.",
             10, 10, 5, false, "vanilla", "weekly", "", 50, 3000, true),
+        // Аркадные форматы: высокие рейты, маленький мир, частые файты
+        new("arcade1000x", "АРКАДА 1000x", "Короткий вайп без гринда: сбор x1000, стаки x1000, крафт x10.",
+            1000, 1000, 10, false, "vanilla", "weekly", "", 100, 2500, true),
+        new("million", "БЕЗУМИЕ x1000000", "Battlefield-формат: миллионный сбор, стаки x100000, инста-крафт — чистый файт.",
+            1_000_000, 100_000, 100, false, "vanilla", "weekly", "battlefield", 100, 1500, true),
+        new("training", "ТРЕНИРОВКА / AIM", "Песочница для аима и перестрелок: ускоренный лут, малый мир, тег training.",
+            10, 10, 10, false, "vanilla", "weekly", "training", 60, 1500, true),
+        // Спокойные/ролевые форматы
         new("pve", "PvE / СТРОЙКА", "Без урона между игроками (server.pve). Спокойный режим, месячный вайп.",
             2, 2, 1, true, "vanilla", "monthly", "pve", 50, 4000, true),
+        new("creative", "КРЕАТИВ / BUILDS", "Стройка без ограничений: PvE, сбор x100, стаки x1000, инста-крафт, тег builds.",
+            100, 1000, 100, true, "vanilla", "monthly", "builds", 50, 3000, true),
+        new("roleplay", "ROLEPLAY", "Отыгрыш роли: ванильные рейты, месячный вайп, тег roleplay.",
+            1, 1, 1, false, "vanilla", "monthly", "roleplay", 100, 4250, true),
         new("hardcore", "HARDCORE", "Режим hardcore Facepunch: минимум удобств, ванильные рейты.",
             1, 1, 1, false, "hardcore", "monthly", "hardcore", 100, 4000, false),
         new("custom", "СВОЙ ВАРИАНТ", "Не применять пресет — все значения останутся как введены ниже.",
