@@ -5,11 +5,16 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Xml;
+using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Highlighting.Xshd;
 using OctavianRSM.Services;
 
 namespace OctavianRSM.Pages;
@@ -33,6 +38,10 @@ public partial class ServerCfgPage : Page
     {
         InitializeComponent();
         Load();
+        SetupFileEditor();
+        LoadFileLists();
+        FileEditor.TextArea.Caret.PositionChanged += (_, _) =>
+            TxtFilePos.Text = $"Строка {FileEditor.TextArea.Caret.Line}, столбец {FileEditor.TextArea.Caret.Column}";
     }
 
     private void Load()
@@ -223,6 +232,146 @@ public partial class ServerCfgPage : Page
             return $"A2S OK {port} ({name})";
         }
         catch { return $"A2S НЕТ ОТВЕТА {port}"; }
+    }
+
+    // ── Вкладка «Редактор файлов»: сырые cfg/json сервера и ядра Carbon ────
+
+    private class CfgFileRef
+    {
+        public string Name = "";
+        public string Path = "";
+        public override string ToString() => Name;
+    }
+
+    private CfgFileRef? _curFile;
+    private bool _fileLoading;
+    private static IHighlightingDefinition? _jsonHl, _cfgHl;
+
+    private void SetupFileEditor()
+    {
+        FileEditor.Options.ConvertTabsToSpaces = true;
+        FileEditor.Options.HighlightCurrentLine = true;
+        FileEditor.Options.CutCopyWholeLine = true;
+        FileEditor.Options.EnableHyperlinks = false;
+        FileEditor.Options.EnableEmailHyperlinks = false;
+        FileEditor.TextArea.SelectionBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xD9, 0xA9, 0x3F));
+        FileEditor.TextArea.SelectionBorder = null;
+        FileEditor.TextArea.SelectionForeground = null;
+        FileEditor.TextArea.TextView.CurrentLineBackground = new SolidColorBrush(Color.FromArgb(0x18, 0xD9, 0xA9, 0x3F));
+        FileEditor.TextArea.TextView.CurrentLineBorder =
+            new Pen(new SolidColorBrush(Color.FromArgb(0x33, 0xD9, 0xA9, 0x3F)), 1);
+        FileEditor.TextArea.Caret.CaretBrush = (SolidColorBrush)FindResource("B.Accent");
+        LoadHighlighting();
+    }
+
+    private static void LoadHighlighting()
+    {
+        if (_jsonHl != null) return;
+        var dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
+        _jsonHl = LoadXshd(Path.Combine(dir, "JsonMode.xshd"));
+        _cfgHl = LoadXshd(Path.Combine(dir, "CfgMode.xshd"));
+    }
+
+    private static IHighlightingDefinition? LoadXshd(string path)
+    {
+        try
+        {
+            // файл рядом с EXE приоритетнее — встроенный ресурс как fallback (single-file)
+            Stream? stream = File.Exists(path) ? File.OpenRead(path)
+                : Assembly.GetExecutingAssembly().GetManifestResourceStream(
+                    "OctavianRSM.Assets." + Path.GetFileName(path));
+            if (stream == null) return null;
+            using (stream)
+            using (var reader = XmlReader.Create(stream))
+                return HighlightingLoader.Load(reader, HighlightingManager.Instance);
+        }
+        catch { return null; }
+    }
+
+    private void LoadFileLists()
+    {
+        var s = App.Settings;
+        List<CfgFileRef> server = new(), carbon = new();
+        void collect(string dir, string pattern, List<CfgFileRef> into)
+        {
+            if (!Directory.Exists(dir)) return;
+            foreach (var f in Directory.GetFiles(dir, pattern))
+                into.Add(new CfgFileRef { Name = Path.GetFileName(f), Path = f });
+        }
+        // Только серверные identity-cfg и ядро Carbon — конфиги плагинов
+        // правятся отдельным редактором по ⚙ на вкладке «Плагины»
+        collect(Path.Combine(s.ServerDirPath, "server", s.Identity, "cfg"), "*.cfg", server);
+        collect(Path.Combine(s.ServerDirPath, "carbon"), "*.json", carbon);
+        LstServer.ItemsSource = server;
+        LstCarbon.ItemsSource = carbon;
+    }
+
+    private void FileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // снимаем выбор в соседнем списке — активным должен быть один файл
+        if (sender == LstServer && LstServer.SelectedItem != null) LstCarbon.SelectedItem = null;
+        if (sender == LstCarbon && LstCarbon.SelectedItem != null) LstServer.SelectedItem = null;
+        _curFile = (sender as ListBox)?.SelectedItem as CfgFileRef;
+        if (_curFile == null) return;
+        try
+        {
+            _fileLoading = true;
+            FileEditor.Text = File.ReadAllText(_curFile.Path);
+            FileEditor.SyntaxHighlighting = _curFile.Path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                ? _jsonHl : _cfgHl;
+            FileEditor.ScrollToHome();
+            TxtFileName.Text = _curFile.Name;
+            TxtFileDirty.Text = "";
+            TxtFileInfo.Text = $"{new FileInfo(_curFile.Path).Length / 1024.0:0.#} KB";
+        }
+        catch (Exception ex) { FileEditor.Text = "// " + ex.Message; }
+        finally { _fileLoading = false; }
+    }
+
+    private void FileEditor_TextChanged(object? sender, EventArgs e)
+    {
+        if (_fileLoading || _curFile == null) return;
+        TxtFileDirty.Text = "● изменён";
+        TxtFileDirty.Foreground = (Brush)FindResource("B.Warn");
+    }
+
+    private void FileEditor_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.S && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            FileSave_Click(sender, e);
+            e.Handled = true;
+        }
+    }
+
+    private void FileSave_Click(object sender, RoutedEventArgs e)
+    {
+        if (_curFile == null) return;
+        try
+        {
+            File.WriteAllText(_curFile.Path, FileEditor.Text);
+            TxtFileDirty.Text = "✓ сохранено " + DateTime.Now.ToString("HH:mm:ss");
+            TxtFileDirty.Foreground = (Brush)FindResource("B.Success");
+            // server.cfg сервер перечитывает по server.writecfg
+            if (App.Rcon.IsConnected
+                && _curFile.Name.Equals("server.cfg", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = App.Rcon.FireAsync("server.writecfg");
+                TxtFileDirty.Text += " · server.writecfg";
+            }
+        }
+        catch (Exception ex)
+        {
+            TxtFileDirty.Text = "ошибка: " + ex.Message;
+            TxtFileDirty.Foreground = (Brush)FindResource("B.Danger");
+        }
+    }
+
+    private void FileRevert_Click(object sender, RoutedEventArgs e)
+    {
+        if (_curFile == null) return;
+        var sel = LstServer.SelectedItem != null ? LstServer : LstCarbon;
+        FileList_SelectionChanged(sel, null!); // перечитать с диска
     }
 
     private void BtnSave_Click(object s, RoutedEventArgs e) => Save();

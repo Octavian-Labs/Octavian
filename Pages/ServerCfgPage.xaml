@@ -2,6 +2,7 @@
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      xmlns:avalon="http://icsharpcode.net/sharpdevelop/avalonedit"
       ScrollViewer.CanContentScroll="False"
       Background="Transparent" Margin="20">
     <Grid>
@@ -204,6 +205,82 @@
                 </Border>
                     </StackPanel>
                 </ScrollViewer>
+            </TabItem>
+            <!-- Дальняя вкладка для хардкора: сырые файлы сервера и ядра Carbon -->
+            <TabItem Header="РЕДАКТОР ФАЙЛОВ">
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="230"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Style="{StaticResource OctaPanel}" Padding="0">
+                        <DockPanel>
+                            <TextBlock Text="ФАЙЛЫ" Style="{StaticResource OctaStatLabel}"
+                                       DockPanel.Dock="Top" Margin="14,12,0,8"/>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="8,0,8,8">
+                                    <TextBlock Text="СЕРВЕР" Foreground="{StaticResource B.Accent2}"
+                                               FontSize="10" FontWeight="Bold" Margin="6,4,0,4"/>
+                                    <ListBox x:Name="LstServer" SelectionChanged="FileList_SelectionChanged"/>
+                                    <TextBlock Text="CARBON (ядро)" Foreground="{StaticResource B.Accent2}"
+                                               FontSize="10" FontWeight="Bold" Margin="6,14,0,4"/>
+                                    <ListBox x:Name="LstCarbon" SelectionChanged="FileList_SelectionChanged"/>
+                                    <TextBlock Text="конфиги плагинов правятся по ⚙ на вкладке «Плагины»"
+                                               Foreground="{StaticResource B.TextDim}" FontSize="10"
+                                               TextWrapping="Wrap" Margin="6,14,0,0"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" Style="{StaticResource OctaPanel}" Padding="0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Border Background="{StaticResource B.Bg2}" Padding="14,8" CornerRadius="8,8,0,0">
+                                <DockPanel LastChildFill="False">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtFileName" Text="(выберите файл слева)"
+                                                   Foreground="{StaticResource B.Accent}" FontWeight="SemiBold"
+                                                   FontFamily="Consolas"/>
+                                        <TextBlock x:Name="TxtFileDirty" Text="" Foreground="{StaticResource B.Warn}"
+                                                   Margin="10,0,0,0"/>
+                                    </StackPanel>
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                        <ui:Button Content="ОТКАТИТЬ" Padding="12,5" Margin="0,0,8,0"
+                                                   Click="FileRevert_Click"/>
+                                        <ui:Button Content="СОХРАНИТЬ" Appearance="Primary" Padding="16,5"
+                                                   Click="FileSave_Click"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <avalon:TextEditor x:Name="FileEditor" Grid.Row="1"
+                                               ShowLineNumbers="True"
+                                               FontFamily="Consolas" FontSize="13.5"
+                                               Background="#0B0E14" Foreground="#E6E9EE"
+                                               LineNumbersForeground="#4A5568"
+                                               HorizontalScrollBarVisibility="Auto"
+                                               VerticalScrollBarVisibility="Auto"
+                                               BorderThickness="0"
+                                               PreviewKeyDown="FileEditor_KeyDown"
+                                               TextChanged="FileEditor_TextChanged"/>
+                            <Border Grid.Row="2" Background="{StaticResource B.Bg2}" Padding="14,6"
+                                    CornerRadius="0,0,8,8">
+                                <DockPanel LastChildFill="False">
+                                    <TextBlock x:Name="TxtFilePos" Text="" Style="{StaticResource OctaPageSub}"
+                                               FontFamily="Consolas"/>
+                                    <TextBlock x:Name="TxtFileInfo" Text="" DockPanel.Dock="Right"
+                                               Style="{StaticResource OctaPageSub}" FontFamily="Consolas"/>
+                                </DockPanel>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
             </TabItem>
         </TabControl>
 
