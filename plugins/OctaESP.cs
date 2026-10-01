@@ -13,13 +13,15 @@ namespace Oxide.Plugins
     // Переработанный AdminESP (FineINK 0.3.01): исправлены наследование компонента,
     // потерянный хук дисконнекта, дёргание флага IsAdmin на каждую отрисовку,
     // плюс добавлены подсветка цели, смотрящей на админа, и отображение оружия.
-    [Info("OctaESP", "Octavian", "1.0.0")]
+    [Info("OctaESP", "Octavian", "1.0.1")]
     [Description("Админский ESP: имена/здоровье/оружие, боксы, линия взгляда, спящие. HUD-меню, привязка на клавишу через octaesp.toggle")]
     public class OctaESP : RustPlugin
     {
         private const string PermUse  = "octaesp.use";
         private const string UiButton = "OctaESP.Button";
         private const string UiMenu   = "OctaESP.Menu";
+        // полноэкранная подложка под меню — клик вне меню закрывает его
+        private const string UiMenuBg = "OctaESP.Menu.Bg";
 
         // палитра Octavian: тёмная панель + золотой акцент
         private const string ColPanel  = "0.05 0.07 0.10 0.92";
@@ -245,7 +247,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octaesp.ui")]
         private void CmdUi(ConsoleSystem.Arg arg)
         {
-            var player = arg.Player();
+            var player = arg.Player() ?? arg.Connection?.player as BasePlayer;
             if (player == null || !permission.UserHasPermission(player.UserIDString, PermUse)) return;
             ToggleMenu(player);
         }
@@ -387,6 +389,7 @@ namespace Oxide.Plugins
             if (_menuOpen.Remove(player.userID))
             {
                 CuiHelper.DestroyUi(player, UiMenu);
+                CuiHelper.DestroyUi(player, UiMenuBg);
                 return;
             }
             _menuOpen.Add(player.userID);
@@ -467,9 +470,23 @@ namespace Oxide.Plugins
         private void BuildMenu(BasePlayer player)
         {
             CuiHelper.DestroyUi(player, UiMenu);
+            CuiHelper.DestroyUi(player, UiMenuBg);
             var s = Get(player);
             const int total = 10; // включить + 6 тоглов + 3 числовых
             var ui = new CuiElementContainer();
+
+            // невидимый полноэкранный слой под меню: клик мимо панели закрывает её.
+            // идёт первым элементом — рисуется под меню, клики по меню проходят к нему
+            ui.Add(new CuiElement
+            {
+                Parent = "Hud.Menu",
+                Name = UiMenuBg,
+                Components =
+                {
+                    new CuiButtonComponent { Color = "0 0 0 0", Command = "octaesp.ui" },
+                    new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" }
+                }
+            });
 
             ui.Add(new CuiPanel
             {
@@ -485,9 +502,18 @@ namespace Oxide.Plugins
                 {
                     new CuiTextComponent { Text = "◆ OCTA ESP", FontSize = 14, Align = TextAnchor.MiddleCenter,
                                            Color = ColAccent, Font = "robotocondensed-bold.ttf" },
-                    new CuiRectTransformComponent { AnchorMin = "0 0.88", AnchorMax = "1 1" }
+                    new CuiRectTransformComponent { AnchorMin = "0 0.88", AnchorMax = "0.86 1" }
                 }
             });
+
+            // явная кнопка закрытия в шапке
+            ui.Add(new CuiButton
+            {
+                Button = { Color = "0 0 0 0", Command = "octaesp.ui" },
+                RectTransform = { AnchorMin = "0.86 0.88", AnchorMax = "0.99 1" },
+                Text = { Text = "✕", Color = ColDim, FontSize = 13, Align = TextAnchor.MiddleCenter,
+                         Font = "robotocondensed-bold.ttf" }
+            }, UiMenu);
 
             var i = 0;
             // главный выключатель — первой строкой
@@ -517,6 +543,7 @@ namespace Oxide.Plugins
         {
             CuiHelper.DestroyUi(player, UiButton);
             CuiHelper.DestroyUi(player, UiMenu);
+            CuiHelper.DestroyUi(player, UiMenuBg);
         }
     }
 }
