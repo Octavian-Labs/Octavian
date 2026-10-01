@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -42,12 +43,44 @@ public class BootstrapService
             progress.Report(new("SteamCMD", "Распаковка steamcmd.exe…", null));
             ZipFile.ExtractToDirectory(zip, dir, overwriteFiles: true);
         }
-        // первый запуск steamcmd сам себя распаковывает (~200 MB) — прогоняем +quit
+        // первый запуск steamcmd сам себя распаковывает (~200 MB) — прогоняем +quit.
+        // Частый сбой: BCommitUpdatedFiles "error 32" — файл занят (антивирус держит
+        // свежераспакованный файл, либо зомби-steamcmd от убитого запуска). Лечим:
+        // чистим package\ (там битый манифест и package\tmp) и повторяем до 4 раз.
         if (!File.Exists(Path.Combine(dir, "steam.dll")) && !File.Exists(Path.Combine(dir, "linux32", "steamcmd")))
         {
-            progress.Report(new("SteamCMD", "Первый запуск — self-update…", null));
-            var code = await RunSteamCmdAsync("+quit", progress, ct);
-            if (code != 0) { progress.Report(new("SteamCMD", $"self-update завершился с кодом {code}", null)); }
+            const int maxAttempts = 4;
+            var updated = false;
+            for (var attempt = 1; attempt <= maxAttempts && !ct.IsCancellationRequested; attempt++)
+            {
+                progress.Report(new("SteamCMD", attempt == 1
+                    ? "Первый запуск — self-update…"
+                    : $"Повтор self-update ({attempt}/{maxAttempts})…", null));
+                var lines = new List<string>();
+                var code = await RunSteamCmdAsync("+quit", progress, ct, lines);
+                if (File.Exists(Path.Combine(dir, "steam.dll"))) { updated = true; break; }
+
+                var lockErr = lines.Any(l =>
+                    l.Contains("error 32", StringComparison.OrdinalIgnoreCase)
+                    || l.Contains("Failed to apply update", StringComparison.OrdinalIgnoreCase));
+                if (!lockErr || attempt == maxAttempts)
+                {
+                    progress.Report(new("SteamCMD",
+                        $"self-update завершился с кодом {code}, распаковка не подтверждена", null));
+                    break;
+                }
+                progress.Report(new("SteamCMD",
+                    "Self-update: файл занят (error 32) — чищу package\\ и повторяю…", null));
+                try { Directory.Delete(Path.Combine(dir, "package"), recursive: true); } catch { }
+                await Task.Delay(2000, ct);
+            }
+            if (!updated)
+            {
+                progress.Report(new("SteamCMD",
+                    "Self-update не завершился. Если в логе «error 32» — добавьте папку steamcmd " +
+                    "в исключения антивируса и нажмите ПОВТОРИТЬ.", null));
+                return false;
+            }
         }
         return File.Exists(exe);
     }
@@ -63,8 +96,24 @@ public class BootstrapService
         return ok;
     }
 
-    private async Task<int> RunSteamCmdAsync(string args, IProgress<BootProgress> progress, CancellationToken ct)
+    // captured — если задан, в него складываются строки с error/failed/reverting
+    // для разбора причины сбоя вызывающим кодом
+    private async Task<int> RunSteamCmdAsync(string args, IProgress<BootProgress> progress,
+        CancellationToken ct, List<string>? captured = null)
     {
+        // зомби от убитых запусков держат файлы self-update (error 32) —
+        // сносим их до старта нового экземпляра
+        KillStraySteamCmd(Path.GetDirectoryName(_s.SteamCmdExePath)!);
+
+        void Capture(string line)
+        {
+            if (captured == null) return;
+            if (line.IndexOf("error", StringComparison.OrdinalIgnoreCase) < 0
+                && line.IndexOf("failed", StringComparison.OrdinalIgnoreCase) < 0
+                && line.IndexOf("reverting", StringComparison.OrdinalIgnoreCase) < 0) return;
+            lock (captured) { if (captured.Count < 200) captured.Add(line); }
+        }
+
         var psi = new ProcessStartInfo
         {
             FileName = _s.SteamCmdExePath,
@@ -84,6 +133,7 @@ public class BootstrapService
         {
             if (e.Data == null) return;
             Activity();
+            Capture(e.Data);
             // steamcmd пишет прогресс вида "Update state (0x61) downloading, progress: 42.10 (x / y)"
             var pct = ParseSteamProgress(e.Data);
             progress.Report(new("SteamCMD", e.Data, pct));
@@ -92,6 +142,7 @@ public class BootstrapService
         {
             if (e.Data == null) return;
             Activity();
+            Capture(e.Data);
             progress.Report(new("SteamCMD", e.Data, null));
         };
         p.BeginOutputReadLine();
@@ -112,6 +163,30 @@ public class BootstrapService
         }
         await exited;
         return p.ExitCode;
+    }
+
+    // Убивает зависшие steamcmd/steamerrorreporter, запущенные из указанной папки.
+    // Они держат файлы пакета — следующий self-update ловит "error 32".
+    private static void KillStraySteamCmd(string dir)
+    {
+        foreach (var p in Process.GetProcesses())
+        {
+            try
+            {
+                var name = p.ProcessName;
+                if (!name.Equals("steamcmd", StringComparison.OrdinalIgnoreCase)
+                    && !name.Equals("steamerrorreporter", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var path = p.MainModule?.FileName;
+                if (path != null && path.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
+                {
+                    p.Kill();
+                    p.WaitForExit(2000); // ждём, пока ОС освободит файловые хэндлы
+                }
+            }
+            catch { /* процесс уже ушёл или нет доступа к пути — пропускаем */ }
+            finally { p.Dispose(); }
+        }
     }
 
     private static double? ParseSteamProgress(string line)
