@@ -139,20 +139,26 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized()
         {
-            // маркер монумента на карте: prefab id 1724395471, категория = имя города
+            // позиции городов — по префабам монументов в TerrainMeta.Path.Monuments
             _outpostPos = FindMonumentPos(_cfg.OutpostMarkers);
             _banditPos = FindMonumentPos(_cfg.BanditMarkers);
+            if (_outpostPos == null) Puts("Монумент Outpost (compound) не найден на карте");
+            if (_banditPos == null) Puts("Монумент Bandit Camp (bandit_town) не найден на карте");
         }
 
-        private static Vector3? FindMonumentPos(string[] markers)
+        // ищем по подстроке в пути префаба: "compound" / "bandit_town"
+        private static Vector3? FindMonumentPos(string[] names)
         {
-            foreach (var prefab in World.Serialization.world.prefabs)
+            if (TerrainMeta.Path?.Monuments == null) return null;
+            foreach (var m in TerrainMeta.Path.Monuments)
             {
-                if (prefab.id == 1724395471 && markers.Contains(prefab.category))
+                if (m?.name == null) continue;
+                foreach (var n in names)
                 {
-                    var pos = new Vector3(prefab.position.x, prefab.position.y, prefab.position.z);
+                    if (!m.name.Contains(n)) continue;
+                    var pos = m.transform.position;
                     var ground = TerrainMeta.HeightMap.GetHeight(pos);
-                    return pos.y < ground ? new Vector3(pos.x, ground + 1f, pos.z) : pos;
+                    return pos.y < ground ? new Vector3(pos.x, ground + 1f, pos.z) : pos + Vector3.up;
                 }
             }
             return null;
