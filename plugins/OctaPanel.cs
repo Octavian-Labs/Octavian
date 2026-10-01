@@ -1447,22 +1447,22 @@ namespace Oxide.Plugins
 
             foreach (var icon in _staticIcons)
             {
-                try { ImageLibrary.Call("AddImage", icon.Value, icon.Key); }
+                try { ImageLibrary.Call("AddImage", icon.Value, icon.Key, 0UL); }
                 catch { }
             }
             foreach (var ic in _eventIcons)
             {
-                try { ImageLibrary.Call("AddImage", ic.Url, ic.Name); }
+                try { ImageLibrary.Call("AddImage", ic.Url, ic.Name, 0UL); }
                 catch { }
             }
             if (_config.logo.allow)
             {
-                try { ImageLibrary.Call("AddImage", _config.logo.url, "OctaPanelLogo"); }
+                try { ImageLibrary.Call("AddImage", _config.logo.url, "OctaPanelLogo", 0UL); }
                 catch { }
             }
             if (_config.economic.allow)
             {
-                try { ImageLibrary.Call("AddImage", _config.economic.url, "OctaPanelMoney"); }
+                try { ImageLibrary.Call("AddImage", _config.economic.url, "OctaPanelMoney", 0UL); }
                 catch { }
             }
 

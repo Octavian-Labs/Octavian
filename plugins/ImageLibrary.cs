@@ -189,8 +189,8 @@ namespace Oxide.Plugins
             imageIdentifiers.imageIds.Clear();
             imageIdentifiers.lastCEID = CommunityEntity.ServerInstance.net.ID.Value;
 
-            _ = AddImage("http://i.imgur.com/sZepiWv.png", "NONE", 0);
-            _ = AddImage("http://i.imgur.com/lydxb0u.png", "LOADING", 0);
+            _ = AddImage("https://i.imgur.com/sZepiWv.png", "NONE", 0);
+            _ = AddImage("https://i.imgur.com/lydxb0u.png", "LOADING", 0);
             foreach (KeyValuePair<string, string> image in configData.UserImages)
             {
                 if (!string.IsNullOrEmpty(image.Value))
@@ -1510,11 +1510,28 @@ namespace Oxide.Plugins
             {
                 UnityWebRequest www = UnityWebRequest.Get(info.url);
 
-                yield return www.SendWebRequest();
+                // небезопасные/битые URL не должны ронять корутину — иначе вся очередь встаёт навсегда
+                UnityWebRequestAsyncOperation op = null;
+                try { op = www.SendWebRequest(); }
+                catch (Exception ex)
+                {
+                    print($"Image request failed! {ex.Message} - Image Name: {info.name} - Image URL: {info.url}");
+                }
+
                 if (il == null)
                 {
+                    www.Dispose();
                     yield break;
                 }
+                if (op == null)
+                {
+                    www.Dispose();
+                    isLoading = false;
+                    Next();
+                    yield break;
+                }
+
+                yield return op;
 
                 if (www.isNetworkError || www.isHttpError)
                 {
