@@ -18,6 +18,7 @@
             <RowDefinition Height="36"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="56"/>
         </Grid.RowDefinitions>
 
@@ -101,7 +102,7 @@
             <DockPanel>
                 <TextBlock DockPanel.Dock="Top" Style="{StaticResource OctaPageSub}"
                            TextWrapping="Wrap" Margin="0,0,0,10"
-                           Text="Профиль задаёт рейты сбора, стаки, скорость крафта, режим и теги браузера. В фоне уже идёт загрузка сервера."/>
+                           Text="Профиль задаёт рейты сбора, стаки, скорость крафта, режим и теги браузера. Разверните карточку (⚙) для точной настройки значений. В фоне уже идёт загрузка сервера — прогресс внизу окна."/>
                 <ListBox x:Name="LstProfiles" DockPanel.Dock="Top"
                          BorderThickness="0" Background="Transparent"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -121,6 +122,48 @@
                                                Foreground="{StaticResource B.Accent}"/>
                                     <TextBlock Text="{Binding Subtitle}" FontSize="11" TextWrapping="Wrap"
                                                Foreground="{StaticResource B.TextDim}" Margin="0,4,0,0"/>
+                                    <!-- Раскрытие = выбор профиля (ProfileCard_Expanded в code-behind) -->
+                                    <Expander Margin="0,8,0,0" Background="Transparent"
+                                              BorderThickness="0" Expanded="ProfileCard_Expanded">
+                                        <Expander.Header>
+                                            <TextBlock Text="⚙ точная настройка" FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{StaticResource B.Accent2}"/>
+                                        </Expander.Header>
+                                        <UniformGrid Columns="2">
+                                            <StackPanel Margin="0,4,6,0">
+                                                <TextBlock Text="Сбор ×" FontSize="10" Foreground="{StaticResource B.TextDim}"/>
+                                                <TextBox Text="{Binding Gather, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontSize="12" Padding="4,2"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="6,4,0,0">
+                                                <TextBlock Text="Стаки ×" FontSize="10" Foreground="{StaticResource B.TextDim}"/>
+                                                <TextBox Text="{Binding Stack, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontSize="12" Padding="4,2"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,8,6,0">
+                                                <TextBlock Text="Крафт ×" FontSize="10" Foreground="{StaticResource B.TextDim}"/>
+                                                <TextBox Text="{Binding Craft, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontSize="12" Padding="4,2"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="6,8,0,0">
+                                                <TextBlock Text="Макс. игроков" FontSize="10" Foreground="{StaticResource B.TextDim}"/>
+                                                <TextBox Text="{Binding MaxPlayers, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontSize="12" Padding="4,2"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,8,6,0">
+                                                <TextBlock Text="Размер мира" FontSize="10" Foreground="{StaticResource B.TextDim}"/>
+                                                <TextBox Text="{Binding WorldSize, UpdateSourceTrigger=PropertyChanged}"
+                                                         FontSize="12" Padding="4,2"/>
+                                            </StackPanel>
+                                            <StackPanel Margin="6,8,0,0">
+                                                <TextBlock Text="PvE-режим" FontSize="10" Foreground="{StaticResource B.TextDim}"/>
+                                                <CheckBox IsChecked="{Binding Pve}" Content="без урона игрокам"
+                                                          FontSize="11" Foreground="{StaticResource B.Text}"
+                                                          Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                        </UniformGrid>
+                                    </Expander>
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
@@ -270,8 +313,27 @@
             </StackPanel>
         </Grid>
 
+        <!-- Мини-индикатор фоновой загрузки: виден на шагах настройки,
+             пока цепочка SteamCMD→Rust идёт в фоне -->
+        <Border x:Name="PnlMiniProgress" Grid.Row="3" Visibility="Collapsed"
+                Background="#0D1118" BorderBrush="{StaticResource B.Border}"
+                BorderThickness="0,1,0,0" Padding="24,6">
+            <StackPanel>
+                <DockPanel LastChildFill="True">
+                    <TextBlock x:Name="TxtMiniPct" DockPanel.Dock="Right" FontSize="11"
+                               FontWeight="Bold" Foreground="{StaticResource B.Accent}"/>
+                    <TextBlock x:Name="TxtMiniPhase" FontSize="11" VerticalAlignment="Center"
+                               Foreground="{StaticResource B.TextDim}" Text="загрузка…"/>
+                </DockPanel>
+                <ProgressBar x:Name="PbMini" Height="4" Margin="0,5,0,0"
+                             Minimum="0" Maximum="100" IsIndeterminate="True"
+                             Foreground="{StaticResource B.Accent}"
+                             Background="{StaticResource B.Bg3}"/>
+            </StackPanel>
+        </Border>
+
         <!-- Футер навигации -->
-        <Border Grid.Row="3" Background="#0D1118"
+        <Border Grid.Row="4" Background="#0D1118"
                 BorderBrush="{StaticResource B.Border}" BorderThickness="0,1,0,0">
             <DockPanel Margin="24,0" LastChildFill="False" VerticalAlignment="Center">
                 <ui:Button x:Name="BtnCancel" Content="ОТМЕНА" Click="Cancel_Click"

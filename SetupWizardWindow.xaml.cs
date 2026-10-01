@@ -1,10 +1,14 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using OctavianRSM.Models;
 using OctavianRSM.Services;
 
@@ -24,6 +28,7 @@ public partial class SetupWizardWindow : Window
     private Task<bool>? _chain;
     private int _step;
     private bool _chainDone, _chainOk;
+    private List<ProfileCardVm> _profileCards = new();
 
     public SetupWizardWindow(RsmSettings settings, bool hadSettings)
     {
@@ -31,8 +36,12 @@ public partial class SetupWizardWindow : Window
         _s = settings;
         _boot = new BootstrapService(settings);
 
-        LstProfiles.ItemsSource = ServerProfiles.All;
-        LstProfiles.SelectedItem = ServerProfiles.Get(_s.ServerProfile);
+        // Карточки профилей с точной настройкой: поля предзаполнены пресетом
+        // (для "custom" — текущими настройками), при "Далее" применяются всегда.
+        _profileCards = ServerProfiles.All.Select(p => new ProfileCardVm(p, _s)).ToList();
+        LstProfiles.ItemsSource = _profileCards;
+        LstProfiles.SelectedItem =
+            _profileCards.FirstOrDefault(c => c.Profile.Key == _s.ServerProfile) ?? _profileCards[0];
 
         TxtHostname.Text = _s.Hostname;
         TxtIdentity.Text = _s.Identity;
@@ -93,8 +102,35 @@ public partial class SetupWizardWindow : Window
         BtnBack.IsEnabled = step != PageInstall || _chainDone; // не дёргаем шаги во время записи конфигов
         BtnNext.Visibility = step == PageMode ? Visibility.Collapsed : Visibility.Visible;
         BtnNext.Content = step is PageInstall or PageRemote ? "ГОТОВО" : "ДАЛЕЕ →";
+        // мини-индикатор загрузки виден на всех шагах, кроме «Установка» —
+        // там свой большой прогресс-бар с логом
+        PnlMiniProgress.Visibility = _chain != null && step != PageInstall
+            ? Visibility.Visible : Visibility.Collapsed;
+        if (step == PageWorld) SyncWorldStep(); // пресет/карточка могли сменить мир и игроков
         if (step == PageInstall) UpdateInstallButtons();
         if (step == PageRemote) BtnNext.IsEnabled = true;
+    }
+
+    // Шаг «Мир и вайпы» перечитываем из настроек: карточка профиля могла
+    // переписать MaxPlayers/WorldSize/WipeSchedule после инициализации полей
+    private void SyncWorldStep()
+    {
+        TxtMaxPlayers.Text = _s.MaxPlayers.ToString();
+        TxtWorldSize.Text = _s.WorldSize.ToString();
+        TxtSeed.Text = _s.WorldSeed.ToString();
+        TxtExtraTags.Text = _s.ExtraTags;
+        SelectComboByContent(CmbLevel, _s.Level);
+        SelectComboByContent(CmbWipe, _s.WipeSchedule);
+    }
+
+    private static void SelectComboByContent(ComboBox cmb, string value)
+    {
+        foreach (ComboBoxItem it in cmb.Items)
+            if (it.Content?.ToString() == value) { cmb.SelectedItem = it; return; }
+        // значения нет в списке — добавляем, чтобы не затирать конфиг дефолтом
+        var extra = new ComboBoxItem { Content = value };
+        cmb.Items.Add(extra);
+        cmb.SelectedItem = extra;
     }
 
     private void UpdateInstallButtons()
@@ -137,6 +173,19 @@ public partial class SetupWizardWindow : Window
                     ? "Загрузка отменена" : "Ошибка загрузки — нажмите ПОВТОРИТЬ";
                 PbInstall.IsIndeterminate = false;
                 if (_chainOk) PbInstall.Value = 100;
+                PbMini.IsIndeterminate = false;
+                if (_chainOk)
+                {
+                    PbMini.Value = 100;
+                    TxtMiniPct.Text = "100%";
+                    TxtMiniPhase.Text = "Загрузка завершена — продолжайте настройку";
+                    TxtMiniPhase.Foreground = (Brush)FindResource("B.Success");
+                }
+                else
+                {
+                    TxtMiniPhase.Text = "Загрузка не удалась — детали и ПОВТОРИТЬ на шаге «Установка»";
+                    TxtMiniPhase.Foreground = (Brush)FindResource("B.Danger");
+                }
                 UpdateInstallButtons();
             });
         });
@@ -145,15 +194,17 @@ public partial class SetupWizardWindow : Window
     private void OnProgress(BootProgress p)
     {
         TxtPhase.Text = $"{p.Phase}: {p.Detail}";
+        // мини-полоса: деталь обрезаем — steamcmd пишет длинные строки прогресса
+        var detail = p.Detail.Length > 70 ? p.Detail[..70] + "…" : p.Detail;
+        TxtMiniPhase.Text = $"{p.Phase}: {detail}";
         if (p.Percent is double pct)
         {
             PbInstall.IsIndeterminate = false;
             PbInstall.Value = Math.Clamp(pct, 0, 100);
             TxtPct.Text = $"{pct:0}%";
-        }
-        else if (p.Detail.Length > 0 && _step == PageInstall)
-        {
-            // без числа — не трогаем индетерминированность
+            PbMini.IsIndeterminate = false;
+            PbMini.Value = Math.Clamp(pct, 0, 100);
+            TxtMiniPct.Text = $"{pct:0}%";
         }
         var line = $"[{p.Phase}] {p.Detail}\n";
         TxtInstallLog.Text += line;
@@ -192,8 +243,8 @@ public partial class SetupWizardWindow : Window
         switch (_step)
         {
             case PageProfile:
-                if (LstProfiles.SelectedItem is ServerProfile p)
-                    ServerProfiles.Apply(p, _s);
+                if (LstProfiles.SelectedItem is ProfileCardVm card)
+                    ApplyProfileCard(card);
                 ShowStep(PageBasics);
                 break;
             case PageBasics:
@@ -211,6 +262,62 @@ public partial class SetupWizardWindow : Window
                 await FinishLocalAsync();
                 break;
         }
+    }
+
+    // ── Шаг 1: карточки профилей ────────────────────────────────────────────
+
+    // Раскрытие карточки = интерес к этому профилю: делаем её выбранной,
+    // иначе правки полей внутри уйдут вникуда — применяется SelectedItem.
+    private void ProfileCard_Expanded(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is ProfileCardVm card)
+            LstProfiles.SelectedItem = card;
+    }
+
+    // Пресет + точные значения из полей карточки. Поля предзаполнены пресетом,
+    // поэтому применяем их всегда: правки пользователя — это и есть итоговый конфиг.
+    private void ApplyProfileCard(ProfileCardVm card)
+    {
+        var p = card.Profile;
+        ServerProfiles.Apply(p, _s);
+        double Rate(string s, double fb) => double.TryParse(s, NumberStyles.Float,
+            CultureInfo.InvariantCulture, out var v) && v > 0 ? v : fb;
+        _s.GatherRate = Rate(card.Gather, _s.GatherRate);
+        _s.StackMultiplier = Rate(card.Stack, _s.StackMultiplier);
+        _s.CraftTimescale = Rate(card.Craft, _s.CraftTimescale);
+        _s.ServerPve = card.Pve;
+        if (int.TryParse(card.MaxPlayers, out var mp) && mp is >= 1 and <= 500)
+            _s.MaxPlayers = mp;
+        if (int.TryParse(card.WorldSize, out var ws) && ws is >= 1000 and <= 6000)
+            _s.WorldSize = ws;
+    }
+
+    // Модель карточки профиля: пресет + редактируемые поля точной настройки.
+    // Для "custom" поля предзаполняются текущими настройками.
+    private sealed class ProfileCardVm
+    {
+        public ProfileCardVm(ServerProfile p, RsmSettings s)
+        {
+            Profile = p;
+            var custom = p.Key == "custom";
+            var inv = CultureInfo.InvariantCulture;
+            Gather = (custom || p.Gather <= 0 ? s.GatherRate : p.Gather).ToString("0.#", inv);
+            Stack = (custom || p.Stack <= 0 ? s.StackMultiplier : p.Stack).ToString("0.#", inv);
+            Craft = (custom || p.CraftTimescale <= 0 ? s.CraftTimescale : p.CraftTimescale).ToString("0.#", inv);
+            Pve = custom ? s.ServerPve : p.Pve;
+            MaxPlayers = (custom || p.MaxPlayers <= 0 ? s.MaxPlayers : p.MaxPlayers).ToString();
+            WorldSize = (custom || p.WorldSize <= 0 ? s.WorldSize : p.WorldSize).ToString();
+        }
+
+        public ServerProfile Profile { get; }
+        public string Title => Profile.Title;
+        public string Subtitle => Profile.Subtitle;
+        public string Gather { get; set; }
+        public string Stack { get; set; }
+        public string Craft { get; set; }
+        public bool Pve { get; set; }
+        public string MaxPlayers { get; set; }
+        public string WorldSize { get; set; }
     }
 
     // ── Валидация ───────────────────────────────────────────────────────────
