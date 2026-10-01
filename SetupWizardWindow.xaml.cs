@@ -268,16 +268,9 @@ public partial class SetupWizardWindow : Window
 
     // ── Шаг 1: карточки профилей ────────────────────────────────────────────
 
-    // Раскрытие карточки = интерес к этому профилю: делаем её выбранной,
-    // иначе правки полей внутри уйдут вникуда — применяется SelectedItem.
-    private void ProfileCard_Expanded(object sender, RoutedEventArgs e)
-    {
-        if ((sender as FrameworkElement)?.DataContext is ProfileCardVm card)
-            LstProfiles.SelectedItem = card;
-    }
-
-    // Пресет + точные значения из полей карточки. Поля предзаполнены пресетом,
-    // поэтому применяем их всегда: правки пользователя — это и есть итоговый конфиг.
+    // Пресет + точные значения из панели настройки под сеткой (привязана к
+    // SelectedItem). Поля предзаполнены пресетом, поэтому применяем их всегда:
+    // правки пользователя — это и есть итоговый конфиг.
     private void ApplyProfileCard(ProfileCardVm card)
     {
         var p = card.Profile;
@@ -296,7 +289,7 @@ public partial class SetupWizardWindow : Window
 
     // Модель карточки профиля: пресет + редактируемые поля точной настройки.
     // Для "custom" поля предзаполняются текущими настройками. INPC — сводка
-    // на лице карточки обновляется прямо при вводе в развёрнутых полях.
+    // на лице карточки обновляется прямо при вводе в панели под сеткой.
     private sealed class ProfileCardVm : INotifyPropertyChanged
     {
         private string _gather = "", _stack = "", _craft = "", _maxPlayers = "", _worldSize = "";
