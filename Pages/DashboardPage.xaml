@@ -181,7 +181,7 @@
                     <TextBlock Text="ИНФОРМАЦИЯ О СЕРВЕРЕ" Style="{StaticResource OctaStatLabel}"
                                Margin="0,0,0,12"/>
 
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="Состояние" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                             <TextBlock x:Name="StatState" Text="—" FontSize="13" FontWeight="Bold"
@@ -190,7 +190,7 @@
                                        Foreground="{StaticResource B.TextDim}"/>
                         </StackPanel>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="Онлайн" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                             <TextBlock x:Name="StatOnline" Text="—" FontSize="13" FontWeight="Bold"
@@ -199,12 +199,12 @@
                                        HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
                         </StackPanel>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="Очередь / вход" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <TextBlock x:Name="StatQueue" Text="—" FontSize="13" FontWeight="SemiBold"
                                    DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="FPS" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                             <TextBlock x:Name="StatFps" Text="—" FontSize="13" FontWeight="Bold"
@@ -213,12 +213,12 @@
                                        HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
                         </StackPanel>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="Сеть in / out" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <TextBlock x:Name="StatNet" Text="—" FontSize="13" FontWeight="SemiBold"
                                    DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="RAM процесса" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                             <TextBlock x:Name="StatRam" Text="—" FontSize="13" FontWeight="SemiBold"
@@ -227,17 +227,17 @@
                                        HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
                         </StackPanel>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="CPU процесса" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <TextBlock x:Name="StatCpu" Text="—" FontSize="13" FontWeight="SemiBold"
                                    DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="Диск свободно" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <TextBlock x:Name="StatDisk" Text="—" FontSize="13" FontWeight="SemiBold"
                                    DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="Аптайм" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                             <TextBlock x:Name="StatUptime" Text="—" FontSize="13" FontWeight="Bold"
@@ -246,12 +246,12 @@
                                        HorizontalAlignment="Right" Foreground="{StaticResource B.TextDim}"/>
                         </StackPanel>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="Последний вайп" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <TextBlock x:Name="StatWipe" Text="—" FontSize="13" FontWeight="SemiBold"
                                    DockPanel.Dock="Right" Foreground="{StaticResource B.Text}"/>
                     </DockPanel>
-                    <DockPanel Margin="0,0,0,9">
+                    <DockPanel Margin="0,0,0,9" LastChildFill="False">
                         <TextBlock Text="RCON" FontSize="11" Foreground="{StaticResource B.TextDim}"/>
                         <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                             <TextBlock x:Name="StatRcon" Text="—" FontSize="13" FontWeight="Bold"
