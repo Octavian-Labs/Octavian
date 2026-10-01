@@ -4,15 +4,15 @@
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
       ScrollViewer.CanContentScroll="False"
       Title="Дашборд">
-    <Grid Margin="20">
+    <Grid x:Name="RootGrid" Margin="20">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" MinWidth="480"/>
+            <ColumnDefinition Width="*" MinWidth="440"/>
             <ColumnDefinition Width="284"/>
         </Grid.ColumnDefinitions>
 
         <!-- ══ Центральная колонка: подключение, управление, опции ══ -->
         <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
-            <StackPanel>
+            <StackPanel x:Name="LeftStack">
 
                 <!-- Шапка -->
                 <DockPanel Margin="0,0,0,16" LastChildFill="False">
@@ -54,24 +54,44 @@
                 <TextBlock Text="УПРАВЛЕНИЕ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
                 <Border Style="{StaticResource OctaPanel}" Padding="14" Margin="0,0,0,14">
                     <StackPanel>
-                        <UniformGrid Columns="3">
-                            <ui:Button x:Name="BtnStart" Content="▶ ЗАПУСТИТЬ" Appearance="Primary"
+                        <!-- ui:Button (WPF-UI) не растягивается в UniformGrid — поэтому
+                             честный Grid со звёздными колонками + Stretch на кнопках -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <ui:Button x:Name="BtnStart" Grid.Row="0" Grid.Column="0"
+                                       Content="▶ ЗАПУСТИТЬ" Appearance="Primary"
+                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                        Margin="0,0,6,0" Padding="16,12" FontSize="13" Click="BtnStart_Click"/>
-                            <ui:Button x:Name="BtnStop" Content="■ ОСТАНОВИТЬ" Appearance="Danger"
-                                       Margin="3,0" Padding="16,12" FontSize="13" Click="BtnStop_Click" IsEnabled="False"/>
-                            <ui:Button x:Name="BtnRestart" Content="↻ ПЕРЕЗАПУСТИТЬ" Appearance="Secondary"
+                            <ui:Button x:Name="BtnStop" Grid.Row="0" Grid.Column="1"
+                                       Content="■ ОСТАНОВИТЬ" Appearance="Danger"
+                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                       Margin="3,0" Padding="16,12" FontSize="13" Click="BtnStop_Click"
+                                       IsEnabled="False"/>
+                            <ui:Button x:Name="BtnRestart" Grid.Row="0" Grid.Column="2"
+                                       Content="↻ ПЕРЕЗАПУСТИТЬ" Appearance="Secondary"
+                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                        Margin="6,0,0,0" Padding="16,12" FontSize="13" Click="BtnRestart_Click"
                                        IsEnabled="False"
                                        ToolTip="Сохранить, остановить и запустить заново"/>
-                        </UniformGrid>
-                        <UniformGrid Columns="2" Margin="0,8,0,0">
-                            <ui:Button x:Name="BtnForceSave" Content="💾 FORCE SAVE" Appearance="Secondary"
-                                       Margin="0,0,4,0" Padding="16,10" Click="ForceSave_Click"
+                            <ui:Button x:Name="BtnForceSave" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                       Content="💾 FORCE SAVE" Appearance="Secondary"
+                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                       Margin="0,8,4,0" Padding="16,10" Click="ForceSave_Click"
                                        IsEnabled="False" ToolTip="server.save через RCON"/>
-                            <ui:Button x:Name="BtnKill" Content="✕ KILL" Appearance="Secondary"
-                                       Margin="4,0,0,0" Padding="16,10" Click="BtnKill_Click" IsEnabled="False"
+                            <ui:Button x:Name="BtnKill" Grid.Row="1" Grid.Column="2"
+                                       Content="✕ KILL" Appearance="Secondary"
+                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                       Margin="4,8,0,0" Padding="16,10" Click="BtnKill_Click" IsEnabled="False"
                                        ToolTip="Убить процесс без сохранения"/>
-                        </UniformGrid>
+                        </Grid>
                         <TextBlock x:Name="TxtActionResult" Style="{StaticResource OctaPageSub}"
                                    Margin="2,8,0,0" TextWrapping="Wrap"/>
                     </StackPanel>
@@ -155,7 +175,7 @@
         </ScrollViewer>
 
         <!-- ══ Правая колонка: информация о сервере ══ -->
-        <Border Grid.Column="1" Style="{StaticResource OctaPanel}" Margin="16,0,0,0" Padding="14,12">
+        <Border x:Name="PnlInfo" Grid.Column="1" Style="{StaticResource OctaPanel}" Margin="16,0,0,0" Padding="14,12">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                     <TextBlock Text="ИНФОРМАЦИЯ О СЕРВЕРЕ" Style="{StaticResource OctaStatLabel}"

@@ -37,6 +37,7 @@ public partial class DashboardPage : Page
         // NavigationView пересоздаёт страницы — при уходе гасим фон и отписываемся,
         // иначе каждая загрузка дашборда плодит вечные циклы и подписчиков
         Unloaded += DashboardPage_Unloaded;
+        SizeChanged += DashboardPage_SizeChanged;
         UpdateState();
         RefreshUpdateButton();
         App.Updater.OnChecked += Updater_OnChecked;
@@ -53,6 +54,28 @@ public partial class DashboardPage : Page
     }
 
     private void Server_OnStateChanged(bool running) => Dispatcher.Invoke(UpdateState);
+
+    // Адаптивная раскладка: на узком окне правая инфо-панель не влезает —
+    // переносим её в общий столбец сразу после блока «Подключение»;
+    // при расширении окна возвращаем на место справа.
+    private void DashboardPage_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var narrow = e.NewSize.Width < 840;
+        if (narrow && ReferenceEquals(PnlInfo.Parent, RootGrid))
+        {
+            RootGrid.Children.Remove(PnlInfo);
+            PnlInfo.ClearValue(Grid.ColumnProperty);
+            PnlInfo.Margin = new Thickness(0, 0, 0, 14);
+            LeftStack.Children.Insert(3, PnlInfo);
+        }
+        else if (!narrow && ReferenceEquals(PnlInfo.Parent, LeftStack))
+        {
+            LeftStack.Children.Remove(PnlInfo);
+            PnlInfo.Margin = new Thickness(16, 0, 0, 0);
+            Grid.SetColumn(PnlInfo, 1);
+            RootGrid.Children.Add(PnlInfo);
+        }
+    }
 
     // Однострочный фидбек действий (бывший журнал переехал во вкладку «Логи»)
     private void Note(string msg) => TxtActionResult.Text = msg;
