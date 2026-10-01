@@ -28,7 +28,36 @@
         <Border Grid.Row="1" Style="{StaticResource OctaPanel}" Margin="0,0,12,0" Padding="0">
             <DockPanel>
                 <TextBlock Text="ФАЙЛЫ" Style="{StaticResource OctaStatLabel}" DockPanel.Dock="Top" Margin="14,12,0,8"/>
-                <ListBox x:Name="LstFiles" SelectionChanged="LstFiles_SelectionChanged" Margin="4,0"/>
+                <ListBox x:Name="LstFiles" SelectionChanged="LstFiles_SelectionChanged" Margin="4,0">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Style.Triggers>
+                                <!-- строки-заголовки групп не выбираются -->
+                                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                    <Setter Property="IsEnabled" Value="False"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Name}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                                <Setter Property="Foreground" Value="{StaticResource B.Accent2}"/>
+                                                <Setter Property="FontSize" Value="10"/>
+                                                <Setter Property="FontWeight" Value="Bold"/>
+                                                <Setter Property="Margin" Value="0,8,0,2"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
             </DockPanel>
         </Border>
 

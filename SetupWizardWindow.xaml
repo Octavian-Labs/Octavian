@@ -75,6 +75,21 @@
                         </StackPanel>
                     </Border>
                 </UniformGrid>
+                <!-- Carbon: заметная галочка на первом экране — решается до начала загрузки -->
+                <Border Style="{StaticResource OctaPanel}" Margin="0,14,0,0" Padding="14,10"
+                        BorderBrush="{StaticResource B.Accent2}">
+                    <DockPanel LastChildFill="True">
+                        <CheckBox x:Name="ChkCarbon" IsChecked="True" VerticalAlignment="Top"
+                                  Foreground="{StaticResource B.Text}"/>
+                        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="8,0,0,0"
+                                   Foreground="{StaticResource B.Text}">
+                            <Run FontWeight="Bold" Foreground="{StaticResource B.Accent}"
+                                 Text="Установить Carbon — фреймворк для плагинов"/>
+                            <Run Foreground="{StaticResource B.TextDim}"
+                                 Text="  •  серверные плагины (рейты, телепорты, админка) работают только с ним. Без Carbon сервер останется ванильным. Только для локальной установки."/>
+                        </TextBlock>
+                    </DockPanel>
+                </Border>
                 <TextBlock Margin="0,14,0,0" FontSize="11" Foreground="{StaticResource B.TextDim}"
                            TextWrapping="Wrap"
                            Text="Локальную установку можно отменить в любой момент — частично скачанные файлы останутся и докачаются при следующем запуске."/>
@@ -150,16 +165,11 @@
                                    Style="{StaticResource OctaCmdBtn}" Click="GenPass_Click"/>
                         <TextBox x:Name="TxtRconPassword"/>
                     </DockPanel>
-                    <UniformGrid Columns="2">
-                        <CheckBox x:Name="ChkCarbon" IsChecked="True" Margin="0,0,8,10"
-                                  Foreground="{StaticResource B.Text}">
-                            <TextBlock TextWrapping="Wrap" Text="Установить Carbon (мод-фреймворк, нужен для рейтов и плагинов)" FontSize="12"/>
-                        </CheckBox>
-                        <CheckBox x:Name="ChkPlugins" IsChecked="True" Margin="8,0,0,10"
-                                  Foreground="{StaticResource B.Text}">
-                            <TextBlock TextWrapping="Wrap" Text="Установить OctaAdminTools (плагин инструментов менеджера)" FontSize="12"/>
-                        </CheckBox>
-                    </UniformGrid>
+                    <CheckBox x:Name="ChkPlugins" IsChecked="True" Margin="0,0,0,10"
+                              Foreground="{StaticResource B.Text}">
+                        <TextBlock TextWrapping="Wrap" FontSize="12"
+                                   Text="Установить OctaAdminTools (плагин инструментов менеджера; требует Carbon — ставится только если он выбран на первом шаге)"/>
+                    </CheckBox>
                 </StackPanel>
             </ScrollViewer>
         </Grid>

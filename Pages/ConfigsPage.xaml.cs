@@ -16,7 +16,13 @@ namespace OctavianRSM.Pages;
 
 public partial class ConfigsPage : Page
 {
-    private class CfgFile { public string Name = ""; public string Path = ""; public override string ToString() => Name; }
+    private class CfgFile
+    {
+        public string Name = "";
+        public string Path = "";
+        public bool IsHeader; // строка-заголовок группы, не файл
+        public override string ToString() => Name;
+    }
 
     // Строка серверного cfg: либо распарсенная «ключ "значение"», либо сырая
     // (комментарий/команда) — сырые сохраняются как есть и в таблице не показываются
@@ -97,16 +103,18 @@ public partial class ConfigsPage : Page
     {
         _files = new List<CfgFile>();
         var s = App.Settings;
-        void addDir(string dir, string pattern, string group)
+        void addDir(string dir, string pattern)
         {
             if (!Directory.Exists(dir)) return;
             foreach (var f in Directory.GetFiles(dir, pattern))
-                _files.Add(new CfgFile { Name = $"{group} · {Path.GetFileName(f)}", Path = f });
+                _files.Add(new CfgFile { Name = Path.GetFileName(f), Path = f });
         }
         // Только конфиги сервера: identity-cfg и ядро Carbon (корень carbon/, без configs/ плагинов —
         // у них свой редактор по кнопке ⚙ на вкладке «Плагины»)
-        addDir(Path.Combine(s.ServerDirPath, "server", s.Identity, "cfg"), "*.cfg", "server");
-        addDir(Path.Combine(s.ServerDirPath, "carbon"), "*.json", "carbon");
+        _files.Add(new CfgFile { Name = "СЕРВЕР", IsHeader = true });
+        addDir(Path.Combine(s.ServerDirPath, "server", s.Identity, "cfg"), "*.cfg");
+        _files.Add(new CfgFile { Name = "CARBON (ядро)", IsHeader = true });
+        addDir(Path.Combine(s.ServerDirPath, "carbon"), "*.json");
         ApplyFilter();
     }
 
@@ -126,7 +134,7 @@ public partial class ConfigsPage : Page
     private void LstFiles_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         _current = LstFiles.SelectedItem as CfgFile;
-        if (_current == null) return;
+        if (_current == null || _current.IsHeader) return;
         try
         {
             _loading = true;

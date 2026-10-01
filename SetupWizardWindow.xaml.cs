@@ -194,7 +194,6 @@ public partial class SetupWizardWindow : Window
             case PageProfile:
                 if (LstProfiles.SelectedItem is ServerProfile p)
                     ServerProfiles.Apply(p, _s);
-                ChkCarbon.IsChecked = _s.InstallCarbon;
                 ShowStep(PageBasics);
                 break;
             case PageBasics:
