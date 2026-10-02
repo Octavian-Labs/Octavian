@@ -103,7 +103,26 @@ Definition — value type, `?.` не работает → проверять ч�
 
 ---
 
-## 6. Общие правила плагинов Octavian
+## 6. Чат-форматирование и Chaos UI
+
+- `Chat.ChatChannel` / `Chat.ChatEntry` в Carbon — это `ConVar.Chat.*`
+  (нужен `using ConVar;` или полное имя).
+- `RCon` и `Epoch` в Carbon-плагинах недоступны из коробки — не тащить
+  паттерн RCon.Broadcast из Clans, он не компилится.
+- Форматтер чата: `OnPlayerChat(BasePlayer, string, ConVar.Chat.ChatChannel)`,
+  вернуть `true` чтобы заглушить стандартный вывод, рассылать самим через
+  `p.SendConsoleCommand("chat.add", (int)channel, userIdString, line)`.
+- При пересечении форматтеров Carbon берёт ПОСЛЕДНИЙ non-null результат и
+  пишет warning о конфликте — эксклюзивный хук, держать один форматтер.
+- `ChaosStyle.BlackOutline/GreenOutline/RedOutline` — это `OutlineComponent`,
+  НЕ `Style`: свой цвет рамки через `new Style(){ImageColor=...}` не сделать.
+  Маркировать выбранное — ✓ + жирный шрифт + GreenOutline.
+- Полупрозрачный `ChaosStyle.Panel` на светлых сценах нечитаем — задавать
+  `ImageColor` с альфой ~0.96.
+
+---
+
+## 7. Общие правила плагинов Octavian
 
 - Префикс чата — золотой: `<color=#E8B84B>◆ OctXXX</color>`, значения
   `#FFD35C`, шортнеймы серые.
