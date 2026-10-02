@@ -26,7 +26,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    [Info("OctVIP", "Octavian", "1.3.0")]
+    [Info("OctVIP", "Octavian", "1.3.1")]
     [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
@@ -71,13 +71,14 @@ namespace Oxide.Plugins
         private static readonly string[] IconKeys = { "Base", "Bronze", "Silver", "Gold", "Brilliant", "Moderator", "Admin" };
 
         private List<string> IconSet(int level) =>
-            Configuration.ChatIcons.TryGetValue(IconKeys[level], out var s) && s.Count > 0
-                ? s : new List<string> { "★" };
+            Configuration.ChatIcons.TryGetValue(IconKeys[level], out var s) && s != null
+                ? s : new List<string>();
 
-        /// <summary>Иконка чата игрока: выбранная (валидная для уровня) или дефолтная.</summary>
+        /// <summary>Иконка чата игрока: выбранная (валидная для уровня) или дефолтная; "" = без иконки.</summary>
         private string GetIcon(ulong userId, int level)
         {
             var set = IconSet(level);
+            if (set.Count == 0) return "";
             if (m_Data.Data.Icons.TryGetValue(userId, out var icon) && set.Contains(icon))
                 return icon;
             return set[0];
@@ -93,8 +94,9 @@ namespace Oxide.Plugins
 
         private string LevelTag(int level)
         {
-            var ic = IconSet(level)[0];
-            return IsEmoji(ic)
+            var set = IconSet(level);
+            var ic = set.Count > 0 ? set[0] : "";
+            return string.IsNullOrEmpty(ic) || IsEmoji(ic)
                 ? $"<color={Levels[level].Color}>{Levels[level].Name}</color>"
                 : $"<color={Levels[level].Color}>{ic} {Levels[level].Name}</color>";
         }
@@ -184,17 +186,16 @@ namespace Oxide.Plugins
             [JsonProperty("Иконки чата по уровням: набор вариантов для каждого статуса (глифы или :эмодзи:)")]
             public Dictionary<string, List<string>> ChatIcons = new()
             {
-                ["Base"]      = new List<string> { ":vip_base_0:", ":vip_base_1:", ":vip_base_2:", ":vip_base_3:" },
-                ["Bronze"]    = new List<string> { ":vip_bronze_0:", ":vip_bronze_1:", ":vip_bronze_2:", ":vip_bronze_3:" },
-                ["Silver"]    = new List<string> { ":vip_silver_0:", ":vip_silver_1:", ":vip_silver_2:", ":vip_silver_3:" },
-                ["Gold"]      = new List<string> { ":vip_gold_0:", ":vip_gold_1:", ":vip_gold_2:", ":vip_gold_3:" },
-                ["Brilliant"] = new List<string> { ":vip_brilliant_0:", ":vip_brilliant_1:", ":vip_brilliant_2:", ":vip_brilliant_3:" },
-                ["Moderator"] = new List<string> { ":vip_moderator_0:", ":vip_moderator_1:", ":vip_moderator_2:", ":vip_moderator_3:" },
-                ["Admin"]     = new List<string> { ":vip_admin_0:", ":vip_admin_1:", ":vip_admin_2:", ":vip_admin_3:" },
+                ["Base"]      = new List<string>(),                    // без иконки
+                ["Bronze"]    = new List<string> { ":vip_bronze_0:" }, // 🌟
+                ["Silver"]    = new List<string> { ":vip_silver_0:" }, // 🔘
+                ["Gold"]      = new List<string> { ":vip_gold_0:" },   // 🔥
+                ["Brilliant"] = new List<string> { ":vip_brilliant_0:" }, // 💎
+                ["Moderator"] = new List<string> { ":vip_moderator_0:" }, // 🛡
+                ["Admin"]     = new List<string> { ":vip_admin_0:" },  // ⚡
             };
 
-            [JsonProperty("Панель: кнопка «ТЕСТ» — отправляет тестовое сообщение в чат при смене иконки")]
-            public bool ShowIconTestButton = true;
+
         }
 
         // ── Данные ──────────────────────────────────────────────────────────
@@ -441,7 +442,8 @@ namespace Oxide.Plugins
             }
 
             var icon = GetIcon(player.userID, lvl);
-            var line = $"{tag}{ChatIcon(icon, lvl)} <color={color}>{player.displayName}</color>" +
+            var iconPart = string.IsNullOrEmpty(icon) ? "" : ChatIcon(icon, lvl) + " ";
+            var line = $"{tag}{iconPart}<color={color}>{player.displayName}</color>" +
                        $"<color=#8A8F98>:</color> {message}";
 
             return SendChatLine(player, line, channel);
@@ -729,7 +731,6 @@ namespace Oxide.Plugins
             public string Duration = "30d";
             public int Page;
             public int Tab;
-            public bool TestChat;
         }
 
         private readonly Dictionary<ulong, PanelState> _panel = new();
@@ -830,25 +831,15 @@ namespace Oxide.Plugins
                     TextContainer.Create(body, "Иконка в чате:", m_LabelStyle,
                         UIAnchor.TopLeft, new Offset(16, -164, 200, -140));
 
-                    // TODO[test]: временный переключатель — при выборе иконки
-                    // шлём «тест» в чат, чтобы сразу видеть рендер глифа
-                    if (Configuration.ShowIconTestButton)
-                    {
-                        var tst = new Style(ChaosStyle.Button)
-                        {
-                            FontSize = 11,
-                            ImageColor = new UIColor(0.14f, 0.16f, 0.19f, 0.95f),
-                            FontColor = st.TestChat ? new UIColor(0.35f, 0.9f, 0.45f, 1f) : new UIColor(0.6f, 0.63f, 0.68f, 1f)
-                        };
-                        ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(120, -166, 178, -142),
-                                st.TestChat ? "ТЕСТ: ON" : "ТЕСТ", tst, st.TestChat ? ChaosStyle.GreenOutline : ChaosStyle.BlackOutline)
-                            .WithCallback(m_Callbacks, arg => { st.TestChat = !st.TestChat; BuildPanel(player); },
-                                $"{player.userID}.testchat");
-                    }
-
                     var set = IconSet(myLvl);
                     var cur = GetIcon(player.userID, myLvl);
                     EnsureEmojiImages(); // ленивая регистрация — ImageLibrary мог подгрузиться позже
+
+                    if (set.Count == 0)
+                    {
+                        TextContainer.Create(body, "<color=#8A8F98>— у твоего уровня нет иконки —</color>",
+                            m_SmallStyle, UIAnchor.TopLeft, new Offset(16, -190, 536, -170));
+                    }
                     for (var i = 0; i < set.Count; i++)
                     {
                         var ic = set[i];
@@ -868,11 +859,6 @@ namespace Oxide.Plugins
                             {
                                 m_Data.Data.Icons[player.userID] = ic;
                                 m_Data.Save();
-                                // тест: кидаем строку чата с новой иконкой
-                                if (st.TestChat)
-                                    SendChatLine(player,
-                                        $"{ChatIcon(ic, myLvl)} <color={Levels[myLvl].Color}>{player.displayName}</color><color=#8A8F98>:</color> тест",
-                                        ConVar.Chat.ChatChannel.Global);
                                 BuildPanel(player);
                             }, $"{player.userID}.icon.{i}");
 
@@ -884,13 +870,16 @@ namespace Oxide.Plugins
                     }
 
                     // превью: для эмодзи показываем картинку, для глифа — символ
-                    TextContainer.Create(body,
-                        $"Как выглядит:  {(IsEmoji(cur) ? "   " : $"<color={Levels[myLvl].Color}>{cur}</color> ")}<color={Levels[myLvl].Color}>{player.displayName}</color>" +
-                        "<color=#8A8F98>:</color> привет, мир!",
-                        m_SmallStyle, UIAnchor.TopLeft, new Offset(16, -246, 540, -222));
-                    if (IsEmoji(cur) && _imgKeys.TryGetValue(cur.Substring(1, cur.Length - 2), out var prevKey))
-                        RawImageContainer.Create(body, UIAnchor.TopLeft, new Offset(96, -244, 118, -222))
-                            .WithPNG(prevKey);
+                    if (!string.IsNullOrEmpty(cur))
+                    {
+                        TextContainer.Create(body,
+                            $"Как выглядит:  {(IsEmoji(cur) ? "   " : $"<color={Levels[myLvl].Color}>{cur}</color> ")}<color={Levels[myLvl].Color}>{player.displayName}</color>" +
+                            "<color=#8A8F98>:</color> привет, мир!",
+                            m_SmallStyle, UIAnchor.TopLeft, new Offset(16, -246, 540, -222));
+                        if (IsEmoji(cur) && _imgKeys.TryGetValue(cur.Substring(1, cur.Length - 2), out var prevKey))
+                            RawImageContainer.Create(body, UIAnchor.TopLeft, new Offset(96, -244, 118, -222))
+                                .WithPNG(prevKey);
+                    }
                 }
                 else
                 {
@@ -935,11 +924,15 @@ namespace Oxide.Plugins
                     var yy = y;
                     var sel = st.Selected == id;
                     ChaosPrefab.TextButton(body, UIAnchor.TopStretch, new Offset(8, -(yy + 26), -292, -yy),
-                            "", sel ? m_SelRowStyle : m_RowStyle, null)
-                        .WithCallback(m_Callbacks, arg => { st.Selected = id; BuildPanel(player); }, $"{player.userID}.sel.{id}");
+                            "", sel ? m_SelRowStyle : m_RowStyle, null);
 
                     TextContainer.Create(body, $"{line}  {LevelTag(lvl)}", m_LabelStyle,
                         UIAnchor.TopStretch, new Offset(16, -(yy + 23), -290, -yy - 3));
+
+                    // прозрачная кнопка поверх всей строки — иначе текст съедает клики
+                    ButtonContainer.Create(body, UIAnchor.TopStretch, new Offset(8, -(yy + 26), -292, -yy))
+                        .WithColor(UIColor.Clear)
+                        .WithCallback(m_Callbacks, arg => { st.Selected = id; BuildPanel(player); }, $"{player.userID}.sel.{id}");
                     y += RowH;
                 }
 
