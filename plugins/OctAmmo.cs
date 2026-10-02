@@ -357,49 +357,77 @@ namespace Oxide.Plugins
         #endregion
 
         #region Discovery
+        /// <summary>Реальная заводская ёмкость магазина — читаем из префаба, а не гадаем по имени.</summary>
+        private int GetPrefabCapacity(ItemDefinition def)
+        {
+            try
+            {
+                var modEntity = def?.itemMods?.OfType<ItemModEntity>().FirstOrDefault()
+                             ?? def?.GetComponent<ItemModEntity>();
+                var proj = modEntity?.entityPrefab?.GetEntity() as BaseProjectile;
+                var mag = proj?.primaryMagazine;
+                if (mag == null) return -1;
+                var cap = mag.definition.builtInSize;
+                if (cap <= 0) cap = mag.capacity;
+                return cap > 0 ? cap : -1;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
         private void TryAutofillWeaponsFromGame()
         {
             if (ItemManager.itemList == null || _config?.Weapons == null) return;
+
+            var dead = new List<string>();
 
             foreach (var def in ItemManager.itemList)
             {
                 if (def == null) continue;
                 if (def.category != ItemCategory.Weapon) continue;
 
+                // Только настоящее оружие с магазином — мили, аттачи, гранаты отпадают сами
+                var prefabCap = GetPrefabCapacity(def);
+                if (prefabCap < 0)
+                {
+                    dead.Add(def.shortname);
+                    continue;
+                }
+
                 if (!_config.Weapons.ContainsKey(def.shortname))
                 {
-                    var guess = GuessDefaultCapacity(def.shortname);
-
                     _config.Weapons[def.shortname] = new WeaponEntry
                     {
                         Shortname = def.shortname,
                         DisplayName = def.displayName?.english ?? def.shortname,
-                        BaseGame = guess,
-                        Default = guess,
+                        BaseGame = prefabCap,
+                        Default = prefabCap,
                         Levels = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
                     };
                 }
                 else
                 {
-                    // Подстрахуем заполнение BaseGame для старых конфигов
                     var w = _config.Weapons[def.shortname];
-                    if (w.BaseGame < 0) w.BaseGame = (w.Default > 0 ? w.Default : GuessDefaultCapacity(def.shortname));
+                    // BaseGame всегда из префаба — живое значение могло быть уже нами изменено
+                    if (w.BaseGame != prefabCap)
+                    {
+                        if (w.Default == w.BaseGame)
+                            w.Default = prefabCap;
+                        w.BaseGame = prefabCap;
+                    }
                 }
             }
-            SaveConfig();
-        }
 
-        private int GuessDefaultCapacity(string shortname)
-        {
-            var sn = shortname.ToLowerInvariant();
-            if (sn.Contains("shotgun")) return 6;
-            if (sn.Contains("spas")) return 6;
-            if (sn.Contains("smg")) return 24;
-            if (sn.Contains("thompson")) return 20;
-            if (sn.Contains("pistol")) return 10;
-            if (sn.Contains("python")) return 6;
-            if (sn.Contains("revolver")) return 8;
-            return 30;
+            // Чистим записи без магазина (мили/аттачи и пр.) — оружия, которого нет в игре, не трогаем
+            foreach (var sn in dead)
+            {
+                if (_config.Weapons.ContainsKey(sn))
+                    _config.Weapons.Remove(sn);
+            }
+
+            SaveConfig();
         }
         #endregion
 
@@ -468,26 +496,18 @@ namespace Oxide.Plugins
             if (player.IsReceivingSnapshot || !player.IsConnected || player.IsDestroyed)
                 return;
 
-            // Обновление BaseGame при первом «живом» чтении из игры
+            // BaseGame читаем из префаба — capacity инстанса может быть уже нами изменена
             try
             {
-                var liveCap = proj.primaryMagazine.capacity;
-                if (_config.Weapons.TryGetValue(shortname, out var we))
+                var gameCap = GetPrefabCapacity(item.info);
+                if (gameCap > 0 && _config.Weapons.TryGetValue(shortname, out var we) && we.BaseGame != gameCap)
                 {
-                    var changed = false;
+                    // если Default совпадал со старым BaseGame — синхронизируем вместе
+                    if (we.Default == we.BaseGame)
+                        we.Default = gameCap;
 
-                    if (we.BaseGame != liveCap)
-                    {
-                        // если Default совпадал со старым BaseGame — синхронизируем вместе
-                        if (we.Default == we.BaseGame)
-                            we.Default = liveCap;
-
-                        we.BaseGame = liveCap;
-                        changed = true;
-                    }
-
-                    if (changed)
-                        SaveConfig();
+                    we.BaseGame = gameCap;
+                    SaveConfig();
                 }
             }
             catch
