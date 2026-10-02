@@ -75,6 +75,7 @@ namespace Oxide.Plugins
             SeedWeapon("smg.thompson",   "Thompson",      20, new Dictionary<string,int> {{"Senior",25},{"Middle",35},{"High",50}});
             SeedWeapon("pistol.m92",     "M92",           15, new Dictionary<string,int> {{"Senior",18},{"Middle",25},{"High",35}});
             SeedWeapon("shotgun.spas12", "SPAS-12",        6, new Dictionary<string,int> {{"Senior",8},{"Middle",10},{"High",12}});
+            SeedWeapon("rocket.launcher", "Rocket Launcher", 3, new Dictionary<string,int> {{"Middle",6},{"High",8}});
 
             SaveConfig();
         }
@@ -177,6 +178,11 @@ namespace Oxide.Plugins
         #endregion
 
         #region Commands (без UI)
+        // Фирменный префикс Octavian для всех чат-ответов
+        private const string ChatPrefix = "<color=#E8B84B>◆ OctAmmo</color>\n";
+        private void Reply(IPlayer player, string msg) => player.Reply(ChatPrefix + msg);
+        private static string Val(object v) => $"<color=#FFD35C>{v}</color>";
+
         [Command("at")]
         private void CmdAt(IPlayer player, string cmd, string[] args)
         {
@@ -187,15 +193,14 @@ namespace Oxide.Plugins
             // Подсказка
             if (args.Length == 0)
             {
-                player.Reply(
-                    "OctAmmo (без UI)\n" +
-                    "Команды:\n" +
-                    "  /at list [filter] [page] — список оружия\n" +
-                    "  /at get <shortname> — показать ёмкости\n" +
-                    "  /at set <shortname> <Default|Senior|Middle|High|Имя_уровня> <value> — задать ёмкость\n" +
-                    "  /at save — сохранить конфиг\n" +
-                    "  /at reload — перечитать конфиг\n" +
-                    $"Права уровней выдаются через permissions (например, oxide.grant group default {PermPrefix}.high)."
+                Reply(player,
+                    "Ёмкости магазинов по уровням доступа.\n\n" +
+                    $"  {Val("/at list")} [filter] [page] — список оружия\n" +
+                    $"  {Val("/at get")} <оружие> — показать ёмкости\n" +
+                    $"  {Val("/at set")} <оружие> <уровень> <число> — задать ёмкость\n" +
+                    $"  {Val("/at save")} — сохранить конфиг\n" +
+                    $"  {Val("/at reload")} — перечитать конфиг\n\n" +
+                    $"Уровни выдаются пермишенами: {Val(PermPrefix + ".high")} и др."
                 );
                 return;
             }
@@ -221,17 +226,17 @@ namespace Oxide.Plugins
                 case "save":
                     if (!HasAdmin(bp, player)) return;
                     SaveConfig();
-                    player.Reply("✅ Конфиг сохранён.");
+                    Reply(player, "Конфиг сохранён.");
                     break;
 
                 case "reload":
                     if (!HasAdmin(bp, player)) return;
                     LoadConfig();
-                    player.Reply("🔄 Конфиг перезагружен.");
+                    Reply(player, "Конфиг перезагружен.");
                     break;
 
                 default:
-                    player.Reply("❓ Неизвестная команда. Используйте: /at, /at list, /at get, /at set, /at save, /at reload");
+                    Reply(player, $"Неизвестная команда. Смотри {Val("/at")}");
                     break;
             }
         }
@@ -239,7 +244,7 @@ namespace Oxide.Plugins
         private bool HasAdmin(BasePlayer bp, IPlayer p)
         {
             if (p.HasPermission(PermAdmin) || (bp != null && bp.IsAdmin)) return true;
-            p.Reply($"Недостаточно прав. Требуется {PermAdmin} или статус администратора.");
+            Reply(p, $"Недостаточно прав. Требуется {Val(PermAdmin)} или статус администратора.");
             return false;
         }
 
@@ -247,7 +252,7 @@ namespace Oxide.Plugins
         {
             if (_config?.Weapons == null)
             {
-                player.Reply("Конфигурация не загружена.");
+                Reply(player, "Конфигурация не загружена.");
                 return;
             }
 
@@ -271,38 +276,37 @@ namespace Oxide.Plugins
             var totalPages = Mathf.Max(1, Mathf.CeilToInt(all.Count / (float)PageSize));
             page = Mathf.Clamp(page, 1, totalPages);
             var slice = all.Skip((page - 1) * PageSize).Take(PageSize);
-            var lines = slice.Select(w => $"{w.DisplayName} ({w.Shortname}) — Base:{w.BaseGame} Def:{w.Default}");
+            var lines = slice.Select(w => $"{w.DisplayName} <color=#8A8F98>({w.Shortname})</color> — {Val(w.Default)}");
 
-            player.Reply($"Оружие ({all.Count}) стр. {page}/{totalPages}:\n" + string.Join("\n", lines));
+            Reply(player, $"Оружие: {Val(all.Count)} — стр. {page}/{totalPages}\n" + string.Join("\n", lines));
         }
 
         private void HandleGet(IPlayer player, string[] args)
         {
             if (_config?.Weapons == null)
             {
-                player.Reply("Конфигурация не загружена.");
+                Reply(player, "Конфигурация не загружена.");
                 return;
             }
 
-            if (args.Length < 1) { player.Reply("Использование: /at get <shortname>"); return; }
+            if (args.Length < 1) { Reply(player, $"Использование: {Val("/at get")} <оружие>"); return; }
             var sn = args[0];
             if (!_config.Weapons.TryGetValue(sn, out var w))
             {
-                player.Reply($"Оружие '{sn}' не найдено.");
+                Reply(player, $"Оружие {Val(sn)} не найдено.");
                 return;
             }
 
             var groups = _config.Groups?.Select(g =>
             {
-                var has = w.Levels?.TryGetValue(g.Name, out var v) == true ? v.ToString() : "-";
-                return $"{g.Name}:{has}";
-            }) ?? new[] { "none" };
+                var has = w.Levels?.TryGetValue(g.Name, out var v) == true ? Val(v) : "<color=#8A8F98>—</color>";
+                return $"{g.Name}: {has}";
+            }) ?? new[] { "<color=#8A8F98>нет уровней</color>" };
 
-            player.Reply(
-                $"{w.DisplayName} ({w.Shortname})\n" +
-                $"BaseGame: {w.BaseGame}\n" +
-                $"Default: {w.Default}\n" +
-                string.Join(", ", groups)
+            Reply(player,
+                $"{Val(w.DisplayName)} <color=#8A8F98>({w.Shortname})</color>\n" +
+                $"Заводская: {Val(w.BaseGame)} · По умолчанию: {Val(w.Default)}\n" +
+                string.Join("  ·  ", groups)
             );
         }
 
@@ -310,13 +314,13 @@ namespace Oxide.Plugins
         {
             if (_config?.Weapons == null)
             {
-                player.Reply("Конфигурация не загружена.");
+                Reply(player, "Конфигурация не загружена.");
                 return;
             }
 
             if (args.Length < 3)
             {
-                player.Reply("Использование: /at set <shortname> <Default|Senior|Middle|High|Имя_уровня> <value>");
+                Reply(player, $"Использование: {Val("/at set")} <оружие> <уровень> <число>");
                 return;
             }
 
@@ -326,13 +330,13 @@ namespace Oxide.Plugins
 
             if (!_config.Weapons.TryGetValue(sn, out var w))
             {
-                player.Reply($"Оружие '{sn}' не найдено.");
+                Reply(player, $"Оружие {Val(sn)} не найдено.");
                 return;
             }
 
             if (!int.TryParse(valStr, out var val))
             {
-                player.Reply("Значение должно быть целым числом.");
+                Reply(player, "Значение должно быть целым числом.");
                 return;
             }
 
@@ -352,7 +356,7 @@ namespace Oxide.Plugins
             foreach (var bp in BasePlayer.activePlayerList ?? Enumerable.Empty<BasePlayer>())
                 ApplyForActiveItem(bp);
 
-            player.Reply($"✅ OK: {w.DisplayName} ({w.Shortname}) [{tier}] = {val}");
+            Reply(player, $"{Val(w.DisplayName)} <color=#8A8F98>({w.Shortname})</color> — {Val(tier)} = {Val(val)}");
         }
         #endregion
 
