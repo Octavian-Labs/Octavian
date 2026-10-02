@@ -122,7 +122,17 @@ Definition — value type, `?.` не работает → проверять ч�
 
 ---
 
-## 7. Общие правила плагинов Octavian
+## 7. Кодировки — НЕ редактировать файлы через PowerShell-строки
+
+`Get-Content -Raw` в PowerShell 5.1 читает UTF-8 без BOM как Windows-1251 →
+`-replace | Set-Content -Encoding utf8` записывает кракозябры (инцидент:
+OctVIP.cs, исправлено обратным перекодированием + BOM). Для sed-подобных
+замен использовать `edit`-инструмент агента или `[IO.File]::ReadAllText/WriteAllText`
+с явным `[Text.Encoding]::UTF8`. Файлы с кириллицей держать в UTF-8 **с BOM**.
+
+---
+
+## 8. Общие правила плагинов Octavian
 
 - Префикс чата — золотой: `<color=#E8B84B>◆ OctXXX</color>`, значения
   `#FFD35C`, шортнеймы серые.
