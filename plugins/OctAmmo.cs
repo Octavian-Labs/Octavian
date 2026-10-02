@@ -388,6 +388,14 @@ namespace Oxide.Plugins
                 if (def == null) continue;
                 if (def.category != ItemCategory.Weapon) continue;
 
+                // Редиректы (crystal/paid варианты AK и пр.) не создают своих записей —
+                // в рантайме они резолвятся на базовый предмет через isRedirectOf
+                if (def.isRedirectOf != null)
+                {
+                    dead.Add(def.shortname);
+                    continue;
+                }
+
                 // Только настоящее оружие с магазином — мили, аттачи, гранаты отпадают сами
                 var prefabCap = GetPrefabCapacity(def);
                 if (prefabCap < 0)
@@ -473,7 +481,9 @@ namespace Oxide.Plugins
             if (IsNpc(player))
                 return;
 
-            var shortname = item.info?.shortname;
+            // Скин-варианты (rifle.ak.glass и пр.) резолвим на базовый предмет
+            var info = item.info?.isRedirectOf ?? item.info;
+            var shortname = info?.shortname;
             if (string.IsNullOrEmpty(shortname))
                 return;
 
@@ -499,7 +509,7 @@ namespace Oxide.Plugins
             // BaseGame читаем из префаба — capacity инстанса может быть уже нами изменена
             try
             {
-                var gameCap = GetPrefabCapacity(item.info);
+                var gameCap = GetPrefabCapacity(info);
                 if (gameCap > 0 && _config.Weapons.TryGetValue(shortname, out var we) && we.BaseGame != gameCap)
                 {
                     // если Default совпадал со старым BaseGame — синхронизируем вместе
