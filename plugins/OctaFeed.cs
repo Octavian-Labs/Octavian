@@ -2,6 +2,7 @@ using System.Linq;
 using Oxide.Game.Rust.Cui;
 using Newtonsoft.Json;
 using Oxide.Core;
+using Oxide.Core.Plugins;
 using Rust;
 using System.Collections.Generic;
 using Facepunch;
@@ -11,7 +12,7 @@ using System;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaFeed", "Octavian", "1.0.0")]
+    [Info("OctaFeed", "Octavian", "1.0.1")]
     [Description("Киллфид: кто кого убил, оружие, дистанция. /dm — личные настройки")]
     public partial class OctaFeed : RustPlugin
     {
@@ -1044,6 +1045,9 @@ namespace Oxide.Plugins
         }
         internal double LAST_ROW_MODIFY_TIME = 0;
 
+        [PluginReference]
+        private Plugin OctVIP;
+
         internal static OctaFeed Instance;
         internal string TEMPLATE_JSON_CONTAINER = string.Empty;
 
@@ -1176,6 +1180,14 @@ namespace Oxide.Plugins
                 {
                     return color.Value;
                 }
+            }
+
+            // цвет ника из OctVIP, если игрок с VIP-уровнем
+            if (OctVIP != null && OctVIP.IsLoaded)
+            {
+                int level = OctVIP.Call<int>("GetVipLevel", player.userID);
+                if (level > 0)
+                    return OctVIP.Call<string>("GetVipColor", player.userID);
             }
 
             return Instance.Cfg.UIConfig.NameProperty.Color;
