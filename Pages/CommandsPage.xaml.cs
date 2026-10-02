@@ -41,6 +41,216 @@ public partial class CommandsPage : Page
         RefreshChat();
         _ = RefreshPlayers();
         _ = RefreshModes();
+        BuildDeepSea();
+    }
+
+    // ═══ DEEP SEA — вкладка управления глубоким морем ═══
+    // числовые поля: (подпись, convar)
+    private static readonly (string Label, string Convar)[] DsCountsList =
+    {
+        ("Острова",                    "deepsea.island_count"),          // 6
+        ("Призрачные корабли",         "deepsea.ghostship_count"),       // 4
+        ("Плавучие города",            "deepsea.floatingcity_count"),    // 1
+        ("Группы RHIB-патруля",        "deepsea.rhib_count"),            // 4
+        ("Хакаемые ящики",             "deepsea.hackablecrate_count"),   // 1
+    };
+
+    private static readonly (string Label, string Convar)[] DsGeomList =
+    {
+        ("Острова — отступ от края",        "deepsea.island_edgemargin"),       // 750
+        ("Острова — мин. дистанция",        "deepsea.island_mindist"),          // 600
+        ("Острова — радиус отчуждения",     "deepsea.island_radius"),           // 300
+        ("Корабли — отступ от края",        "deepsea.ghostship_edgemargin"),    // 450
+        ("Корабли — мин. дистанция",        "deepsea.ghostship_mindist"),       // 400
+        ("Корабли — радиус отчуждения",     "deepsea.ghostship_radius"),        // 80
+        ("Города — отступ от края",         "deepsea.floatingcity_edgemargin"), // 1500
+        ("Города — мин. дистанция",         "deepsea.floatingcity_mindist"),    // 1500
+        ("Города — радиус отчуждения",      "deepsea.floatingcity_radius"),     // 500
+        ("RHIB — отступ от края",           "deepsea.rhib_edgemargin"),         // 1150
+        ("RHIB — мин. дистанция",           "deepsea.rhib_mindist"),            // 300
+        ("RHIB — радиус отчуждения",        "deepsea.rhib_radius"),             // 10
+        ("Портал — дистанция от берега",    "deepsea.island_portal_terrain_distance"), // 750
+    };
+
+    private static readonly (string Label, string Convar)[] DsLootList =
+    {
+        ("Лут при генерации (×)",        "deepsea.loot_scale"),          // 1.0
+        ("Перезаселение лута (×)",       "deepsea.loot_respawn_scale"),  // 1.0
+    };
+
+    private static readonly (string Label, string Convar)[] DsTimersList =
+    {
+        ("Кулдаун переоткрытия, мин (сек)",  "deepsea.wipecooldownmin"),          // 5400
+        ("Кулдаун переоткрытия, макс (сек)", "deepsea.wipecooldownmax"),          // 5400
+        ("Длительность вайпа зоны (сек)",    "deepsea.wipeduration"),             // 10800
+        ("Финальная фаза (сек)",             "deepsea.wipeendphaseduration"),     // 1800
+        ("Фаза радиации (сек)",              "deepsea.wiperadiationphaseduration"),
+    };
+
+    private static readonly (string Label, string Convar)[] DsAccessNumList =
+    {
+        ("Направление портала (0=случ., 1-4=NESW)", "deepsea.forceentranceportaldirection"), // 0
+    };
+
+    private static readonly (string Label, string Convar)[] DsAccessBoolList =
+    {
+        ("Зона включена (нужен рестарт сервера!)",       "deepsea.enabled"),                    // true
+        ("Игроки могут доплыть вплавь",                  "deepsea.allow_swimmers"),             // false
+        ("Любые суда (не только белый список)",          "deepsea.allow_all_vehicles"),         // false
+        ("Блокировать строительство в зоне",            "deepsea.block_building"),             // true
+        ("Открывать зону сразу после вайпа сервера",     "deepsea.openonserverwipe"),           // false
+        ("Строгая постановка игроков на лодке",          "deepsea.stricttransitionreposition"), // true
+        ("Рельеф/флора deep sea по всей карте",          "deepsea.terrain_everywhere"),         // false
+    };
+
+    private static readonly (string Label, string Convar)[] DsPerfNumList =
+    {
+        ("Интервал спавна сущностей (сек)",   "deepsea.entities_spawninterval"),   // 5
+        ("Интервал запечки навмешей (сек)",   "deepsea.navmesh_spawninterval"),    // 5
+        ("Интервал спавн-групп (сек)",        "deepsea.spawngroups_spawninterval"),// 0.15
+    };
+
+    private static readonly (string Label, string Convar)[] DsPerfBoolList =
+    {
+        ("Подробные логи (deepsea.logs)",                 "deepsea.logs"),                          // false
+        ("Лог попыток спавна портала",                    "deepsea.debug_portal_spawnattempts"),    // false
+        ("Выкл. нав-заграждения лута в море (перф)",      "debug.disablelootnavobstaclesindeepsea"),// true
+    };
+
+    private void BuildDeepSea()
+    {
+        FillDsNums(DsCounts, DsCountsList);
+        FillDsNums(DsGeom, DsGeomList);
+        FillDsNums(DsLoot, DsLootList);
+        FillDsNums(DsAccessNum, DsAccessNumList);
+        FillDsBools(DsAccessBool, DsAccessBoolList);
+        FillDsNums(DsTimers, DsTimersList);
+        FillDsNums(DsPerfNum, DsPerfNumList);
+        FillDsBools(DsPerfBool, DsPerfBoolList);
+        if (App.Rcon.IsConnected) _ = LoadDeepSeaAsync();
+    }
+
+    private void FillDsNums(Panel panel, (string Label, string Convar)[] rows)
+    {
+        foreach (var (label, convar) in rows)
+        {
+            var box = new WpfTextBox
+            {
+                Tag = convar,
+                Width = 92,
+                ToolTip = convar,
+            };
+            var row = new DockPanel { LastChildFill = false, Margin = new Thickness(0, 7, 0, 0) };
+            row.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = (System.Windows.Media.Brush)FindResource("B.Text"),
+                ToolTip = convar,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            DockPanel.SetDock(box, Dock.Right);
+            row.Children.Add(box);
+            panel.Children.Add(row);
+        }
+    }
+
+    private void FillDsBools(Panel panel, (string Label, string Convar)[] rows)
+    {
+        foreach (var (label, convar) in rows)
+        {
+            panel.Children.Add(new CheckBox
+            {
+                Content = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap },
+                Tag = convar,
+                ToolTip = convar,
+                Foreground = (System.Windows.Media.Brush)FindResource("B.TextDim"),
+                Margin = new Thickness(0, 7, 0, 0),
+            });
+        }
+    }
+
+    // обход дерева: все TextBox/CheckBox с Tag=convar
+    private static IEnumerable<(string Convar, FrameworkElement Ctl)> DsControls(DependencyObject root)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root))
+        {
+            if (child is not DependencyObject d) continue;
+            switch (d)
+            {
+                case WpfTextBox { Tag: string tc } tb: yield return (tc, tb); continue;
+                case CheckBox { Tag: string cc } cb: yield return (cc, cb); continue;
+            }
+            foreach (var r in DsControls(d)) yield return r;
+        }
+    }
+
+    private async void DsApply_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not string panelName
+            || FindName(panelName) is not DependencyObject panel) return;
+        var pairs = new List<(string Key, string Val)>();
+        foreach (var (convar, ctl) in DsControls(panel))
+        {
+            var v = ctl switch
+            {
+                WpfTextBox t => t.Text.Trim(),
+                CheckBox c => c.IsChecked == true ? "true" : "false",
+                _ => ""
+            };
+            if (!string.IsNullOrWhiteSpace(v)) pairs.Add((convar, v));
+        }
+        if (pairs.Count == 0) { TxtResult.Text = "нечего применять"; return; }
+        try
+        {
+            foreach (var (k, v) in pairs) App.ServerCfg[k] = v;
+            App.ServerCfg.Save();
+            if (!App.Rcon.IsConnected)
+            {
+                TxtResult.Text = $"deep sea: {pairs.Count} convars в server.cfg — применятся при рестарте/генерации";
+                return;
+            }
+            var ok = 0;
+            foreach (var (k, v) in pairs)
+            {
+                var r = await App.Rcon.SendAsync($"{k} {v}");
+                if (!r.StartsWith("[error") && !r.StartsWith("[timeout") && !r.StartsWith("[RCON")) ok++;
+            }
+            TxtLast.Text = $"> deep sea: {ok}/{pairs.Count} convars";
+            TxtResult.Text = ok == pairs.Count ? "ok · записано в server.cfg" : $"ошибки в {pairs.Count - ok} convars";
+        }
+        catch (Exception ex) { TxtResult.Text = $"ошибка: {ex.Message}"; }
+    }
+
+    // при открытии вкладки подтягиваем живые значения с сервера
+    private async Task LoadDeepSeaAsync()
+    {
+        DependencyObject[] panels = { DsCounts, DsGeom, DsLoot, DsAccess, DsTimers, DsPerf };
+        var vals = new Dictionary<string, string>();
+        foreach (var convar in panels.SelectMany(p => DsControls(p).Select(c => c.Convar)).Distinct())
+        {
+            try
+            {
+                var v = await ReadConvar(convar);
+                if (!string.IsNullOrWhiteSpace(v)) vals[convar] = v;
+            }
+            catch { }
+        }
+        if (vals.Count == 0) return;
+        Dispatcher.Invoke(() =>
+        {
+            foreach (var p in panels)
+            foreach (var (convar, ctl) in DsControls(p))
+            {
+                if (!vals.TryGetValue(convar, out var v)) continue;
+                if (ctl is WpfTextBox t) t.Text = v;
+                else if (ctl is CheckBox c)
+                {
+                    var l = v.Trim().ToLowerInvariant();
+                    if (l is "true" or "false" or "1" or "0")
+                        c.IsChecked = l is "true" or "1";
+                }
+            }
+        });
     }
 
     private void Server_OnStateChanged(bool running) => Dispatcher.Invoke(UpdateRconState);

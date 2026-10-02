@@ -352,49 +352,6 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ══ ГЛУБОКОЕ МОРЕ ══ -->
-                    <TextBlock Text="🌊 ГЛУБОКОЕ МОРЕ (DEEP SEA)" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=EventsWrap}" Margin="16,10,0,2"/>
-                    <Border Style="{StaticResource OctaCmdCardWide}">
-                        <StackPanel>
-                            <TextBlock Text="Портал и цикл" Style="{StaticResource OctaCmdTitle}"/>
-                            <TextBlock Text="глубокое море открывается порталом, живёт циклом и вайпается" Style="{StaticResource OctaCmdSub}"/>
-                            <WrapPanel Margin="0,10,0,0">
-                                <ui:Button Content="🌀 ОТКРЫТЬ ПОРТАЛ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="deepsea.open" Click="RunSimple" ToolTip="deepsea.open — открыть вход в глубокое море"/>
-                                <ui:Button Content="⛔ ЗАКРЫТЬ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.close" Click="RunConfirm" ToolTip="deepsea.close — закрыть портал"/>
-                                <ui:Button Content="♻ ПЕРЕСОЗДАТЬ" Style="{StaticResource OctaCmdBtnDanger}" Tag="deepsea.createdeepsea" Click="RunConfirm" ToolTip="deepsea.createdeepsea — регенерация зоны (тяжёлая операция)"/>
-                            </WrapPanel>
-                        </StackPanel>
-                    </Border>
-                    <Border Style="{StaticResource OctaCmdCard}">
-                        <StackPanel>
-                            <TextBlock Text="Диагностика моря" Style="{StaticResource OctaCmdTitle}"/>
-                            <TextBlock Text="чтение состояния — откройте ▲ внизу" Style="{StaticResource OctaCmdSub}"/>
-                            <WrapPanel Margin="0,10,0,0">
-                                <ui:Button Content="i СОСТОЯНИЕ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printstate" Click="RunSimple"/>
-                                <ui:Button Content="⏱ ДО ВАЙПА" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printtimetowipe" Click="RunSimple"/>
-                                <ui:Button Content="Σ СУЩНОСТИ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printentitycount" Click="RunSimple"/>
-                                <ui:Button Content="🎁 ЛУТ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printloot" Click="RunSimple"/>
-                            </WrapPanel>
-                        </StackPanel>
-                    </Border>
-                    <Border Style="{StaticResource OctaCmdCard}">
-                        <StackPanel>
-                            <TextBlock Text="Таймеры цикла" Style="{StaticResource OctaCmdTitle}"/>
-                            <TextBlock Text="секунды: до открытия / до вайпа" Style="{StaticResource OctaCmdSub}"/>
-                            <ui:TextBox x:Name="In_DsOpen" Margin="0,8,0,6" PlaceholderText="сек до открытия, напр. 3600"/>
-                            <ui:Button Content="ДО ОТКРЫТИЯ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.settimetonextopening {0}" Click="RunParam" DataContext="{Binding ElementName=In_DsOpen}"/>
-                            <ui:TextBox x:Name="In_DsWipe" Margin="0,8,0,6" PlaceholderText="сек до вайпа, напр. 10800"/>
-                            <ui:Button Content="ДО ВАЙПА" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.settimetowipe {0}" Click="RunParam" DataContext="{Binding ElementName=In_DsWipe}"/>
-                        </StackPanel>
-                    </Border>
-                    <Border Style="{StaticResource OctaCmdCard}">
-                        <StackPanel>
-                            <TextBlock Text="Локальные команды моря" Style="{StaticResource OctaCmdTitle}"/>
-                            <TextBlock Text="spawnislandhere / spawnghostshiphere / spawnfloatingcityhere / spawnrhibgrouphere" Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap"/>
-                            <TextBlock Text="Требуют игрового контекста и позиции администратора. Через RCON их запуск намеренно заблокирован: иначе объект создаётся в неверной точке или команда падает." Foreground="{StaticResource B.Warn}" TextWrapping="Wrap" Margin="0,10,0,0"/>
-                        </StackPanel>
-                    </Border>
-
                     <!-- ══ ПАТРУЛЬНЫЙ ВЕРТОЛЁТ ══ -->
                     <TextBlock Text="🚁 ПАТРУЛЬНЫЙ ВЕРТОЛЁТ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=EventsWrap}" Margin="16,10,0,2"/>
                     <Border Style="{StaticResource OctaCmdCard}">
@@ -485,6 +442,110 @@
                             <TextBlock Text="octa.spawnatpos сущность x y z" Style="{StaticResource OctaCmdSub}"/>
                             <ui:TextBox x:Name="In_SpawnPos" Margin="0,8,0,6" PlaceholderText="bear 1200 5 -900"/>
                             <ui:Button Content="СПАВН В ТОЧКЕ" Style="{StaticResource OctaCmdBtn}" Tag="octa.spawnatpos {0}" Click="RunParamConfirm" DataContext="{Binding ElementName=In_SpawnPos}"/>
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="DEEP SEA">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                <WrapPanel x:Name="DsWrap" Margin="0,0,0,4">
+
+                    <!-- ══ ЦИКЛ И СТАТУС ══ -->
+                    <TextBlock Text="🌊 ЦИКЛ И СТАТУС" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=DsWrap}" Margin="16,8,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel>
+                            <TextBlock Text="Портал и жизненный цикл" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="зона живёт циклом: портал открывается → игра → вайп зоны → повтор" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="🌀 ОТКРЫТЬ ПОРТАЛ" Style="{StaticResource OctaCmdBtnPrimary}" Tag="deepsea.open" Click="RunSimple" ToolTip="deepsea.open — открыть вход в глубокое море"/>
+                                <ui:Button Content="⛔ ЗАКРЫТЬ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.close" Click="RunConfirm" ToolTip="deepsea.close — закрыть портал"/>
+                                <ui:Button Content="♻ ПЕРЕСОЗДАТЬ" Style="{StaticResource OctaCmdBtnDanger}" Tag="deepsea.createdeepsea" Click="RunConfirm" ToolTip="deepsea.createdeepsea — регенерация зоны (тяжёлая операция)"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Диагностика моря" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="чтение состояния — откройте ▲ внизу" Style="{StaticResource OctaCmdSub}"/>
+                            <WrapPanel Margin="0,10,0,0">
+                                <ui:Button Content="i СОСТОЯНИЕ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.status" Click="RunSimple"/>
+                                <ui:Button Content="⏱ ДО ВАЙПА" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printtimetowipe" Click="RunSimple"/>
+                                <ui:Button Content="Σ СУЩНОСТИ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printentitycount" Click="RunSimple"/>
+                                <ui:Button Content="🎁 ЛУТ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.printloot" Click="RunSimple"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Таймеры цикла" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="секунды: до открытия / до вайпа" Style="{StaticResource OctaCmdSub}"/>
+                            <ui:TextBox x:Name="In_DsOpen" Margin="0,8,0,6" PlaceholderText="сек до открытия, напр. 3600"/>
+                            <ui:Button Content="ДО ОТКРЫТИЯ" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.settimetonextopening {0}" Click="RunParam" DataContext="{Binding ElementName=In_DsOpen}"/>
+                            <ui:TextBox x:Name="In_DsWipe" Margin="0,8,0,6" PlaceholderText="сек до вайпа, напр. 10800"/>
+                            <ui:Button Content="ДО ВАЙПА" Style="{StaticResource OctaCmdBtn}" Tag="deepsea.settimetowipe {0}" Click="RunParam" DataContext="{Binding ElementName=In_DsWipe}"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Локальные команды моря" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="spawnislandhere / spawnghostshiphere / spawnfloatingcityhere / spawnrhibgrouphere / enterdeepsea / leavedeepsea" Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap"/>
+                            <TextBlock Text="Требуют игрового контекста и позиции администратора. Через RCON их запуск намеренно заблокирован: иначе объект создаётся в неверной точке или команда падает." Foreground="{StaticResource B.Warn}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ══ СОСТАВ ЗОНЫ ══ -->
+                    <TextBlock Text="🏝 СОСТАВ ЗОНЫ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=DsWrap}" Margin="16,10,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Количество объектов" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="применяются при следующей генерации/открытии зоны" Style="{StaticResource OctaCmdSub}"/>
+                            <StackPanel x:Name="DsCounts"/>
+                            <ui:Button Content="⇒ ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,10,0,0" Tag="DsCounts" Click="DsApply_Click"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Геометрия спавна" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="отступ от края / мин. дистанция / радиус отчуждения (м)" Style="{StaticResource OctaCmdSub}"/>
+                            <StackPanel x:Name="DsGeom"/>
+                            <ui:Button Content="⇒ ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,10,0,0" Tag="DsGeom" Click="DsApply_Click"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Лут зоны" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="множители начального лута и перезаселения" Style="{StaticResource OctaCmdSub}"/>
+                            <StackPanel x:Name="DsLoot"/>
+                            <ui:Button Content="⇒ ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,10,0,0" Tag="DsLoot" Click="DsApply_Click"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ══ ДОСТУП И ЦИКЛ ══ -->
+                    <TextBlock Text="⚙ ДОСТУП, ЦИКЛ, ГЕНЕРАЦИЯ" Style="{StaticResource OctaCmdTitle}" FontSize="13" Width="{Binding ActualWidth, ElementName=DsWrap}" Margin="16,10,0,2"/>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel x:Name="DsAccess">
+                            <TextBlock Text="Доступ в зону" Style="{StaticResource OctaCmdTitle}"/>
+                            <StackPanel x:Name="DsAccessBool"/>
+                            <StackPanel x:Name="DsAccessNum"/>
+                            <ui:Button Content="⇒ ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,10,0,0" Tag="DsAccess" Click="DsApply_Click"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCard}">
+                        <StackPanel>
+                            <TextBlock Text="Тайминги вайпа зоны" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="секунды; кулдаун до переоткрытия и фазы вайпа" Style="{StaticResource OctaCmdSub}"/>
+                            <StackPanel x:Name="DsTimers"/>
+                            <ui:Button Content="⇒ ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,10,0,0" Tag="DsTimers" Click="DsApply_Click"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource OctaCmdCardWide}">
+                        <StackPanel x:Name="DsPerf">
+                            <TextBlock Text="Производительность и отладка" Style="{StaticResource OctaCmdTitle}"/>
+                            <TextBlock Text="интервалы генерации при открытии — увеличивать, если море открывается лагами" Style="{StaticResource OctaCmdSub}" TextWrapping="Wrap"/>
+                            <StackPanel x:Name="DsPerfNum"/>
+                            <StackPanel x:Name="DsPerfBool"/>
+                            <ui:Button Content="⇒ ПРИМЕНИТЬ" Style="{StaticResource OctaCmdBtnPrimary}" Margin="0,10,0,0" Tag="DsPerf" Click="DsApply_Click"/>
                         </StackPanel>
                     </Border>
                 </WrapPanel>

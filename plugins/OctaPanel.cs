@@ -14,7 +14,7 @@ namespace Oxide.Plugins
 {
     // Ребрендинг ZenPanelPlus 2.5.0 (автор оригинала: FineINK)
     // Переименованы идентификаторы, пермишены, команды и дефолтные тексты — логика сохранена.
-    [Info("OctaPanel", "Octavian", "1.0.0")]
+    [Info("OctaPanel", "Octavian", "1.1.0")]
     [Description("Инфопанель Octavian: часы, онлайн, события, советы, экономика, PvP (Kills/Deaths/KD)")]
     public class OctaPanel : RustPlugin
     {
@@ -42,6 +42,10 @@ namespace Oxide.Plugins
             public Type Type;
             public int Count;
             public Func<BaseNetworkable, bool> Test;
+            // встроенный PNG (base64) — для иконок без внешней ссылки; грузится через AddImageData
+            public string PngB64;
+            // если задан — считаем по префиксу ShortPrefabName (классы deep sea internal, typeof недоступен)
+            public string PrefabPrefix;
 
             public EventIcon() => Count = 0;
         }
@@ -94,8 +98,39 @@ namespace Oxide.Plugins
                 Url = "https://i.imgur.com/xU8IUWO.png",
                 Type = typeof(CargoShip),
                 Test = e => e is CargoShip
+            },
+            // Deep Sea (Livestock Update): призрачные корабли и плавучий город.
+            // Классы GhostShip/FloatingCity — internal, поэтому считаем по префиксу префаба.
+            new EventIcon
+            {
+                Name = "OctaPanelIconGhostShip",
+                PngB64 = IconGhostShipPng,
+                PrefabPrefix = "ghostship",
+                Test = e => MatchesPrefab(e, "ghostship")
+            },
+            new EventIcon
+            {
+                Name = "OctaPanelIconFloatingCity",
+                PngB64 = IconFloatingCityPng,
+                PrefabPrefix = "floatingcity",
+                Test = e => MatchesPrefab(e, "floatingcity")
             }
         };
+
+        // shortname вида ghostship_c — карты-маркеры (*mapmarker) пропускаем
+        private static bool MatchesPrefab(BaseNetworkable e, string prefix)
+        {
+            var spn = e?.ShortPrefabName;
+            return spn != null && spn.StartsWith(prefix, StringComparison.Ordinal)
+                && !spn.Contains("mapmarker");
+        }
+
+        // силуэты 128x128, белые на прозрачном — в стиле остальных иконок панели
+        private const string IconGhostShipPng =
+            "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAADFElEQVR4nO2cWW7DMAwFraCXyf0Pk9yGRT8CdHO8iRLJN/PXpEAScvQsycuyAAAAAAAAAAAAAAAAAAAAAABAHdpSHDOz36+11sr/7r3cdv8nlOSmNPK/83g83r6vQlkBYB+lBVhLAUa/iACwDQKIIyfA8/mc/RVCIScA/AQBxJESgPgXFwD+ggDiyAhA/P/Px8rrIHIWUiYBQFiAkfFvG2cht94fjYQAo7Bgzd0DAoiLUl6AUfFvgZp6hPICRG2aBRFGWoBqzTzDTT3+TTwFSgug0sSUO4GRdsrMzBQ/u3QCjJj9W/LRP0WAqNfrm+hcYEoCVBg5VuA3hD0EXE2BjNf92yShQgoQvQlWZPSHFiDjKL7KDLHCCjBLHEt2Ore0AKSAuADRmmDFRn85ATwTwwY2f+RnhRdAcWNoJKEEiFp0C/q9yglwJQU8ksIEtodTCDATKzz6UwnAklBcgHcoyiEpgGKjzTkFUgkA/UkvgEIqmGMKpBNAoeEjSSeAKuaUAikFeKUAaSAqgCrmkAJpBWD0iwuginVOAQQQJ/1Dou73e5u1j94K3E5GAoiTXoC1yeDXCFkbJa0Ty0R6JVx6AeAaJQTItCRsHenxfUoIAIkEeGfvFaszpUAkSABxWvVHxMx6FI0FegSO60bQkeVIxAKowyFAHAQQ5iu9EUCU1/mE9CeD4NqcjQQQbf5rQo4AIqyt1jgEFGdrP4IEKMyePRoSQKzxvzfjDu/MVb9fvjL/7cQePgSwnVsL5gDFOHqq/ZQApEBMzvSFBBAX47QApEAszvbjUgIgQQz+LO2+/b3VIw4B4lwWgBSYy7v67+kNCVCUvQOziwCkwBx61L1bAiDBWLgzCJZwApACY+hZZxJAnO4CkAK+9K6vSwIggQ8edXURgItGfPCoa1ejaLzwMpDmj4VnBEEXWhQbFSeOFqBuJIA4tyjHIrU5mgAAAAAWTz4BieOcXf5l1mgAAAAASUVORK5CYII=";
+
+        private const string IconFloatingCityPng =
+            "iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAACB0lEQVR4nO3dQW7bMBRAQUvo/a/MblqgyCKtJVWm+GaWBgI7/A+MzcjQ6wUAAAAArG97LWqMMb4+tm3bsr/vUfvhn2QJAogTQJwA4vbKG8DvHi9bLoC/DVkECwfwr8MVwYIBvDtUESwUwNFhDhE8P4CzQxzxCB4fAOcIIE4AcQKIE0CcAOIEECeAOAHECSBOAHECiBNA3I+7n/DMf99c1389O0CcAOIEECeAOAHECSBOAHECiBNAnADiBBAngDgBxAkgTgBxAogTQJwA4gQQJ4A4AcQJIE4AcQKIE0CcAOIEECeAOAHECSDusu+e1e/A+QlXfHfQDhAngDgBxAkgTgBxAogTQJwA4gQQJ4A4AcQJIG6r3DDyU88/Jr9Rph0gTgBxAogTQJwA4gQQJ4A4AcQJIE4AcQKIE0CcAOIEECeAOAHEXX7nUN8S/v9reeWFIpcEYOj3+nO9z8ZwKgCD/7zfMzgawuH3AIY/l6PzOBSA4c/pyFzeDsDw5/bufN4KwPCf4Z05bbMFcMe18J82JlpHB0Fx+2zb/+p/ZsZk62gHiBNAnADiBBC3z/bxbPWPgdtk62gHiBNA3D7T9rX69j/jOu6zvPjK8Gdbx32GF18b/uuXGdbxJ3asoMnpbzqlAAAAAElFTkSuQmCC";
 
         private readonly Dictionary<string, Timer> _timers = new Dictionary<string, Timer>
         {
@@ -347,6 +382,8 @@ namespace Oxide.Plugins
             "OctaPanelIconTank",
             "OctaPanelIconCH47",
             "OctaPanelIconCargoShip",
+            "OctaPanelIconGhostShip",
+            "OctaPanelIconFloatingCity",
             "Clock",
             "Online",
             "Advice",
@@ -1041,7 +1078,19 @@ namespace Oxide.Plugins
         private void RefreshIconsData()
         {
             foreach (var ic in _eventIcons)
-                ic.Count = CountComponentsOf(ic.Type);
+                ic.Count = ic.PrefabPrefix != null
+                    ? CountByPrefab(ic.PrefabPrefix)
+                    : CountComponentsOf(ic.Type);
+        }
+
+        // deep sea сущности: ghostship/ghostship_c/... — без карты-маркеров
+        private static int CountByPrefab(string prefix)
+        {
+            var n = 0;
+            foreach (var e in BaseNetworkable.serverEntities)
+                if (MatchesPrefab(e, prefix))
+                    n++;
+            return n;
         }
 
         private void RefreshAdviceData()
@@ -1452,7 +1501,13 @@ namespace Oxide.Plugins
             }
             foreach (var ic in _eventIcons)
             {
-                try { ImageLibrary.Call("AddImage", ic.Url, ic.Name, 0UL); }
+                try
+                {
+                    if (ic.PngB64 != null)
+                        ImageLibrary.Call("AddImageData", ic.Name, Convert.FromBase64String(ic.PngB64), 0UL);
+                    else
+                        ImageLibrary.Call("AddImage", ic.Url, ic.Name, 0UL);
+                }
                 catch { }
             }
             if (_config.logo.allow)
@@ -1518,7 +1573,7 @@ namespace Oxide.Plugins
             if (entity == null) return;
             foreach (var ic in _eventIcons)
             {
-                if (!ic.Test(entity)) continue;
+                if (ic.Test == null || !ic.Test(entity)) continue;
                 ic.Count++;
             }
         }
@@ -1528,7 +1583,7 @@ namespace Oxide.Plugins
             if (entity == null) return;
             foreach (var ic in _eventIcons)
             {
-                if (!ic.Test(entity)) continue;
+                if (ic.Test == null || !ic.Test(entity)) continue;
                 if (ic.Count > 0) ic.Count--;
             }
         }
