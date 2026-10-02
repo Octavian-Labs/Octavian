@@ -1047,6 +1047,22 @@ namespace Oxide.Plugins
 
         [PluginReference]
         private Plugin OctVIP;
+        private Plugin _vipCache;
+
+        // PluginReference может не проставиться при порядке загрузки — ищем лениво
+        private Plugin FindOctVIP()
+        {
+            if (_vipCache != null && _vipCache.IsLoaded)
+                return _vipCache;
+            if (OctVIP != null && OctVIP.IsLoaded)
+                return _vipCache = OctVIP;
+            foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
+            {
+                if (p.Name == "OctVIP" && p.IsLoaded)
+                    return _vipCache = p;
+            }
+            return _vipCache = null;
+        }
 
         internal static OctaFeed Instance;
         internal string TEMPLATE_JSON_CONTAINER = string.Empty;
@@ -1183,11 +1199,12 @@ namespace Oxide.Plugins
             }
 
             // цвет ника из OctVIP, если игрок с VIP-уровнем
-            if (OctVIP != null && OctVIP.IsLoaded)
+            Plugin vip = FindOctVIP();
+            if (vip != null)
             {
-                int level = OctVIP.Call<int>("GetVipLevel", player.userID);
+                int level = vip.Call<int>("GetVipLevel", player.userID);
                 if (level > 0)
-                    return OctVIP.Call<string>("GetVipColor", player.userID);
+                    return vip.Call<string>("GetVipColor", player.userID);
             }
 
             return Instance.Cfg.UIConfig.NameProperty.Color;
