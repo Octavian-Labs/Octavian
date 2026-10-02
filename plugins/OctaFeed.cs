@@ -1192,12 +1192,14 @@ namespace Oxide.Plugins
             }
 
             // цвет ника из OctVIP, если игрок с VIP-уровнем
+            // userID = EncryptedValue<ulong> — в Call обязателен явный каст
             Plugin vip = FindOctVIP();
             if (vip != null)
             {
-                int level = vip.Call<int>("GetVipLevel", player.userID);
+                ulong uid = (ulong)player.userID;
+                int level = vip.Call<int>("GetVipLevel", uid);
                 if (level > 0)
-                    return vip.Call<string>("GetVipColor", player.userID);
+                    return vip.Call<string>("GetVipColor", uid);
             }
 
             return Instance.Cfg.UIConfig.NameProperty.Color;

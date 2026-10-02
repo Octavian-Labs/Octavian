@@ -286,3 +286,33 @@ private static string VisualRtl(string s)
 - Никакого рутинного лог-спама (apply/skip на каждый чих) — только реальные
   ошибки и события загрузки.
 - Новые Chaos-плагины: не забыть про пункт 1 — иначе первый деплой сломается.
+
+---
+
+## 10. `player.userID` — EncryptedValue<ulong>, ломает Plugin.Call
+
+`BasePlayer.userID` в текущей сборке — `EncryptedValue<ulong>` (античит-
+обёртка). В `Dictionary<ulong>` и арифметике неявный каст срабатывает, но в
+`plugin.Call("Hook", player.userID)` объект боксится как EncryptedValue —
+сигнатура `(ulong)` не совпадает → Call возвращает null/0 **молча**.
+
+Правило: в Call всегда `(ulong)player.userID`. Проверяется пробником:
+`OctaProbe_2` → `octaprobe2.vip` (консоль/RCON) или `/probe2` в чате.
+
+## 11. PluginReference залипает после перезагрузки целевого плагина
+
+`[PluginReference] Plugin X` может остаться на старой (выгруженной)
+инстанции — `IsLoaded` ещё true, Call уходит в мёртвый объект → 0/null.
+Надёжнее искать по имени каждый раз:
+
+```csharp
+foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
+    if (p.Name == "OctVIP" && p.IsLoaded) { ... }
+```
+
+## 12. OctaProbe — полигон для проверки связок
+
+Перед внедрением фичи в боевой плагин — сначала прогоняем её через пробник
+на живом сервере (`carbon/plugins/OctaProbe*.cs`). Команды вызываются
+через RCON: `octaprobe.vip`, `octaprobe2.vip` (WebSocket `ws://host:port/pass`,
+JSON `{Identifier, Message, Type:3}`; читать ответ — `carbon/logs/Carbon.Core.log`).
