@@ -27,6 +27,7 @@ public partial class MainWindow : Window
         NavPlugins.Visibility = localVisibility;
         NavServerCfg.Visibility = localVisibility;
         NavRates.Visibility = localVisibility;
+        NavFarm.Visibility = localVisibility;
         NavLogs.Visibility = localVisibility;
         NavWipes.Visibility = localVisibility;
         NavInstall.Visibility = localVisibility;

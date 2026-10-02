@@ -74,6 +74,9 @@
                 <ui:NavigationViewItem x:Name="NavRates" Content="Рейты и лут" TargetPageType="pages:RatesPage">
                     <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="DataHistogram24"/></ui:NavigationViewItem.Icon>
                 </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="NavFarm" Content="Ферма" TargetPageType="pages:FarmPage">
+                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="LeafTwo24"/></ui:NavigationViewItem.Icon>
+                </ui:NavigationViewItem>
                 <ui:NavigationViewItem x:Name="NavLogs" Content="Логи" TargetPageType="pages:LogsPage">
                     <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="DocumentText24"/></ui:NavigationViewItem.Icon>
                 </ui:NavigationViewItem>
