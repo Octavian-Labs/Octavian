@@ -26,7 +26,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    [Info("OctVIP", "Octavian", "1.2.0")]
+    [Info("OctVIP", "Octavian", "1.2.1")]
     [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
@@ -156,17 +156,23 @@ namespace Oxide.Plugins
             [JsonProperty("Панель: вкладка «Игроки» (управление, octavip.manage)")]
             public bool TabPlayers = true;
 
+            // ВНИМАНИЕ: чатовый шрифт Rust рисует не все Unicode-глифы —
+            // экзотика (✦ ♛ ⚡ ☠ и пр.) показывается как "?". Ниже только
+            // проверенные видимые символы. Панель рисует больше, чем чат!
             [JsonProperty("Иконки чата по уровням: набор вариантов для каждого статуса")]
             public Dictionary<string, List<string>> ChatIcons = new()
             {
-                ["Base"]      = new List<string> { "☆", "●", "◇" },
-                ["Bronze"]    = new List<string> { "★", "☆", "✦" },
-                ["Silver"]    = new List<string> { "★", "✧", "❖", "☾" },
-                ["Gold"]      = new List<string> { "★", "♛", "✪", "☀" },
-                ["Brilliant"] = new List<string> { "◆", "♦", "✦", "✧" },
-                ["Moderator"] = new List<string> { "⚙", "✚", "⚑", "◈" },
-                ["Admin"]     = new List<string> { "♛", "⚡", "☠", "✠" },
+                ["Base"]      = new List<string> { "☆", "●", "○" },
+                ["Bronze"]    = new List<string> { "★", "☆", "◆" },
+                ["Silver"]    = new List<string> { "★", "◆", "◇", "○" },
+                ["Gold"]      = new List<string> { "★", "♦", "●", "▲" },
+                ["Brilliant"] = new List<string> { "◆", "♦", "◇", "■" },
+                ["Moderator"] = new List<string> { "◆", "▲", "►", "■" },
+                ["Admin"]     = new List<string> { "★", "♠", "♥", "▲" },
             };
+
+            [JsonProperty("Панель: кнопка «ТЕСТ» — отправляет тестовое сообщение в чат при смене иконки")]
+            public bool ShowIconTestButton = true;
         }
 
         // ── Данные ──────────────────────────────────────────────────────────
@@ -380,21 +386,25 @@ namespace Oxide.Plugins
             var line = $"{tag}<color={color}>{icon}</color> <color={color}>{player.displayName}</color>" +
                        $"<color=#8A8F98>:</color> {message}";
 
+            return SendChatLine(player, line, channel);
+        }
+
+        /// <summary>Разослать форматированную строку чата адресатам канала.</summary>
+        private static bool SendChatLine(BasePlayer player, string line, ConVar.Chat.ChatChannel channel)
+        {
             if (channel == ConVar.Chat.ChatChannel.Global)
             {
                 foreach (var p in BasePlayer.activePlayerList)
                     if (p != null && p.IsConnected)
                         p.SendConsoleCommand("chat.add", (int)channel, player.UserIDString, line);
-            }
-            else
-            {
-                var team = player.Team;
-                if (team == null) return null;
-                foreach (var p in BasePlayer.activePlayerList)
-                    if (p != null && p.IsConnected && p.Team != null && p.Team.teamID == team.teamID)
-                        p.SendConsoleCommand("chat.add", (int)channel, player.UserIDString, line);
+                return true;
             }
 
+            var team = player.Team;
+            if (team == null) return false;
+            foreach (var p in BasePlayer.activePlayerList)
+                if (p != null && p.IsConnected && p.Team != null && p.Team.teamID == team.teamID)
+                    p.SendConsoleCommand("chat.add", (int)channel, player.UserIDString, line);
             return true;
         }
 
@@ -661,6 +671,7 @@ namespace Oxide.Plugins
             public string Duration = "30d";
             public int Page;
             public int Tab;
+            public bool TestChat;
         }
 
         private readonly Dictionary<ulong, PanelState> _panel = new();
@@ -761,6 +772,22 @@ namespace Oxide.Plugins
                     TextContainer.Create(body, "Иконка в чате:", m_LabelStyle,
                         UIAnchor.TopLeft, new Offset(16, -164, 200, -140));
 
+                    // TODO[test]: временный переключатель — при выборе иконки
+                    // шлём «тест» в чат, чтобы сразу видеть рендер глифа
+                    if (Configuration.ShowIconTestButton)
+                    {
+                        var tst = new Style(ChaosStyle.Button)
+                        {
+                            FontSize = 11,
+                            ImageColor = new UIColor(0.14f, 0.16f, 0.19f, 0.95f),
+                            FontColor = st.TestChat ? new UIColor(0.35f, 0.9f, 0.45f, 1f) : new UIColor(0.6f, 0.63f, 0.68f, 1f)
+                        };
+                        ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(120, -166, 178, -142),
+                                st.TestChat ? "ТЕСТ: ON" : "ТЕСТ", tst, st.TestChat ? ChaosStyle.GreenOutline : ChaosStyle.BlackOutline)
+                            .WithCallback(m_Callbacks, arg => { st.TestChat = !st.TestChat; BuildPanel(player); },
+                                $"{player.userID}.testchat");
+                    }
+
                     var set = IconSet(myLvl);
                     var cur = GetIcon(player.userID, myLvl);
                     for (var i = 0; i < set.Count; i++)
@@ -781,6 +808,11 @@ namespace Oxide.Plugins
                             {
                                 m_Data.Data.Icons[player.userID] = ic;
                                 m_Data.Save();
+                                // тест: кидаем строку чата с новой иконкой
+                                if (st.TestChat)
+                                    SendChatLine(player,
+                                        $"<color={Levels[myLvl].Color}>{ic}</color> <color={Levels[myLvl].Color}>{player.displayName}</color><color=#8A8F98>:</color> тест",
+                                        ConVar.Chat.ChatChannel.Global);
                                 BuildPanel(player);
                             }, $"{player.userID}.icon.{i}");
                     }
