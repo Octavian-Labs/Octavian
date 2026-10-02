@@ -24,3 +24,9 @@
 - Сырые конфиги сервера/ядра Carbon — вкладка «РЕДАКТОР ФАЙЛОВ» в «Серв. конфиг».
 - Все окна — WindowStyle=None + OctaTitleBar (кастомная шапка).
 - Ошибки редактора конфигов пишутся в `data\config-errors.log`.
+
+## Плагины
+
+- Перед работой с плагинами читать `PITFALLS.md` — там грабли Carbon/Chaos
+  (Config==null при горячей загрузке, isRedirectOf у скинов, builtInSize
+  вместо capacity, StringView в новых API) и фирменный стиль чата.
