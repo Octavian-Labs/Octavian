@@ -1045,23 +1045,16 @@ namespace Oxide.Plugins
         }
         internal double LAST_ROW_MODIFY_TIME = 0;
 
-        [PluginReference]
-        private Plugin OctVIP;
-        private Plugin _vipCache;
-
-        // PluginReference может не проставиться при порядке загрузки — ищем лениво
+        // PluginReference залипает на старой инстанции после перезагрузки OctVIP —
+        // ищем живой плагин по имени при каждом обращении (киллы редкие, это дёшево)
         private Plugin FindOctVIP()
         {
-            if (_vipCache != null && _vipCache.IsLoaded)
-                return _vipCache;
-            if (OctVIP != null && OctVIP.IsLoaded)
-                return _vipCache = OctVIP;
             foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
             {
                 if (p.Name == "OctVIP" && p.IsLoaded)
-                    return _vipCache = p;
+                    return p;
             }
-            return _vipCache = null;
+            return null;
         }
 
         internal static OctaFeed Instance;
