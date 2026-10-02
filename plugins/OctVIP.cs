@@ -26,7 +26,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    [Info("OctVIP", "Octavian", "1.3.2")]
+    [Info("OctVIP", "Octavian", "1.3.3")]
     [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
@@ -295,18 +295,18 @@ namespace Oxide.Plugins
 
         private bool IsExpired(VipEntry e) => e.ExpiresAt > 0 && e.ExpiresAt <= NowUnix;
 
-        /// <summary>Текущий уровень игрока: максимум из записи (живой) и пермишенов.</summary>
+        /// <summary>Текущий уровень игрока: живая запись в данных перекрывает пермишены,
+        /// иначе — максимальный уровень из octavip.*-пермишенов.</summary>
         private int ResolveLevel(ulong userId)
         {
-            var lvl = 0;
-            if (m_Data.Data.Players.TryGetValue(userId, out var e) && e != null && !IsExpired(e) && e.Level > lvl)
-                lvl = e.Level;
+            if (m_Data.Data.Players.TryGetValue(userId, out var e) && e != null && !IsExpired(e))
+                return e.Level;
 
             var idStr = userId.ToString();
             for (var i = LevelPerm.Length - 1; i >= 1; i--)
-                if (permission.UserHasPermission(idStr, LevelPerm[i])) { lvl = Math.Max(lvl, i); break; }
+                if (permission.UserHasPermission(idStr, LevelPerm[i])) return i;
 
-            return lvl;
+            return 0;
         }
 
         /// <summary>Выдать/изменить уровень. durationSec 0 — навсегда. Возвращает старый уровень.</summary>
@@ -314,10 +314,9 @@ namespace Oxide.Plugins
         {
             var old = ResolveLevel(userId);
 
-            if (level <= 0)
-                m_Data.Data.Players.Remove(userId);
-            else
-                m_Data.Data.Players[userId] = new VipEntry
+            // уровень 0 пишем записью — она перекрывает пермишены (явное снятие),
+            // иначе удалённая запись вернёт уровень обратно через octavip.*
+            m_Data.Data.Players[userId] = new VipEntry
                 {
                     Level = level,
                     GrantedBy = grantedBy,
@@ -543,7 +542,7 @@ namespace Oxide.Plugins
             {
                 // свой статус
                 var line = $"Твой статус: {LevelTag(myLevel)}";
-                if (m_Data.Data.Players.TryGetValue(player.userID, out var e) && !IsExpired(e))
+                if (m_Data.Data.Players.TryGetValue(player.userID, out var e) && !IsExpired(e) && e.Level > 0)
                     line += $"\nВыдан: {Val(DateTimeOffset.FromUnixTimeSeconds(e.GrantedAt).LocalDateTime.ToString("dd.MM.yyyy"))}" +
                             $" · до: {Val(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy HH:mm") : "навсегда")}" +
                             (string.IsNullOrEmpty(e.GrantedBy) ? "" : $" · от: {Val(e.GrantedBy)}");
@@ -758,9 +757,11 @@ namespace Oxide.Plugins
                 .ToList();
 
             // офлайн-игроки с VIP-записями — показываем псевдо-строками через id
-            var extra = m_Data.Data.Players.Keys
-                .Where(id => list.All(p => p.userID != id)
-                          && (string.IsNullOrEmpty(st.Search) || id.ToString().Contains(st.Search)))
+            var extra = m_Data.Data.Players
+                .Where(kv => kv.Value != null && kv.Value.Level > 0
+                          && list.All(p => p.userID != kv.Key)
+                          && (string.IsNullOrEmpty(st.Search) || kv.Key.ToString().Contains(st.Search)))
+                .Select(kv => kv.Key)
                 .ToList();
             // вернём список (online) + офлайн-записи отдельно обработаем при рендере
             _offlineIds = extra;
