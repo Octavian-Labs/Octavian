@@ -26,7 +26,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    [Info("OctVIP", "Octavian", "1.1.0")]
+    [Info("OctVIP", "Octavian", "1.2.0")]
     [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
@@ -62,8 +62,24 @@ namespace Oxide.Plugins
             new LevelDef { Name = "VIP Admin",     Color = "#E06666", Group = "vip_admin" },
         };
 
-        private static string LevelTag(int level) =>
-            $"<color={Levels[level].Color}>★ {Levels[level].Name}</color>";
+        // ключи наборов иконок в конфиге по индексу уровня
+        private static readonly string[] IconKeys = { "Base", "Bronze", "Silver", "Gold", "Brilliant", "Moderator", "Admin" };
+
+        private List<string> IconSet(int level) =>
+            Configuration.ChatIcons.TryGetValue(IconKeys[level], out var s) && s.Count > 0
+                ? s : new List<string> { "★" };
+
+        /// <summary>Иконка чата игрока: выбранная (валидная для уровня) или дефолтная.</summary>
+        private string GetIcon(ulong userId, int level)
+        {
+            var set = IconSet(level);
+            if (m_Data.Data.Icons.TryGetValue(userId, out var icon) && set.Contains(icon))
+                return icon;
+            return set[0];
+        }
+
+        private string LevelTag(int level) =>
+            $"<color={Levels[level].Color}>{IconSet(level)[0]} {Levels[level].Name}</color>";
 
         // ── Конфиг ──────────────────────────────────────────────────────────
 
@@ -133,6 +149,24 @@ namespace Oxide.Plugins
 
             [JsonProperty("Чат: звёздочка у игроков без VIP (уровень 0)")]
             public bool ChatStarForBase = true;
+
+            [JsonProperty("Панель: вкладка «Мой статус» (выбор иконки чата)")]
+            public bool TabProfile = true;
+
+            [JsonProperty("Панель: вкладка «Игроки» (управление, octavip.manage)")]
+            public bool TabPlayers = true;
+
+            [JsonProperty("Иконки чата по уровням: набор вариантов для каждого статуса")]
+            public Dictionary<string, List<string>> ChatIcons = new()
+            {
+                ["Base"]      = new List<string> { "☆", "●", "◇" },
+                ["Bronze"]    = new List<string> { "★", "☆", "✦" },
+                ["Silver"]    = new List<string> { "★", "✧", "❖", "☾" },
+                ["Gold"]      = new List<string> { "★", "♛", "✪", "☀" },
+                ["Brilliant"] = new List<string> { "◆", "♦", "✦", "✧" },
+                ["Moderator"] = new List<string> { "⚙", "✚", "⚑", "◈" },
+                ["Admin"]     = new List<string> { "♛", "⚡", "☠", "✠" },
+            };
         }
 
         // ── Данные ──────────────────────────────────────────────────────────
@@ -148,6 +182,7 @@ namespace Oxide.Plugins
         protected class VipData
         {
             public Dictionary<ulong, VipEntry> Players = new();
+            public Dictionary<ulong, string> Icons = new();   // выбранная иконка чата
         }
 
         // ── Жизненный цикл ──────────────────────────────────────────────────
@@ -341,7 +376,8 @@ namespace Oxide.Plugins
                 catch { }
             }
 
-            var line = $"{tag}<color={color}>★</color> <color={color}>{player.displayName}</color>" +
+            var icon = GetIcon(player.userID, lvl);
+            var line = $"{tag}<color={color}>{icon}</color> <color={color}>{player.displayName}</color>" +
                        $"<color=#8A8F98>:</color> {message}";
 
             if (channel == ConVar.Chat.ChatChannel.Global)
@@ -442,7 +478,8 @@ namespace Oxide.Plugins
                             $" · до: {Val(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy HH:mm") : "навсегда")}" +
                             (string.IsNullOrEmpty(e.GrantedBy) ? "" : $" · от: {Val(e.GrantedBy)}");
                 if (canManage || GrantCap(myLevel) > 0)
-                    line += $"\n{Val("/vip give")} <игрок> <уровень> [срок] — выдать временный VIP\n{Val("/vip panel")} — панель управления";
+                    line += $"\n{Val("/vip give")} <игрок> <уровень> [срок] — выдать временный VIP";
+                line += $"\n{Val("/vip panel")} — панель: статус и иконка чата";
                 Msg(player, line);
                 return;
             }
@@ -452,7 +489,6 @@ namespace Oxide.Plugins
                 case "panel":
                 case "admin":
                 case "ui":
-                    if (!canManage) { Msg(player, $"Нет доступа ({Val(PermManage)})"); return; }
                     TogglePanel(player);
                     return;
 
@@ -624,6 +660,7 @@ namespace Oxide.Plugins
             public ulong Selected;
             public string Duration = "30d";
             public int Page;
+            public int Tab;
         }
 
         private readonly Dictionary<ulong, PanelState> _panel = new();
@@ -678,8 +715,86 @@ namespace Oxide.Plugins
                 ChaosPrefab.CloseButton(body, UIAnchor.TopRight, new Offset(-36, -34, -8, -6), ChaosStyle.BlackOutline)
                     .WithCallback(m_Callbacks, arg => TogglePanel(player), $"{player.userID}.close");
 
+                // ── вкладки ──
+                var canManage = permission.UserHasPermission(player.UserIDString, PermManage) || player.IsAdmin;
+                var tabs = new List<(int id, string name)>();
+                if (Configuration.TabProfile) tabs.Add((0, "МОЙ СТАТУС"));
+                if (Configuration.TabPlayers && canManage) tabs.Add((1, "ИГРОКИ"));
+                if (tabs.Count == 0)
+                {
+                    TextContainer.Create(body, "<color=#8A8F98>нет доступных вкладок</color>", m_LabelStyle,
+                        UIAnchor.Center, new Offset(-120, -10, 120, 10));
+                    return;
+                }
+                if (tabs.All(t => t.id != st.Tab)) st.Tab = tabs[0].id;
+
+                for (var ti = 0; ti < tabs.Count; ti++)
+                {
+                    var (tid, tname) = tabs[ti];
+                    var active = st.Tab == tid;
+                    var ts = new Style(ChaosStyle.Button)
+                    {
+                        FontSize = 12,
+                        ImageColor = active ? new UIColor(0.91f, 0.72f, 0.29f, 0.22f) : new UIColor(0.14f, 0.16f, 0.19f, 0.95f),
+                        FontColor = active ? new UIColor(0.91f, 0.72f, 0.29f, 1f) : new UIColor(0.6f, 0.63f, 0.68f, 1f)
+                    };
+                    if (active) ts.Font = Font.RobotoCondensedBold;
+                    ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(8 + ti * 128, -70, 8 + ti * 128 + 122, -44),
+                            tname, ts, active ? ChaosStyle.GreenOutline : ChaosStyle.BlackOutline)
+                        .WithCallback(m_Callbacks, arg => { st.Tab = tid; BuildPanel(player); }, $"{player.userID}.tab.{tid}");
+                }
+
+                if (st.Tab == 0)
+                {
+                    // ── вкладка «Мой статус»: уровень + выбор иконки чата ──
+                    var myLvl = ResolveLevel(player.userID);
+                    TextContainer.Create(body, $"Твой статус: {LevelTag(myLvl)}", m_LabelStyle,
+                        UIAnchor.TopLeft, new Offset(16, -104, 536, -80));
+
+                    if (m_Data.Data.Players.TryGetValue(player.userID, out var me) && !IsExpired(me))
+                        TextContainer.Create(body,
+                            $"Выдан: {DateTimeOffset.FromUnixTimeSeconds(me.GrantedAt).LocalDateTime:dd.MM.yyyy} · " +
+                            $"до: {(me.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(me.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy HH:mm") : "навсегда")} · " +
+                            $"от: {me.GrantedBy}",
+                            m_SmallStyle, UIAnchor.TopLeft, new Offset(16, -128, 536, -108));
+
+                    TextContainer.Create(body, "Иконка в чате:", m_LabelStyle,
+                        UIAnchor.TopLeft, new Offset(16, -164, 200, -140));
+
+                    var set = IconSet(myLvl);
+                    var cur = GetIcon(player.userID, myLvl);
+                    for (var i = 0; i < set.Count; i++)
+                    {
+                        var ic = set[i];
+                        var on = ic == cur;
+                        var ist = new Style(ChaosStyle.Button)
+                        {
+                            ImageColor = new UIColor(0.16f, 0.18f, 0.22f, 0.95f),
+                            FontColor = on ? HexUi(Levels[myLvl].Color) : new UIColor(0.72f, 0.75f, 0.8f, 1f),
+                            FontSize = 18
+                        };
+                        if (on) ist.Font = Font.RobotoCondensedBold;
+                        ChaosPrefab.TextButton(body, UIAnchor.TopLeft,
+                                new Offset(16 + i * 52, -210, 16 + i * 52 + 46, -170), ic, ist,
+                                on ? ChaosStyle.GreenOutline : ChaosStyle.BlackOutline)
+                            .WithCallback(m_Callbacks, arg =>
+                            {
+                                m_Data.Data.Icons[player.userID] = ic;
+                                m_Data.Save();
+                                BuildPanel(player);
+                            }, $"{player.userID}.icon.{i}");
+                    }
+
+                    TextContainer.Create(body,
+                        $"Как выглядит:  <color={Levels[myLvl].Color}>{cur} {player.displayName}</color>" +
+                        "<color=#8A8F98>:</color> привет, мир!",
+                        m_SmallStyle, UIAnchor.TopLeft, new Offset(16, -246, 540, -222));
+                }
+                else
+                {
+
                 // поиск
-                ChaosPrefab.Input(body, UIAnchor.TopStretch, new Offset(8, -68, -8, -44), st.Search)
+                ChaosPrefab.Input(body, UIAnchor.TopStretch, new Offset(8, -102, -8, -76), st.Search)
                     .WithCallback(m_Callbacks, arg =>
                     {
                         st.Search = arg.Args.Length > 1 ? string.Join(" ", arg.Args.Skip(1)) : "";
@@ -693,7 +808,7 @@ namespace Oxide.Plugins
                 var maxPage = Math.Max(0, (totalRows - 1) / Rows);
                 st.Page = Math.Clamp(st.Page, 0, maxPage);
 
-                var y = 76;
+                var y = 110;
                 var rowIdx = 0;
                 var skip = st.Page * Rows;
                 var shown = 0;
@@ -728,7 +843,7 @@ namespace Oxide.Plugins
 
                 if (totalRows == 0)
                     TextContainer.Create(body, "<color=#8A8F98>— никого не найдено —</color>", m_LabelStyle,
-                        UIAnchor.TopStretch, new Offset(16, -110, -16, -84));
+                        UIAnchor.TopStretch, new Offset(16, -144, -16, -118));
 
                 // пейджинг
                 if (maxPage > 0)
@@ -750,16 +865,16 @@ namespace Oxide.Plugins
                     var selLvl = ResolveLevel(st.Selected);
 
                     TextContainer.Create(body, $"Игрок: {selName}", m_LabelStyle,
-                        UIAnchor.TopLeft, new Offset(rx, -88, 536, -64));
+                        UIAnchor.TopLeft, new Offset(rx, -122, 536, -98));
                     TextContainer.Create(body, $"Статус: {LevelTag(selLvl)}", m_LabelStyle,
-                        UIAnchor.TopLeft, new Offset(rx, -112, 536, -88));
+                        UIAnchor.TopLeft, new Offset(rx, -146, 536, -122));
 
                     if (m_Data.Data.Players.TryGetValue(st.Selected, out var e) && !IsExpired(e))
                         TextContainer.Create(body,
                             $"Выдан: {DateTimeOffset.FromUnixTimeSeconds(e.GrantedAt).LocalDateTime:dd.MM.yyyy} · " +
                             $"до: {(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy") : "perm")} · " +
                             $"от: {e.GrantedBy}",
-                            m_SmallStyle, UIAnchor.TopLeft, new Offset(rx, -132, 536, -112));
+                            m_SmallStyle, UIAnchor.TopLeft, new Offset(rx, -166, 536, -146));
 
                     // кнопки уровней — сетка 2 ряда
                     for (var i = 0; i <= 6; i++)
@@ -768,7 +883,7 @@ namespace Oxide.Plugins
                         var col = i % 4;
                         var rowI = i / 4;
                         var bx = rx + col * 62;
-                        var by = 150 + rowI * 34;
+                        var by = 184 + rowI * 34;
                         var label = lvl == 0 ? "Снять" : Levels[lvl].Name.Replace("VIP ", "");
                         var isCurrent = selLvl == lvl;
                         var style = new Style(ChaosStyle.Button)
@@ -796,8 +911,8 @@ namespace Oxide.Plugins
                     }
 
                     // срок + кнопки
-                    TextContainer.Create(body, "Срок:", m_LabelStyle, UIAnchor.TopLeft, new Offset(rx, -242, rx + 44, -220));
-                    ChaosPrefab.Input(body, UIAnchor.TopLeft, new Offset(rx + 44, -240, rx + 120, -218), st.Duration)
+                    TextContainer.Create(body, "Срок:", m_LabelStyle, UIAnchor.TopLeft, new Offset(rx, -276, rx + 44, -254));
+                    ChaosPrefab.Input(body, UIAnchor.TopLeft, new Offset(rx + 44, -274, rx + 120, -252), st.Duration)
                         .WithCallback(m_Callbacks, arg =>
                         {
                             st.Duration = arg.Args.Length > 1 ? arg.Args[1].ToString() : "";
@@ -807,7 +922,7 @@ namespace Oxide.Plugins
                     foreach (var d in new[] { "7d", "30d", "perm" })
                     {
                         var dd = d;
-                        ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(rx + 126 + di * 44, -240, rx + 164 + di * 44, -218),
+                        ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(rx + 126 + di * 44, -274, rx + 164 + di * 44, -252),
                                 dd, m_LabelStyle, ChaosStyle.BlackOutline)
                             .WithCallback(m_Callbacks, arg =>
                             {
@@ -818,7 +933,7 @@ namespace Oxide.Plugins
                     }
 
                     // применить срок
-                    ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(rx, -284, rx + 200, -252),
+                    ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(rx, -318, rx + 200, -286),
                             "ВЫДАТЬ СРОК + УРОВЕНЬ", m_MasterOnStyle, ChaosStyle.BlackOutline)
                         .WithCallback(m_Callbacks, arg =>
                         {
@@ -836,7 +951,8 @@ namespace Oxide.Plugins
                 else
                 {
                     TextContainer.Create(body, "<color=#8A8F98>Выбери игрока слева</color>", m_LabelStyle,
-                        UIAnchor.TopLeft, new Offset(rx, -140, 540, -100));
+                        UIAnchor.TopLeft, new Offset(rx, -174, 540, -134));
+                }
                 }
             })
             .NeedsCursor()
