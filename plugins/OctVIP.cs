@@ -1,9 +1,9 @@
-﻿// OctVIP вЂ” СЃРёСЃС‚РµРјР° VIP-СѓСЂРѕРІРЅРµР№ OctavianRSM.
-// 7 СѓСЂРѕРІРЅРµР№: Base, VIP Bronze, VIP Silver, VIP Gold, VIP Brilliant, VIP Moderator, VIP Admin.
-// РЈСЂРѕРІРµРЅСЊ = Р·Р°РїРёСЃСЊ РІ data/OctVIP/players.json (СЃ РѕРїС†РёРѕРЅР°Р»СЊРЅС‹Рј СЃСЂРѕРєРѕРј) РР›Р РїРµСЂРјРёС€РµРЅ octavip.<level>.
-// Р­РєСЃРїРѕСЂС‚РёСЂСѓРµС‚ API РґР»СЏ РґСЂСѓРіРёС… РїР»Р°РіРёРЅРѕРІ: GetVipLevel / GetVipLevelName / GetVipColor /
-// HasVipLevel / GetVipExpiry / SetVipLevel. Р’РµС‰Р°РµС‚ С…СѓРє OnVipLevelChanged(player, old, new).
-// UI РЅР° Chaos UIFramework (С‚СЂРµР±СѓРµС‚СЃСЏ Oxide.Ext.Chaos).
+﻿// OctVIP — система VIP-уровней OctavianRSM.
+// 7 уровней: Base, VIP Bronze, VIP Silver, VIP Gold, VIP Brilliant, VIP Moderator, VIP Admin.
+// Уровень = запись в data/OctVIP/players.json (с опциональным сроком) ИЛИ пермишен octavip.<level>.
+// Экспортирует API для других плагинов: GetVipLevel / GetVipLevelName / GetVipColor /
+// HasVipLevel / GetVipExpiry / SetVipLevel. Вещает хук OnVipLevelChanged(player, old, new).
+// UI на Chaos UIFramework (требуется Oxide.Ext.Chaos).
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -27,7 +27,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 namespace Oxide.Plugins
 {
     [Info("OctVIP", "Octavian", "1.1.0")]
-    [Description("РЎРёСЃС‚РµРјР° VIP-СѓСЂРѕРІРЅРµР№: 7 СѓСЂРѕРІРЅРµР№, РІСЂРµРјРµРЅРЅР°СЏ РІС‹РґР°С‡Р°, Chaos-РїР°РЅРµР»СЊ, РїСЂРёРІРµС‚СЃС‚РІРёРµ СЃ РёРЅС„РѕР№, API РґР»СЏ РїР»Р°РіРёРЅРѕРІ")]
+    [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
         [Chaos.Permission] private const string PermManage = "octavip.manage";
@@ -39,16 +39,16 @@ namespace Oxide.Plugins
 
         [PluginReference] private Plugin Clans;
 
-        // в”Ђв”Ђ РЈСЂРѕРІРЅРё в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Уровни ──────────────────────────────────────────────────────────
 
-        // РїРѕСЂСЏРґРѕРє = РїСЂРёРѕСЂРёС‚РµС‚, РёРЅРґРµРєСЃ РјР°СЃСЃРёРІР° = СѓСЂРѕРІРµРЅСЊ
+        // порядок = приоритет, индекс массива = уровень
         private static readonly string[] LevelPerm = { "", "octavip.bronze", "octavip.silver", "octavip.gold", "octavip.brilliant", "octavip.moderator", "octavip.admin" };
 
         private class LevelDef
         {
             public string Name;
-            public string Color;   // hex РґР»СЏ С‡Р°С‚Р°/UI
-            public string Group;   // oxide-РіСЂСѓРїРїР° РґР»СЏ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё ("" вЂ” РЅРµ СЃРёРЅРєР°С‚СЊ)
+            public string Color;   // hex для чата/UI
+            public string Group;   // oxide-группа для синхронизации ("" — не синкать)
         }
 
         private static readonly LevelDef[] Levels =
@@ -63,18 +63,18 @@ namespace Oxide.Plugins
         };
 
         private static string LevelTag(int level) =>
-            $"<color={Levels[level].Color}>в… {Levels[level].Name}</color>";
+            $"<color={Levels[level].Color}>★ {Levels[level].Name}</color>";
 
-        // в”Ђв”Ђ РљРѕРЅС„РёРі в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Конфиг ──────────────────────────────────────────────────────────
 
         private ConfigData Configuration => ConfigurationData as ConfigData;
 
         protected override ConfigurationFile OnLoadConfig(ref ConfigurationFile configurationFile) =>
             configurationFile = new ConfigurationFile<ConfigData>(Config);
 
-        // РџСЂРё РіРѕСЂСЏС‡РµР№ Р·Р°РіСЂСѓР·РєРµ Carbon РЅРµ РёРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ Config, РµСЃР»Рё С„Р°Р№Р»Р°
-        // РєРѕРЅС„РёРіР° РµС‰С‘ РЅРµС‚ вЂ” Chaos Р·Р°С‚РµРј РїР°РґР°РµС‚ СЃ NRE РІ LoadConfig.
-        // РЎРµС‚С‚РµСЂ internal, РїРѕСЌС‚РѕРјСѓ РїСЂРёСЃРІР°РёРІР°РµРј DynamicConfigFile СЂРµС„Р»РµРєСЃРёРµР№.
+        // При горячей загрузке Carbon не инициализирует Config, если файла
+        // конфига ещё нет — Chaos затем падает с NRE в LoadConfig.
+        // Сеттер internal, поэтому присваиваем DynamicConfigFile рефлексией.
         protected override void LoadConfig()
         {
             if (Config == null)
@@ -89,60 +89,60 @@ namespace Oxide.Plugins
 
         protected class ConfigData : BaseConfigData
         {
-            [JsonProperty("РџСЂРµС„РёРєСЃ СЃРѕРѕР±С‰РµРЅРёР№ РІ С‡Р°С‚Рµ")]
-            public string ChatPrefix = "<color=#E8B84B>в—† OctVIP</color>";
+            [JsonProperty("Префикс сообщений в чате")]
+            public string ChatPrefix = "<color=#E8B84B>◆ OctVIP</color>";
 
-            [JsonProperty("РЎРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°С‚СЊ СѓСЂРѕРІРЅРё СЃ oxide-РіСЂСѓРїРїР°РјРё (vip_bronze Рё С‚.Рґ.)")]
+            [JsonProperty("Синхронизировать уровни с oxide-группами (vip_bronze и т.д.)")]
             public bool MirrorGroups = true;
 
-            [JsonProperty("РРЅС‚РµСЂРІР°Р» РїСЂРѕРІРµСЂРєРё РёСЃС‚С‘РєС€РёС… VIP (СЃРµРє)")]
+            [JsonProperty("Интервал проверки истёкших VIP (сек)")]
             public float ExpireCheckInterval = 3600f;
 
-            [JsonProperty("РџСЂРёРІРµС‚СЃС‚РІРёРµ РїСЂРё РІС…РѕРґРµ: РјРёРЅРёРјР°Р»СЊРЅС‹Р№ СѓСЂРѕРІРµРЅСЊ")]
+            [JsonProperty("Приветствие при входе: минимальный уровень")]
             public int WelcomeMinLevel = 1;
 
-            [JsonProperty("РџСЂРёРІРµС‚СЃС‚РІРёРµ: РїРѕРєР°Р·С‹РІР°С‚СЊ РєР»Р°РЅ СЃ СѓСЂРѕРІРЅСЏ")]
+            [JsonProperty("Приветствие: показывать клан с уровня")]
             public int ShowClanMinLevel = 1;
 
-            [JsonProperty("РџСЂРёРІРµС‚СЃС‚РІРёРµ: РїРѕРєР°Р·С‹РІР°С‚СЊ РѕРЅР»Р°Р№РЅ РєР»Р°РЅР° СЃ СѓСЂРѕРІРЅСЏ")]
+            [JsonProperty("Приветствие: показывать онлайн клана с уровня")]
             public int ShowClanOnlineMinLevel = 2;
 
-            [JsonProperty("РџСЂРёРІРµС‚СЃС‚РІРёРµ: РїРѕРєР°Р·С‹РІР°С‚СЊ РєРѕР»-РІРѕ С€РєР°С„РѕРІ СЃ СѓСЂРѕРІРЅСЏ")]
+            [JsonProperty("Приветствие: показывать кол-во шкафов с уровня")]
             public int ShowBasesMinLevel = 3;
 
-            [JsonProperty("РђРЅРѕРЅСЃРёСЂРѕРІР°С‚СЊ РІС…РѕРґ VIP РІ РѕР±С‰РёР№ С‡Р°С‚ СЃ СѓСЂРѕРІРЅСЏ")]
+            [JsonProperty("Анонсировать вход VIP в общий чат с уровня")]
             public int BroadcastJoinMinLevel = 3;
 
-            [JsonProperty("РђРЅРѕРЅСЃРёСЂРѕРІР°С‚СЊ РІС‹РґР°С‡Сѓ VIP РІ РѕР±С‰РёР№ С‡Р°С‚")]
+            [JsonProperty("Анонсировать выдачу VIP в общий чат")]
             public bool BroadcastGrant = true;
 
-            [JsonProperty("Р’С‹РґР°С‡Р° РІСЂРµРјРµРЅРЅС‹С… VIP РѕР±Р»Р°РґР°С‚РµР»СЏРј СѓСЂРѕРІРЅРµР№: РјР°РєСЃ. РІС‹РґР°РІР°РµРјС‹Р№ СѓСЂРѕРІРµРЅСЊ РґР»СЏ Moderator")]
+            [JsonProperty("Выдача временных VIP обладателям уровней: макс. выдаваемый уровень для Moderator")]
             public int ModeratorGrantMaxLevel = 1;
 
-            [JsonProperty("Р’С‹РґР°С‡Р° РІСЂРµРјРµРЅРЅС‹С… VIP: РјР°РєСЃ. СѓСЂРѕРІРµРЅСЊ РґР»СЏ Admin")]
+            [JsonProperty("Выдача временных VIP: макс. уровень для Admin")]
             public int AdminGrantMaxLevel = 3;
 
-            [JsonProperty("Р’С‹РґР°С‡Р° РІСЂРµРјРµРЅРЅС‹С… VIP: РјР°РєСЃ. СЃСЂРѕРє РІ РґРЅСЏС…")]
+            [JsonProperty("Выдача временных VIP: макс. срок в днях")]
             public int TempGrantMaxDays = 7;
 
-            [JsonProperty("Р§Р°С‚: Р·РІРµР·РґР° Рё С†РІРµС‚ РёРјРµРЅРё РїРѕ СѓСЂРѕРІРЅСЋ")]
+            [JsonProperty("Чат: звезда и цвет имени по уровню")]
             public bool FormatChat = true;
 
-            [JsonProperty("Р§Р°С‚: РїРѕРєР°Р·С‹РІР°С‚СЊ РєР»Р°РЅ-С‚РµРі РїРµСЂРµРґ РёРјРµРЅРµРј (Clans)")]
+            [JsonProperty("Чат: показывать клан-тег перед именем (Clans)")]
             public bool ChatClanTag = true;
 
-            [JsonProperty("Р§Р°С‚: Р·РІС‘Р·РґРѕС‡РєР° Сѓ РёРіСЂРѕРєРѕРІ Р±РµР· VIP (СѓСЂРѕРІРµРЅСЊ 0)")]
+            [JsonProperty("Чат: звёздочка у игроков без VIP (уровень 0)")]
             public bool ChatStarForBase = true;
         }
 
-        // в”Ђв”Ђ Р”Р°РЅРЅС‹Рµ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Данные ──────────────────────────────────────────────────────────
 
         protected class VipEntry
         {
             public int Level;                 // 1-6
-            public string GrantedBy = "";     // РєС‚Рѕ РІС‹РґР°Р»
+            public string GrantedBy = "";     // кто выдал
             public long GrantedAt;            // unix
-            public long ExpiresAt;            // unix, 0 = РЅР°РІСЃРµРіРґР°
+            public long ExpiresAt;            // unix, 0 = навсегда
         }
 
         protected class VipData
@@ -150,7 +150,7 @@ namespace Oxide.Plugins
             public Dictionary<ulong, VipEntry> Players = new();
         }
 
-        // в”Ђв”Ђ Р–РёР·РЅРµРЅРЅС‹Р№ С†РёРєР» в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Жизненный цикл ──────────────────────────────────────────────────
 
         protected override void PopulatePhrases() => m_Messages = new Dictionary<string, string>();
 
@@ -173,7 +173,7 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized()
         {
-            // РѕС‚Р»РѕР¶РµРЅРЅР°СЏ СЃРІРµСЂРєР° вЂ” РїР»Р°РіРёРЅ РјРѕРі Р·Р°РіСЂСѓР·РёС‚СЊСЃСЏ РїРѕСЃР»Рµ РїРѕРґРєР»СЋС‡РµРЅРёСЏ РёРіСЂРѕРєРѕРІ
+            // отложенная сверка — плагин мог загрузиться после подключения игроков
             timer.Once(3f, () =>
             {
                 foreach (var p in BasePlayer.activePlayerList) WelcomePlayer(p);
@@ -189,13 +189,13 @@ namespace Oxide.Plugins
 
         private void OnServerSave() => m_Data.Save();
 
-        // в”Ђв”Ђ РЇРґСЂРѕ СѓСЂРѕРІРЅРµР№ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Ядро уровней ────────────────────────────────────────────────────
 
         private static long NowUnix => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         private bool IsExpired(VipEntry e) => e.ExpiresAt > 0 && e.ExpiresAt <= NowUnix;
 
-        /// <summary>РўРµРєСѓС‰РёР№ СѓСЂРѕРІРµРЅСЊ РёРіСЂРѕРєР°: РјР°РєСЃРёРјСѓРј РёР· Р·Р°РїРёСЃРё (Р¶РёРІРѕР№) Рё РїРµСЂРјРёС€РµРЅРѕРІ.</summary>
+        /// <summary>Текущий уровень игрока: максимум из записи (живой) и пермишенов.</summary>
         private int ResolveLevel(ulong userId)
         {
             var lvl = 0;
@@ -209,7 +209,7 @@ namespace Oxide.Plugins
             return lvl;
         }
 
-        /// <summary>Р’С‹РґР°С‚СЊ/РёР·РјРµРЅРёС‚СЊ СѓСЂРѕРІРµРЅСЊ. durationSec 0 вЂ” РЅР°РІСЃРµРіРґР°. Р’РѕР·РІСЂР°С‰Р°РµС‚ СЃС‚Р°СЂС‹Р№ СѓСЂРѕРІРµРЅСЊ.</summary>
+        /// <summary>Выдать/изменить уровень. durationSec 0 — навсегда. Возвращает старый уровень.</summary>
         private int SetLevel(ulong userId, int level, long durationSec, string grantedBy)
         {
             var old = ResolveLevel(userId);
@@ -236,7 +236,7 @@ namespace Oxide.Plugins
             return old;
         }
 
-        /// <summary>РЎРЅСЏС‚СЊ/РїРѕСЃС‚Р°РІРёС‚СЊ oxide-РіСЂСѓРїРїСѓ РїРѕ СѓСЂРѕРІРЅСЋ.</summary>
+        /// <summary>Снять/поставить oxide-группу по уровню.</summary>
         private void SyncGroups(ulong userId, int level)
         {
             if (!Configuration.MirrorGroups) return;
@@ -251,7 +251,7 @@ namespace Oxide.Plugins
             }
         }
 
-        /// <summary>РџРѕС‡Р°СЃРѕРІР°СЏ РїСЂРѕРІРµСЂРєР° РёСЃС‚С‘РєС€РёС… VIP.</summary>
+        /// <summary>Почасовая проверка истёкших VIP.</summary>
         private void CheckExpirations()
         {
             var expired = m_Data.Data.Players
@@ -266,7 +266,7 @@ namespace Oxide.Plugins
                 var player = BasePlayer.FindByID(id);
                 if (player != null)
                 {
-                    Msg(player, $"РЎСЂРѕРє {LevelTag(e.Level)} РёСЃС‚С‘Рє вЂ” СЃРїР°СЃРёР±Рѕ, С‡С‚Рѕ Р±С‹Р»Рё СЃ РЅР°РјРё!");
+                    Msg(player, $"Срок {LevelTag(e.Level)} истёк — спасибо, что были с нами!");
                     Interface.Oxide.CallHook("OnVipExpired", player, e.Level);
                     if (e.Level != ResolveLevel(id))
                         Interface.Oxide.CallHook("OnVipLevelChanged", player, e.Level, ResolveLevel(id));
@@ -275,17 +275,17 @@ namespace Oxide.Plugins
             if (expired.Count > 0) m_Data.Save();
         }
 
-        // в”Ђв”Ђ РџР°СЂСЃРёРЅРі СЃСЂРѕРєР° в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Парсинг срока ───────────────────────────────────────────────────
 
-        /// <summary>"30d" / "12h" / "45m" / "perm"/"" вЂ” РІ СЃРµРєСѓРЅРґС‹. 0 = РЅР°РІСЃРµРіРґР°.</summary>
+        /// <summary>"30d" / "12h" / "45m" / "perm"/"" — в секунды. 0 = навсегда.</summary>
         private static bool TryParseDuration(string s, out long seconds)
         {
             seconds = 0;
             if (string.IsNullOrWhiteSpace(s)) return true;
             s = s.Trim().ToLowerInvariant();
-            if (s is "perm" or "permament" or "forever" or "РЅР°РІСЃРµРіРґР°" or "0") return true;
+            if (s is "perm" or "permament" or "forever" or "навсегда" or "0") return true;
 
-            long mult = 86400; // РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ вЂ” РґРЅРё
+            long mult = 86400; // по умолчанию — дни
             if (s.EndsWith("d")) { s = s[..^1]; }
             else if (s.EndsWith("h")) { s = s[..^1]; mult = 3600; }
             else if (s.EndsWith("m")) { s = s[..^1]; mult = 60; }
@@ -298,27 +298,27 @@ namespace Oxide.Plugins
 
         private static string FormatDuration(long expiresAt)
         {
-            if (expiresAt <= 0) return "РЅР°РІСЃРµРіРґР°";
+            if (expiresAt <= 0) return "навсегда";
             var left = expiresAt - NowUnix;
-            if (left <= 0) return "РёСЃС‚С‘Рє";
-            if (left >= 86400) return $"{left / 86400}Рґ {(left % 86400) / 3600}С‡";
-            if (left >= 3600) return $"{left / 3600}С‡ {(left % 3600) / 60}Рј";
-            return $"{left / 60}Рј";
+            if (left <= 0) return "истёк";
+            if (left >= 86400) return $"{left / 86400}д {(left % 86400) / 3600}ч";
+            if (left >= 3600) return $"{left / 3600}ч {(left % 3600) / 60}м";
+            return $"{left / 60}м";
         }
 
-        // в”Ђв”Ђ Р§Р°С‚ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Чат ─────────────────────────────────────────────────────────────
 
         private void Msg(BasePlayer player, string text) =>
-            player.ChatMessage($"{Configuration.ChatPrefix} <color=#9AA4B2>вЂ”</color> {text}");
+            player.ChatMessage($"{Configuration.ChatPrefix} <color=#9AA4B2>—</color> {text}");
 
         private static string Val(object v) => $"<color=#FFD35C>{v}</color>";
 
         private void Broadcast(string text) =>
-            PrintToChat($"{Configuration.ChatPrefix} <color=#9AA4B2>вЂ”</color> {text}");
+            PrintToChat($"{Configuration.ChatPrefix} <color=#9AA4B2>—</color> {text}");
 
-        // в”Ђв”Ђ Р¤РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёРµ РёРіСЂРѕРІРѕРіРѕ С‡Р°С‚Р° в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-        // Р—РІРµР·РґР° С†РІРµС‚Р° СѓСЂРѕРІРЅСЏ + РёРјСЏ С†РІРµС‚РѕРј СѓСЂРѕРІРЅСЏ + РєР»Р°РЅ-С‚РµРі. Р‘РµСЂС‘Рј РЅР° СЃРµР±СЏ
-        // РІС‹РІРѕРґ СЃРѕРѕР±С‰РµРЅРёСЏ (chat.add) Рё РіР»СѓС€РёРј СЃС‚Р°РЅРґР°СЂС‚РЅС‹Р№ вЂ” РєР°Рє РґРµР»Р°РµС‚ Clans.
+        // ── Форматирование игрового чата ─────────────────────────────────
+        // Звезда цвета уровня + имя цветом уровня + клан-тег. Берём на себя
+        // вывод сообщения (chat.add) и глушим стандартный — как делает Clans.
 
         private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
@@ -341,7 +341,7 @@ namespace Oxide.Plugins
                 catch { }
             }
 
-            var line = $"{tag}<color={color}>в…</color> <color={color}>{player.displayName}</color>" +
+            var line = $"{tag}<color={color}>★</color> <color={color}>{player.displayName}</color>" +
                        $"<color=#8A8F98>:</color> {message}";
 
             if (channel == ConVar.Chat.ChatChannel.Global)
@@ -362,7 +362,7 @@ namespace Oxide.Plugins
             return true;
         }
 
-        // в”Ђв”Ђ РџСЂРёРІРµС‚СЃС‚РІРёРµ РїСЂРё РІС…РѕРґРµ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Приветствие при входе ───────────────────────────────────────────
 
         private void OnPlayerConnected(BasePlayer player) => WelcomePlayer(player);
 
@@ -378,15 +378,15 @@ namespace Oxide.Plugins
             var lvl = ResolveLevel(player.userID);
             if (lvl < Configuration.WelcomeMinLevel) return;
 
-            // Р°РЅРѕРЅСЃ РІ РѕР±С‰РёР№ С‡Р°С‚ РґР»СЏ РІС‹СЃРѕРєРёС… СѓСЂРѕРІРЅРµР№
+            // анонс в общий чат для высоких уровней
             if (lvl >= Configuration.BroadcastJoinMinLevel)
-                Broadcast($"{LevelTag(lvl)} {player.displayName} Р·Р°С€С‘Р» РЅР° СЃРµСЂРІРµСЂ!");
+                Broadcast($"{LevelTag(lvl)} {player.displayName} зашёл на сервер!");
 
             var parts = new List<string>();
             if (m_Data.Data.Players.TryGetValue(player.userID, out var e) && e.ExpiresAt > 0)
-                parts.Add($"РѕСЃС‚Р°Р»РѕСЃСЊ: {Val(FormatDuration(e.ExpiresAt))}");
+                parts.Add($"осталось: {Val(FormatDuration(e.ExpiresAt))}");
 
-            // РєР»Р°РЅ
+            // клан
             if (lvl >= Configuration.ShowClanMinLevel && Clans != null)
             {
                 try
@@ -401,31 +401,31 @@ namespace Oxide.Plugins
                             {
                                 var online = members.Count(id =>
                                     BasePlayer.activePlayerList.Any(p => p.UserIDString == id));
-                                parts.Add($"РєР»Р°РЅ: {Val(tag)} ({online}/{members.Count} РѕРЅР»Р°Р№РЅ)");
+                                parts.Add($"клан: {Val(tag)} ({online}/{members.Count} онлайн)");
                             }
-                            else parts.Add($"РєР»Р°РЅ: {Val(tag)}");
+                            else parts.Add($"клан: {Val(tag)}");
                         }
-                        else parts.Add($"РєР»Р°РЅ: {Val(tag)}");
+                        else parts.Add($"клан: {Val(tag)}");
                     }
                 }
                 catch { }
             }
 
-            // С€РєР°С„С‹, РІ РєРѕС‚РѕСЂС‹С… Р°РІС‚РѕСЂРёР·РѕРІР°РЅ
+            // шкафы, в которых авторизован
             if (lvl >= Configuration.ShowBasesMinLevel)
             {
                 var tc = 0;
                 foreach (var ent in BaseNetworkable.serverEntities)
                     if (ent is BuildingPrivlidge b && b.authorizedPlayers != null &&
                         b.authorizedPlayers.Any(x => x == player.userID)) tc++;
-                if (tc > 0) parts.Add($"С‚РІРѕРё Р±Р°Р·С‹: {Val(tc)}");
+                if (tc > 0) parts.Add($"твои базы: {Val(tc)}");
             }
 
-            var tail = parts.Count > 0 ? "\n<color=#9AA4B2>" + string.Join("  В·  ", parts) + "</color>" : "";
-            Msg(player, $"РЎ РІРѕР·РІСЂР°С‰РµРЅРёРµРј! РўРІРѕР№ СЃС‚Р°С‚СѓСЃ: {LevelTag(lvl)}{tail}");
+            var tail = parts.Count > 0 ? "\n<color=#9AA4B2>" + string.Join("  ·  ", parts) + "</color>" : "";
+            Msg(player, $"С возвращением! Твой статус: {LevelTag(lvl)}{tail}");
         }
 
-        // в”Ђв”Ђ Р§Р°С‚-РєРѕРјР°РЅРґР° /vip в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Чат-команда /vip ────────────────────────────────────────────────
 
         private void CmdVip(BasePlayer player, string command, string[] args)
         {
@@ -435,14 +435,14 @@ namespace Oxide.Plugins
 
             if (args.Length == 0)
             {
-                // СЃРІРѕР№ СЃС‚Р°С‚СѓСЃ
-                var line = $"РўРІРѕР№ СЃС‚Р°С‚СѓСЃ: {LevelTag(myLevel)}";
+                // свой статус
+                var line = $"Твой статус: {LevelTag(myLevel)}";
                 if (m_Data.Data.Players.TryGetValue(player.userID, out var e) && !IsExpired(e))
-                    line += $"\nР’С‹РґР°РЅ: {Val(DateTimeOffset.FromUnixTimeSeconds(e.GrantedAt).LocalDateTime.ToString("dd.MM.yyyy"))}" +
-                            $" В· РґРѕ: {Val(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy HH:mm") : "РЅР°РІСЃРµРіРґР°")}" +
-                            (string.IsNullOrEmpty(e.GrantedBy) ? "" : $" В· РѕС‚: {Val(e.GrantedBy)}");
+                    line += $"\nВыдан: {Val(DateTimeOffset.FromUnixTimeSeconds(e.GrantedAt).LocalDateTime.ToString("dd.MM.yyyy"))}" +
+                            $" · до: {Val(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy HH:mm") : "навсегда")}" +
+                            (string.IsNullOrEmpty(e.GrantedBy) ? "" : $" · от: {Val(e.GrantedBy)}");
                 if (canManage || GrantCap(myLevel) > 0)
-                    line += $"\n{Val("/vip give")} <РёРіСЂРѕРє> <СѓСЂРѕРІРµРЅСЊ> [СЃСЂРѕРє] вЂ” РІС‹РґР°С‚СЊ РІСЂРµРјРµРЅРЅС‹Р№ VIP\n{Val("/vip panel")} вЂ” РїР°РЅРµР»СЊ СѓРїСЂР°РІР»РµРЅРёСЏ";
+                    line += $"\n{Val("/vip give")} <игрок> <уровень> [срок] — выдать временный VIP\n{Val("/vip panel")} — панель управления";
                 Msg(player, line);
                 return;
             }
@@ -452,7 +452,7 @@ namespace Oxide.Plugins
                 case "panel":
                 case "admin":
                 case "ui":
-                    if (!canManage) { Msg(player, $"РќРµС‚ РґРѕСЃС‚СѓРїР° ({Val(PermManage)})"); return; }
+                    if (!canManage) { Msg(player, $"Нет доступа ({Val(PermManage)})"); return; }
                     TogglePanel(player);
                     return;
 
@@ -461,43 +461,43 @@ namespace Oxide.Plugins
                     var cap = GrantCap(myLevel);
                     if (!canManage && cap <= 0)
                     {
-                        Msg(player, "Р’С‹РґР°С‡Р° VIP РґРѕСЃС‚СѓРїРЅР° С‚РѕР»СЊРєРѕ СѓСЂРѕРІРЅСЏРј Moderator/Admin РёР»Рё РїРѕ octavip.manage");
+                        Msg(player, "Выдача VIP доступна только уровням Moderator/Admin или по octavip.manage");
                         return;
                     }
                     if (args.Length < 3)
                     {
-                        Msg(player, $"РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: {Val("/vip give")} <РёРіСЂРѕРє> <СѓСЂРѕРІРµРЅСЊ 1-6> [СЃСЂРѕРє: 7d/24h, РїСѓСЃС‚Рѕ = РЅР°РІСЃРµРіРґР°]");
+                        Msg(player, $"Использование: {Val("/vip give")} <игрок> <уровень 1-6> [срок: 7d/24h, пусто = навсегда]");
                         return;
                     }
 
                     var target = FindPlayer(args[1]);
-                    if (target == null) { Msg(player, $"РРіСЂРѕРє {Val(args[1])} РЅРµ РЅР°Р№РґРµРЅ."); return; }
+                    if (target == null) { Msg(player, $"Игрок {Val(args[1])} не найден."); return; }
 
                     if (!int.TryParse(args[2], out var lvl) || lvl < 1 || lvl > 6)
                     {
-                        Msg(player, $"РЈСЂРѕРІРµРЅСЊ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ {Val("1-6")}: 1=Bronze, 2=Silver, 3=Gold, 4=Brilliant, 5=Moderator, 6=Admin");
+                        Msg(player, $"Уровень должен быть {Val("1-6")}: 1=Bronze, 2=Silver, 3=Gold, 4=Brilliant, 5=Moderator, 6=Admin");
                         return;
                     }
 
                     long dur = 0;
                     if (args.Length > 3 && !TryParseDuration(args[3], out dur))
                     {
-                        Msg(player, $"РЎСЂРѕРє РЅРµ СЂР°СЃРїРѕР·РЅР°РЅ: {Val(args[3])} вЂ” РїСЂРёРјРµСЂС‹: 7d, 24h, 90m, perm");
+                        Msg(player, $"Срок не распознан: {Val(args[3])} — примеры: 7d, 24h, 90m, perm");
                         return;
                     }
 
-                    // РѕРіСЂР°РЅРёС‡РµРЅРёСЏ РґР»СЏ РЅРµ-Р°РґРјРёРЅРѕРІ
+                    // ограничения для не-админов
                     if (!canManage)
                     {
                         if (lvl > cap)
                         {
-                            Msg(player, $"РўРІРѕР№ РјР°РєСЃРёРјСѓРј РґР»СЏ РІС‹РґР°С‡Рё вЂ” {LevelTag(cap)}");
+                            Msg(player, $"Твой максимум для выдачи — {LevelTag(cap)}");
                             return;
                         }
                         var maxSec = (long)Configuration.TempGrantMaxDays * 86400;
                         if (dur <= 0 || dur > maxSec)
                         {
-                            Msg(player, $"РўС‹ РјРѕР¶РµС€СЊ РІС‹РґР°РІР°С‚СЊ С‚РѕР»СЊРєРѕ РІСЂРµРјРµРЅРЅС‹Р№ VIP РґРѕ {Val(Configuration.TempGrantMaxDays)} РґРЅРµР№");
+                            Msg(player, $"Ты можешь выдавать только временный VIP до {Val(Configuration.TempGrantMaxDays)} дней");
                             return;
                         }
                     }
@@ -507,12 +507,12 @@ namespace Oxide.Plugins
                 }
 
                 default:
-                    Msg(player, $"{Val("/vip")} вЂ” СЃС‚Р°С‚СѓСЃ В· {Val("/vip give")} вЂ” РІС‹РґР°С‚СЊ В· {Val("/vip panel")} вЂ” СѓРїСЂР°РІР»РµРЅРёРµ");
+                    Msg(player, $"{Val("/vip")} — статус · {Val("/vip give")} — выдать · {Val("/vip panel")} — управление");
                     return;
             }
         }
 
-        /// <summary>РњР°РєСЃ. СѓСЂРѕРІРµРЅСЊ, РєРѕС‚РѕСЂС‹Р№ РјРѕР¶РµС‚ РІС‹РґР°РІР°С‚СЊ РѕР±Р»Р°РґР°С‚РµР»СЊ СѓСЂРѕРІРЅСЏ lvl.</summary>
+        /// <summary>Макс. уровень, который может выдавать обладатель уровня lvl.</summary>
         private int GrantCap(int lvl) => lvl switch
         {
             5 => Configuration.ModeratorGrantMaxLevel,
@@ -523,12 +523,12 @@ namespace Oxide.Plugins
         private void Grant(BasePlayer granter, ulong targetId, int level, long dur, string targetName)
         {
             var old = SetLevel(targetId, level, dur, granter?.displayName.ToString() ?? "console");
-            var durText = dur > 0 ? $" РЅР° {Val(FormatDuration(NowUnix + dur))}" : "";
+            var durText = dur > 0 ? $" на {Val(FormatDuration(NowUnix + dur))}" : "";
 
             if (Configuration.BroadcastGrant && granter != null)
-                Broadcast($"{LevelTag(level)} РїРѕР»СѓС‡Р°РµС‚ {targetName}{durText} вЂ” РІС‹РґР°Р» {granter.displayName}");
+                Broadcast($"{LevelTag(level)} получает {targetName}{durText} — выдал {granter.displayName}");
 
-            Msg(granter, $"{targetName}: {LevelTag(old)} в†’ {LevelTag(level)}{durText}");
+            Msg(granter, $"{targetName}: {LevelTag(old)} → {LevelTag(level)}{durText}");
         }
 
         private static BasePlayer FindPlayer(string nameOrId)
@@ -544,7 +544,7 @@ namespace Oxide.Plugins
                                   || p.displayName.ToString().IndexOf(nameOrId, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
-        // в”Ђв”Ђ РљРѕРЅСЃРѕР»СЊРЅС‹Рµ РєРѕРјР°РЅРґС‹ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Консольные команды ──────────────────────────────────────────────
 
         [ConsoleCommand("octavip.set")]
         private void CmdSet(ConsoleSystem.Arg arg)
@@ -552,7 +552,7 @@ namespace Oxide.Plugins
             if (arg.Connection != null && arg.Connection.authLevel < 1) return;
             if (arg.Args == null || arg.Args.Length < 2)
             {
-                Puts("octavip.set <steamid|РёРјСЏ> <СѓСЂРѕРІРµРЅСЊ 0-6> [СЃСЂРѕРє: 30d/24h/perm]");
+                Puts("octavip.set <steamid|имя> <уровень 0-6> [срок: 30d/24h/perm]");
                 return;
             }
             var targetName = arg.Args[0].ToString();
@@ -561,27 +561,27 @@ namespace Oxide.Plugins
             string name;
             if (target != null) { id = target.userID; name = target.displayName.ToString(); }
             else if (ulong.TryParse(targetName, out id)) name = targetName;
-            else { Puts($"РРіСЂРѕРє '{targetName}' РЅРµ РЅР°Р№РґРµРЅ (РґР»СЏ РѕС„Р»Р°Р№РЅ СѓРєР°Р¶Рё steamid)"); return; }
+            else { Puts($"Игрок '{targetName}' не найден (для офлайн укажи steamid)"); return; }
 
-            if (!int.TryParse(arg.Args[1].ToString(), out var lvl) || lvl < 0 || lvl > 6) { Puts("РЈСЂРѕРІРµРЅСЊ 0-6"); return; }
+            if (!int.TryParse(arg.Args[1].ToString(), out var lvl) || lvl < 0 || lvl > 6) { Puts("Уровень 0-6"); return; }
 
             long dur = 0;
-            if (arg.Args.Length > 2 && !TryParseDuration(arg.Args[2].ToString(), out dur)) { Puts("РЎСЂРѕРє РЅРµ СЂР°СЃРїРѕР·РЅР°РЅ"); return; }
+            if (arg.Args.Length > 2 && !TryParseDuration(arg.Args[2].ToString(), out dur)) { Puts("Срок не распознан"); return; }
 
             var old = SetLevel(id, lvl, dur, "console");
-            Puts($"{name} ({id}): {Levels[old].Name} -> {Levels[ResolveLevel(id)].Name}" + (dur > 0 ? $" РЅР° {FormatDuration(NowUnix + dur)}" : ""));
+            Puts($"{name} ({id}): {Levels[old].Name} -> {Levels[ResolveLevel(id)].Name}" + (dur > 0 ? $" на {FormatDuration(NowUnix + dur)}" : ""));
         }
 
         [ConsoleCommand("octavip.remove")]
         private void CmdRemove(ConsoleSystem.Arg arg)
         {
             if (arg.Connection != null && arg.Connection.authLevel < 1) return;
-            if (arg.Args == null || arg.Args.Length < 1) { Puts("octavip.remove <steamid|РёРјСЏ>"); return; }
+            if (arg.Args == null || arg.Args.Length < 1) { Puts("octavip.remove <steamid|имя>"); return; }
             var target = FindPlayer(arg.Args[0].ToString());
             ulong id = target?.userID ?? (ulong.TryParse(arg.Args[0].ToString(), out var x) ? x : 0);
-            if (id == 0) { Puts("РРіСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ"); return; }
+            if (id == 0) { Puts("Игрок не найден"); return; }
             var old = SetLevel(id, 0, 0, "console");
-            Puts($"РЎРЅСЏС‚ VIP Сѓ {id} (Р±С‹Р» {Levels[old].Name})");
+            Puts($"Снят VIP у {id} (был {Levels[old].Name})");
         }
 
         [ConsoleCommand("octavip.list")]
@@ -593,12 +593,12 @@ namespace Oxide.Plugins
                 var e = kv.Value;
                 var p = BasePlayer.FindByID(kv.Key) ?? BasePlayer.FindSleeping(kv.Key);
                 Puts($"{kv.Key} {(p?.displayName.ToString() ?? "?")}: {Levels[ResolveLevel(kv.Key)].Name}" +
-                     $" [Р·Р°РїРёСЃСЊ: {e.Level}, РІС‹РґР°Р» {e.GrantedBy}, РґРѕ {(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM HH:mm") : "perm")}]" +
-                     (IsExpired(e) ? " РРЎРўРЃРљ" : ""));
+                     $" [запись: {e.Level}, выдал {e.GrantedBy}, до {(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM HH:mm") : "perm")}]" +
+                     (IsExpired(e) ? " ИСТЁК" : ""));
             }
         }
 
-        // в”Ђв”Ђ API РґР»СЏ РґСЂСѓРіРёС… РїР»Р°РіРёРЅРѕРІ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── API для других плагинов ─────────────────────────────────────────
 
         [HookMethod("GetVipLevel")]     public int API_GetLevel(ulong userId) => ResolveLevel(userId);
         [HookMethod("GetVipLevelName")] public string API_GetLevelName(ulong userId) => Levels[ResolveLevel(userId)].Name;
@@ -616,7 +616,7 @@ namespace Oxide.Plugins
             return true;
         }
 
-        // в”Ђв”Ђ Chaos-РїР°РЅРµР»СЊ СѓРїСЂР°РІР»РµРЅРёСЏ в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Chaos-панель управления ─────────────────────────────────────────
 
         private class PanelState
         {
@@ -640,7 +640,7 @@ namespace Oxide.Plugins
             if (player != null) _panel.Remove(player.userID);
         }
 
-        // РєР°РЅРґРёРґР°С‚С‹: РѕРЅР»Р°Р№РЅ + СЃРїСЏС‰РёРµ + РІСЃРµ СЃ VIP-Р·Р°РїРёСЃСЊСЋ
+        // кандидаты: онлайн + спящие + все с VIP-записью
         private List<BasePlayer> PanelPlayers(PanelState st)
         {
             var list = BasePlayer.activePlayerList
@@ -650,12 +650,12 @@ namespace Oxide.Plugins
                          || p.UserIDString.Contains(st.Search))
                 .ToList();
 
-            // РѕС„Р»Р°Р№РЅ-РёРіСЂРѕРєРё СЃ VIP-Р·Р°РїРёСЃСЏРјРё вЂ” РїРѕРєР°Р·С‹РІР°РµРј РїСЃРµРІРґРѕ-СЃС‚СЂРѕРєР°РјРё С‡РµСЂРµР· id
+            // офлайн-игроки с VIP-записями — показываем псевдо-строками через id
             var extra = m_Data.Data.Players.Keys
                 .Where(id => list.All(p => p.userID != id)
                           && (string.IsNullOrEmpty(st.Search) || id.ToString().Contains(st.Search)))
                 .ToList();
-            // РІРµСЂРЅС‘Рј СЃРїРёСЃРѕРє (online) + РѕС„Р»Р°Р№РЅ-Р·Р°РїРёСЃРё РѕС‚РґРµР»СЊРЅРѕ РѕР±СЂР°Р±РѕС‚Р°РµРј РїСЂРё СЂРµРЅРґРµСЂРµ
+            // вернём список (online) + офлайн-записи отдельно обработаем при рендере
             _offlineIds = extra;
             return list.OrderByDescending(p => ResolveLevel(p.userID)).ThenBy(p => p.displayName.ToString()).ToList();
         }
@@ -674,11 +674,11 @@ namespace Oxide.Plugins
 
             root.WithChildren(body =>
             {
-                ChaosPrefab.Title(body, UIAnchor.TopStretch, new Offset(8, -34, -44, -8), "в—† OCTAVIAN VIP", m_TitleStyle);
+                ChaosPrefab.Title(body, UIAnchor.TopStretch, new Offset(8, -34, -44, -8), "◆ OCTAVIAN VIP", m_TitleStyle);
                 ChaosPrefab.CloseButton(body, UIAnchor.TopRight, new Offset(-36, -34, -8, -6), ChaosStyle.BlackOutline)
                     .WithCallback(m_Callbacks, arg => TogglePanel(player), $"{player.userID}.close");
 
-                // РїРѕРёСЃРє
+                // поиск
                 ChaosPrefab.Input(body, UIAnchor.TopStretch, new Offset(8, -68, -8, -44), st.Search)
                     .WithCallback(m_Callbacks, arg =>
                     {
@@ -687,7 +687,7 @@ namespace Oxide.Plugins
                         BuildPanel(player);
                     }, $"{player.userID}.search");
 
-                // в”Ђв”Ђ СЃРїРёСЃРѕРє РёРіСЂРѕРєРѕРІ (Р»РµРІР°СЏ РєРѕР»РѕРЅРєР°) в”Ђв”Ђ
+                // ── список игроков (левая колонка) ──
                 var players = PanelPlayers(st);
                 var totalRows = players.Count + _offlineIds.Count;
                 var maxPage = Math.Max(0, (totalRows - 1) / Rows);
@@ -709,7 +709,7 @@ namespace Oxide.Plugins
                         id = _offlineIds[rowIdx - players.Count];
                         lvl = ResolveLevel(id);
                         var e = m_Data.Data.Players[id];
-                        line = $"{id} <color=#8A8F98>(РѕС„С„Р»Р°Р№РЅ)</color>";
+                        line = $"{id} <color=#8A8F98>(оффлайн)</color>";
                         _ = e;
                     }
                     if (rowIdx++ < skip) continue;
@@ -727,41 +727,41 @@ namespace Oxide.Plugins
                 }
 
                 if (totalRows == 0)
-                    TextContainer.Create(body, "<color=#8A8F98>вЂ” РЅРёРєРѕРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ вЂ”</color>", m_LabelStyle,
+                    TextContainer.Create(body, "<color=#8A8F98>— никого не найдено —</color>", m_LabelStyle,
                         UIAnchor.TopStretch, new Offset(16, -110, -16, -84));
 
-                // РїРµР№РґР¶РёРЅРі
+                // пейджинг
                 if (maxPage > 0)
                 {
-                    ChaosPrefab.TextButton(body, UIAnchor.BottomLeft, new Offset(8, 8, 60, 30), "в—Ђ", m_LabelStyle, ChaosStyle.BlackOutline)
+                    ChaosPrefab.TextButton(body, UIAnchor.BottomLeft, new Offset(8, 8, 60, 30), "◀", m_LabelStyle, ChaosStyle.BlackOutline)
                         .WithCallback(m_Callbacks, arg => { st.Page--; BuildPanel(player); }, $"{player.userID}.prev");
                     TextContainer.Create(body, $"{st.Page + 1}/{maxPage + 1}", m_ValueStyle,
                         UIAnchor.BottomLeft, new Offset(60, 10, 120, 30));
-                    ChaosPrefab.TextButton(body, UIAnchor.BottomLeft, new Offset(124, 8, 176, 30), "в–¶", m_LabelStyle, ChaosStyle.BlackOutline)
+                    ChaosPrefab.TextButton(body, UIAnchor.BottomLeft, new Offset(124, 8, 176, 30), "▶", m_LabelStyle, ChaosStyle.BlackOutline)
                         .WithCallback(m_Callbacks, arg => { st.Page++; BuildPanel(player); }, $"{player.userID}.next");
                 }
 
-                // в”Ђв”Ђ РїСЂР°РІР°СЏ РєРѕР»РѕРЅРєР°: СѓРїСЂР°РІР»РµРЅРёРµ РІС‹Р±СЂР°РЅРЅС‹Рј в”Ђв”Ђ
-                var rx = 288; // Р»РµРІС‹Р№ РєСЂР°Р№ РїСЂР°РІРѕР№ РєРѕР»РѕРЅРєРё
+                // ── правая колонка: управление выбранным ──
+                var rx = 288; // левый край правой колонки
                 if (st.Selected != 0)
                 {
                     var selP = BasePlayer.FindByID(st.Selected) ?? BasePlayer.FindSleeping(st.Selected);
                     var selName = selP?.displayName.ToString() ?? st.Selected.ToString();
                     var selLvl = ResolveLevel(st.Selected);
 
-                    TextContainer.Create(body, $"РРіСЂРѕРє: {selName}", m_LabelStyle,
+                    TextContainer.Create(body, $"Игрок: {selName}", m_LabelStyle,
                         UIAnchor.TopLeft, new Offset(rx, -88, 536, -64));
-                    TextContainer.Create(body, $"РЎС‚Р°С‚СѓСЃ: {LevelTag(selLvl)}", m_LabelStyle,
+                    TextContainer.Create(body, $"Статус: {LevelTag(selLvl)}", m_LabelStyle,
                         UIAnchor.TopLeft, new Offset(rx, -112, 536, -88));
 
                     if (m_Data.Data.Players.TryGetValue(st.Selected, out var e) && !IsExpired(e))
                         TextContainer.Create(body,
-                            $"Р’С‹РґР°РЅ: {DateTimeOffset.FromUnixTimeSeconds(e.GrantedAt).LocalDateTime:dd.MM.yyyy} В· " +
-                            $"РґРѕ: {(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy") : "perm")} В· " +
-                            $"РѕС‚: {e.GrantedBy}",
+                            $"Выдан: {DateTimeOffset.FromUnixTimeSeconds(e.GrantedAt).LocalDateTime:dd.MM.yyyy} · " +
+                            $"до: {(e.ExpiresAt > 0 ? DateTimeOffset.FromUnixTimeSeconds(e.ExpiresAt).LocalDateTime.ToString("dd.MM.yyyy") : "perm")} · " +
+                            $"от: {e.GrantedBy}",
                             m_SmallStyle, UIAnchor.TopLeft, new Offset(rx, -132, 536, -112));
 
-                    // РєРЅРѕРїРєРё СѓСЂРѕРІРЅРµР№ вЂ” СЃРµС‚РєР° 2 СЂСЏРґР°
+                    // кнопки уровней — сетка 2 ряда
                     for (var i = 0; i <= 6; i++)
                     {
                         var lvl = i;
@@ -769,7 +769,7 @@ namespace Oxide.Plugins
                         var rowI = i / 4;
                         var bx = rx + col * 62;
                         var by = 150 + rowI * 34;
-                        var label = lvl == 0 ? "РЎРЅСЏС‚СЊ" : Levels[lvl].Name.Replace("VIP ", "");
+                        var label = lvl == 0 ? "Снять" : Levels[lvl].Name.Replace("VIP ", "");
                         var isCurrent = selLvl == lvl;
                         var style = new Style(ChaosStyle.Button)
                         {
@@ -780,7 +780,7 @@ namespace Oxide.Plugins
                         if (isCurrent)
                         {
                             style.Font = Font.RobotoCondensedBold;
-                            label = $"вњ“ {label}";
+                            label = $"✓ {label}";
                         }
                         var outline = isCurrent ? ChaosStyle.GreenOutline : ChaosStyle.BlackOutline;
                         ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(bx, -(by + 28), bx + 58, -by),
@@ -790,13 +790,13 @@ namespace Oxide.Plugins
                                 var old = SetLevel(st.Selected, lvl, 0, player.displayName.ToString());
                                 var p2 = BasePlayer.FindByID(st.Selected) ?? BasePlayer.FindSleeping(st.Selected);
                                 if (Configuration.BroadcastGrant && lvl > old)
-                                    Broadcast($"{LevelTag(lvl)} РїРѕР»СѓС‡Р°РµС‚ {(p2?.displayName.ToString() ?? st.Selected.ToString())} вЂ” РІС‹РґР°Р» {player.displayName}");
+                                    Broadcast($"{LevelTag(lvl)} получает {(p2?.displayName.ToString() ?? st.Selected.ToString())} — выдал {player.displayName}");
                                 BuildPanel(player);
                             }, $"{player.userID}.lvl.{i}");
                     }
 
-                    // СЃСЂРѕРє + РєРЅРѕРїРєРё
-                    TextContainer.Create(body, "РЎСЂРѕРє:", m_LabelStyle, UIAnchor.TopLeft, new Offset(rx, -242, rx + 44, -220));
+                    // срок + кнопки
+                    TextContainer.Create(body, "Срок:", m_LabelStyle, UIAnchor.TopLeft, new Offset(rx, -242, rx + 44, -220));
                     ChaosPrefab.Input(body, UIAnchor.TopLeft, new Offset(rx + 44, -240, rx + 120, -218), st.Duration)
                         .WithCallback(m_Callbacks, arg =>
                         {
@@ -817,25 +817,25 @@ namespace Oxide.Plugins
                         di++;
                     }
 
-                    // РїСЂРёРјРµРЅРёС‚СЊ СЃСЂРѕРє
+                    // применить срок
                     ChaosPrefab.TextButton(body, UIAnchor.TopLeft, new Offset(rx, -284, rx + 200, -252),
-                            "Р’Р«Р”РђРўР¬ РЎР РћРљ + РЈР РћР’Р•РќР¬", m_MasterOnStyle, ChaosStyle.BlackOutline)
+                            "ВЫДАТЬ СРОК + УРОВЕНЬ", m_MasterOnStyle, ChaosStyle.BlackOutline)
                         .WithCallback(m_Callbacks, arg =>
                         {
                             if (!TryParseDuration(st.Duration, out var dur))
                             {
-                                Msg(player, $"РЎСЂРѕРє {Val(st.Duration)} РЅРµ СЂР°СЃРїРѕР·РЅР°РЅ (7d, 24h, perm)");
+                                Msg(player, $"Срок {Val(st.Duration)} не распознан (7d, 24h, perm)");
                                 return;
                             }
                             var lvl2 = ResolveLevel(st.Selected);
-                            if (lvl2 <= 0) { Msg(player, "РЎРЅР°С‡Р°Р»Р° РІС‹Р±РµСЂРё СѓСЂРѕРІРµРЅСЊ РєРЅРѕРїРєР°РјРё РІС‹С€Рµ"); return; }
+                            if (lvl2 <= 0) { Msg(player, "Сначала выбери уровень кнопками выше"); return; }
                             SetLevel(st.Selected, lvl2, dur, player.displayName.ToString());
                             BuildPanel(player);
                         }, $"{player.userID}.apply");
                 }
                 else
                 {
-                    TextContainer.Create(body, "<color=#8A8F98>Р’С‹Р±РµСЂРё РёРіСЂРѕРєР° СЃР»РµРІР°</color>", m_LabelStyle,
+                    TextContainer.Create(body, "<color=#8A8F98>Выбери игрока слева</color>", m_LabelStyle,
                         UIAnchor.TopLeft, new Offset(rx, -140, 540, -100));
                 }
             })
@@ -852,7 +852,7 @@ namespace Oxide.Plugins
             return new UIColor(1, 1, 1, 1);
         }
 
-        // в”Ђв”Ђ РЎС‚РёР»Рё в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        // ── Стили ───────────────────────────────────────────────────────────
 
         private static readonly Style m_PanelStyle = new Style(ChaosStyle.Panel)
         {
