@@ -137,6 +137,17 @@ Definition — value type, `?.` не работает → проверять ч�
   → `GetImage` → `RawImageContainer.WithPNG`. Реализовано в OctVIP 1.3.0,
   генератор бейджей — `gen-vip-badges.ps1`.
 
+- **«8-бит PNG не работает» = палитровые (colortype 3), а не 8 бит/канал.**
+  Twemoji и многие стоковые эмодзи сохранены как indexed PNG → сервер
+  отвечает `X.png is an invalid png` при ресcане. Лечение: загрузить в
+  Bitmap и пересохранить как Format32bppArgb PNG (colortype 6).
+  `server.resetserveremoji` возвращает пустой ответ при успехе или имя
+  первого битого файла при ошибке.
+
+- **RCON тестового сервера — WebSocket**, не классический Source RCON:
+  `ws://127.0.0.1:28116/<password>`, сообщения JSON
+  `{Identifier, Message, Type:3}` — Type 3 = команда.
+
 ---
 
 ## 7. Кодировки — НЕ редактировать файлы через PowerShell-строки
