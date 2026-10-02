@@ -160,7 +160,73 @@ OctVIP.cs, исправлено обратным перекодирование�
 
 ---
 
-## 8. Общие правила плагинов Octavian
+## 8. Мультиязычные плагины (на примере OctaGrade)
+
+Стандартный механизм Oxide/Carbon — `lang.RegisterMessages` +
+`lang.GetMessage`. Язык сообщения выбирается **по языку клиента игрока**
+автоматически — ничего вручную переключать не надо.
+
+**Языки проекта:** `en` (дефолт, фолбэк для всех), `ru`, `pl`, `uk`, `he`
+(иврит). Коды ISO 639-1. ВАЖНО: иврит — RTL, перед релизом проверить
+вживую, как его рисует чат/панель Rust (возможны приколы с порядком слов
+и <color>-тегами).
+
+**Каркас:**
+
+```csharp
+protected override void LoadDefaultMessages()
+{
+    // английский — ДЕФОЛТНЫЙ: RegisterMessages без кода языка
+    lang.RegisterMessages(new Dictionary<string, string>
+    {
+        ["NotAllowed"]   = "<color=#E06666>You do not have permission.</color>",
+        ["OnCooldown"]   = "You must wait <color=#FFD35C>{0}</color> seconds.",
+        // ...
+    }, this);                        // en
+
+    lang.RegisterMessages(new Dictionary<string, string>
+    {
+        ["NotAllowed"]   = "<color=#E06666>Нет прав на эту команду.</color>",
+        ["OnCooldown"]   = "Подожди <color=#FFD35C>{0}</color> сек.",
+        // ...
+    }, this, "ru");
+
+    // дальше по аналогии: "pl", "uk", "he"
+}
+```
+
+**Использование:**
+
+```csharp
+// хелпер с защитой от кривых плейсхолдеров
+private string Lang(string key, string id = null, params object[] args)
+{
+    try { return string.Format(lang.GetMessage(key, this, id), args); }
+    catch (Exception ex) { PrintError($"Lang '{key}' (uid {id}): {ex}"); throw; }
+}
+
+// отправка игроку — id игрока определяет язык
+Player.Message(player, Lang("OnCooldown", player.UserIDString, secs),
+               "<color=#E8B84B>◆ OctaGrade</color>", 0UL);
+```
+
+**Нюансы:**
+
+- Если у игрока язык клиента, которого нет в плагине (напр. `de`) —
+  получит английский. Поэтому английский словарь обязан быть полным.
+- Если в словаре языка нет ключа — фолбэк тоже на английский (не на ru!).
+- Плейсхолдеры `{0} {1}` — позиционные, порядок в string.Format тот же
+  для всех языков; в RTL-иврите это может потребовать перестановки слов
+  в строке, НО не плейсхолдеров.
+- Carbon пишет локали в `carbon/lang/<код>/<Плагин>.json` — можно править
+  текст без перекомпиляции (на сервере уже лежат en/es-ES/ru/uk-папки).
+- `lang.GetLanguage(player.UserIDString)` вернёт код языка игрока —
+  пригодится для выбора переводов имён предметов (RustTranslationAPI).
+- Префикс `◆ OctaGrade` НЕ переводится — он фирменный для всех языков.
+
+---
+
+## 9. Общие правила плагинов Octavian
 
 - Префикс чата — золотой: `<color=#E8B84B>◆ OctXXX</color>`, значения
   `#FFD35C`, шортнеймы серые.
