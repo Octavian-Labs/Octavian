@@ -26,7 +26,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    [Info("OctVIP", "Octavian", "1.3.1")]
+    [Info("OctVIP", "Octavian", "1.3.2")]
     [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
@@ -872,13 +872,19 @@ namespace Oxide.Plugins
                     // превью: для эмодзи показываем картинку, для глифа — символ
                     if (!string.IsNullOrEmpty(cur))
                     {
-                        TextContainer.Create(body,
-                            $"Как выглядит:  {(IsEmoji(cur) ? "   " : $"<color={Levels[myLvl].Color}>{cur}</color> ")}<color={Levels[myLvl].Color}>{player.displayName}</color>" +
-                            "<color=#8A8F98>:</color> привет, мир!",
-                            m_SmallStyle, UIAnchor.TopLeft, new Offset(16, -246, 540, -222));
-                        if (IsEmoji(cur) && _imgKeys.TryGetValue(cur.Substring(1, cur.Length - 2), out var prevKey))
-                            RawImageContainer.Create(body, UIAnchor.TopLeft, new Offset(96, -244, 118, -222))
+                        TextContainer.Create(body, "Как выглядит:", m_SmallStyle,
+                            UIAnchor.TopLeft, new Offset(16, -246, 96, -222));
+
+                        string prevKey = null;
+                        var emojiPrev = IsEmoji(cur) &&
+                                        _imgKeys.TryGetValue(cur.Substring(1, cur.Length - 2), out prevKey);
+                        if (emojiPrev)
+                            RawImageContainer.Create(body, UIAnchor.TopLeft, new Offset(96, -244, 116, -224))
                                 .WithPNG(prevKey);
+
+                        TextContainer.Create(body,
+                            $"{(emojiPrev ? "" : $"<color={Levels[myLvl].Color}>{cur}</color> ")}<color={Levels[myLvl].Color}>{player.displayName}</color><color=#8A8F98>:</color> привет, мир!",
+                            m_SmallStyle, UIAnchor.TopLeft, new Offset(emojiPrev ? 120 : 96, -246, 540, -222));
                     }
                 }
                 else
