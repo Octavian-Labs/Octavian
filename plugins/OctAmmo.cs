@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctAmmo", "Octavian", "1.0.0")]
+    [Info("OctAmmo", "Octavian", "1.1.0")]
     [Description("Гибкая ёмкость магазинов по уровням (Default/Senior/Middle/High) через permissions. Без UI. Хранит базовые значения из игры.")]
     public class OctAmmo : CovalencePlugin
     {
@@ -58,6 +58,17 @@ namespace Oxide.Plugins
             };
 
             public Dictionary<string, WeaponEntry> Weapons = new Dictionary<string, WeaponEntry>(StringComparer.OrdinalIgnoreCase);
+
+            // уровень OctVIP → имя тира из Groups (1=Bronze .. 6=Admin); срабатывает, если octammo.*-пермишен не выбран
+            public Dictionary<int, string> VipLevelTiers = new Dictionary<int, string>
+            {
+                [1] = "Senior",
+                [2] = "Senior",
+                [3] = "Middle",
+                [4] = "Middle",
+                [5] = "High",
+                [6] = "High",
+            };
 
             public int MinCapacity = 0;
             public int MaxCapacity = 512;
@@ -474,7 +485,33 @@ namespace Oxide.Plugins
                 }
             }
 
+            // VIP-тир из OctVIP, если ни один octammo.*-пермишен не сработал
+            var vipTier = GetVipTier((ulong)player.userID);
+            if (vipTier != null && we.Levels != null && we.Levels.TryGetValue(vipTier, out var vipCap))
+                return Mathf.Clamp(vipCap, _config.MinCapacity, _config.MaxCapacity);
+
             return Mathf.Clamp(we.Default, _config.MinCapacity, _config.MaxCapacity);
+        }
+
+        // PluginReference залипает на выгруженной инстанции — ищем живой плагин по имени
+        private Oxide.Core.Plugins.Plugin FindOctaPlugin(string name)
+        {
+            foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
+            {
+                if (p.Name == name && p.IsLoaded)
+                    return p;
+            }
+            return null;
+        }
+
+        // имя тира по VIP-уровню из конфига "VipLevelTiers"
+        private string GetVipTier(ulong userId)
+        {
+            var vip = FindOctaPlugin("OctVIP");
+            if (vip == null || _config == null || _config.VipLevelTiers == null)
+                return null;
+            var lvl = vip.Call<int>("GetVipLevel", userId);
+            return lvl > 0 && _config.VipLevelTiers.TryGetValue(lvl, out var tier) ? tier : null;
         }
 
         private void ApplyForItem(BasePlayer player, Item item)
@@ -547,6 +584,15 @@ namespace Oxide.Plugins
                 {
                 }
             }
+        }
+
+        // OctVIP сменил уровень — сразу переопределить магазин в руках (не ждать таймер)
+        private void OnVipLevelChanged(BasePlayer player, int oldLevel, int newLevel)
+        {
+            if (player == null)
+                return;
+            try { ApplyForActiveItem(player); }
+            catch { }
         }
 
         private void ApplyForActiveItem(BasePlayer player)
