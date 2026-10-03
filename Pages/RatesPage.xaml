@@ -69,7 +69,11 @@
                                 <TextBlock Text="craft.timescale — 2 = вдвое быстрее" Style="{StaticResource OctaCmdSub}"/>
                                 <Slider x:Name="SldCraft" Minimum="0.5" Maximum="10" Value="1" TickFrequency="0.5" IsSnapToTickEnabled="True" Margin="0,10,0,4" ValueChanged="Rate_Changed" Tag="T_Craft"/>
 
-                                <TextBlock Text="Быстрые пресеты (применяют ко всем множителям)" Style="{StaticResource OctaFieldLabel}" Margin="0,14,0,4"/>
+                                <DockPanel LastChildFill="False" Margin="0,14,0,0">
+                                    <TextBlock Text="GatherManager" Style="{StaticResource OctaCmdSub}"/>
+                                    <TextBlock x:Name="TxtGM" Text="—" DockPanel.Dock="Right" Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"/>
+                                </DockPanel>
+                                <TextBlock Text="Быстрые пресеты (применяют ко всем множителям)" Style="{StaticResource OctaFieldLabel}" Margin="0,8,0,4"/>
                                 <StackPanel Orientation="Horizontal">
                                     <ui:Button Content="×1" Padding="14,4" Margin="0,0,6,0" Tag="1" Click="Preset_Click"/>
                                     <ui:Button Content="×2" Padding="14,4" Margin="0,0,6,0" Tag="2" Click="Preset_Click"/>

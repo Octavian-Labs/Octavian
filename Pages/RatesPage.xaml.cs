@@ -34,6 +34,11 @@ public partial class RatesPage : Page
         DetectLootPlugins();
         RefreshPresets();
         LoadStackPanel();
+
+        // множители сбора живут в GatherManager.json, но без самого плагина не работают
+        var gm = File.Exists(Path.Combine(App.Settings.PluginsDir, "GatherManager.cs"));
+        TxtGM.Text = gm ? "✓ установлен" : "не найден — рейты не применятся";
+        TxtGM.Foreground = (System.Windows.Media.Brush)FindResource(gm ? "B.Success" : "B.Warn");
     }
 
     // ── Рейты ────────────────────────────────────────────────
