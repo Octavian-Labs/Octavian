@@ -409,3 +409,25 @@ JSON `{Identifier, Message, Type:3}`; читать ответ — `carbon/logs/C
   топлива без фикса раздаёт тысячи на каждый купленный коптер.
 - Команды covalence (`AddCovalenceCommand`) сами проверяют пермишен —
   `[ConsoleCommand]` без `arg.IsAdmin` при этом остаётся дырой (§15).
+
+## 18. Nullable-аннотации под ref/out ломают кодеген Carbon
+
+- **Баг компилятора Carbon**: `ref string?` / `ref T?` / `out string?` —
+  `?` под byref-параметром ломает сгенерированный `InternalCallHook`.
+  Симптомы — фантомные ошибки в «Internal» файлах:
+  `Argument N must be passed with the 'ref' keyword [CS1620]` +
+  `Use of unassigned local variable 'argN-1_0' [CS0165]`.
+  Номера строк указывают не в исходник, а в сгенерированный прокси.
+- **Диагноз**: Carbon проксирует КАЖДЫЙ метод класса-плагина
+  (и nested-классов) в InternalCallHook — `ref`/`out` сами по себе ок,
+  но `?` на типе параметра генератор переварить не может.
+- **Лечение**: убрать `?` с ref/out-параметров (`ref T? x` → `ref T x`).
+  Без `#nullable enable` аннотации всё равно мёртвая декорация.
+  Альтернатива — вынести метод с ref-парами в отдельный top-level
+  класс: генератор проксирует только члены класса-плагина.
+- Воспроизведено на BetterLoot 4.5.2 (TGWA): патч из 5 строк
+  `?`→удаление в CheckNull/ResolveImportedProfile/GetRandomProfile/
+  CreateBonusItems/TryFillFromLootProfile — и плагин компилится.
+- **Как дебажить «Internal» ошибки**: сводный пробник-репродьюсер
+  с такой же сигнатурой в отдельном .cs — Carbon авто-подхватит и
+  покажет те же Internal-ошибки, если гипотеза верна.
