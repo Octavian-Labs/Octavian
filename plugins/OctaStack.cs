@@ -26,7 +26,7 @@ namespace Oxide.Plugins
 
         private readonly List<string> _ignoreList = new List<string>
         {
-            "water", "water.salt", "cardtable", "hat.bunnyhat", "rustige_egg_e"
+            "water", "water.salt", "water.radioactive", "cardtable", "hat.bunnyhat", "rustige_egg_e"
         };
 
         private void Init()
@@ -102,7 +102,8 @@ namespace Oxide.Plugins
         internal static Dictionary<string, Dictionary<string, int>> DefaultPresets()
         {
             var res = new[] { "wood", "stones", "metal.fragments", "sulfur", "charcoal",
-                "scrap", "cloth", "leather", "bone.fragments", "fat.animal", "fertilizer" };
+                "scrap", "cloth", "leather", "bone.fragments", "fat.animal", "fertilizer",
+                "metal.ore", "sulfur.ore" };
             var comps = new[] { "gears", "metalpipe", "metalspring", "sewingkit", "propanetank",
                 "rope", "glue", "techparts", "sheetmetal", "metalblade", "roadsigns", "tarp",
                 "riflebody", "semibody", "smgbody", "fuse" };
@@ -122,7 +123,7 @@ namespace Oxide.Plugins
                 var d = new Dictionary<string, int>();
                 foreach (var s in res) d[s] = resCap;
                 d["gunpowder"] = gunpowder; d["explosives"] = explosives;
-                d["metal.refined"] = hqm;
+                d["metal.refined"] = hqm; d["hq.metal.ore"] = hqm;
                 d["crude.oil"] = fuel; d["lowgradefuel"] = fuel;
                 foreach (var s in comps) d[s] = comp;
                 d["diesel_barrel"] = diesel;
@@ -149,6 +150,9 @@ namespace Oxide.Plugins
                 d["scraptea"] = seed / 5;
                 d["scraptea.pure"] = seed / 10; d["scraptea.pure.milky"] = seed / 10;
                 d["scraptea.pure.creamy"] = seed / 10; d["scraptea.advanced"] = seed / 10;
+                d["oretea"] = seed / 5;
+                d["oretea.pure"] = seed / 10; d["oretea.pure.milky"] = seed / 10;
+                d["oretea.pure.creamy"] = seed / 10; d["oretea.advanced"] = seed / 10;
                 return d;
             }
 
@@ -193,6 +197,15 @@ namespace Oxide.Plugins
             _config.IndividualItemStackMultipliers ??= def.IndividualItemStackMultipliers;
             _config.IndividualItemStackSize ??= def.IndividualItemStackSize;
             _config.StackPresets ??= def.StackPresets;
+
+            // новые позиции пресетов из обновлений плагина — не затираем правки юзера
+            foreach (var (pk, items) in DefaultPresets())
+            {
+                if (!_config.StackPresets.TryGetValue(pk, out var cur))
+                    _config.StackPresets[pk] = items;
+                else
+                    foreach (var (k, v) in items) cur.TryAdd(k, v);
+            }
 
             // новые категории из обновлений игры
             foreach (var cat in Enum.GetNames(typeof(ItemCategory)))
@@ -285,10 +298,13 @@ namespace Oxide.Plugins
         {
             try
             {
-                if (_ignoreList.Contains(def.shortname))
-                    return VanillaSize(def);
+                var vanilla = VanillaSize(def);
+                // int.MaxValue = «бесконечный» стак (water.*) — float-умножение
+                // переполняется и даёт 0; такие предметы не трогаем вовсе
+                if (_ignoreList.Contains(def.shortname) || vanilla >= int.MaxValue)
+                    return vanilla;
 
-                int stackable = VanillaSize(def);
+                int stackable = vanilla;
 
                 // абсолютный размер по shortname
                 if (_config.IndividualItemStackSize.TryGetValue(def.shortname, out var custom))

@@ -13,9 +13,9 @@
 
 | Группа | vanilla | balanced | boosted | arcade |
 |---|---|---|---|---|
-| Ресурсы (wood, stones, metal.fragments, sulfur, charcoal, scrap, cloth, leather, bone.fragments, fat.animal, fertilizer) | 1 000 | 10 000 | 50 000 | 100 000 |
+| Ресурсы (wood, stones, metal.ore, sulfur.ore, metal.fragments, sulfur, charcoal, scrap, cloth, leather, bone.fragments, fat.animal, fertilizer) | 1 000 | 10 000 | 50 000 | 100 000 |
 | gunpowder / explosives (экономика рейдов) | 1 000 / 100 | 2 000 / 500 | 10 000 / 2 000 | 25 000 / 5 000 |
-| HQM, топливо (lowgradefuel, crude.oil) | 100 / 500 | 1 000 / 2 000 | 5 000 / 5 000 | 10 000 / 10 000 |
+| HQM и руда (metal.refined, hq.metal.ore), топливо (lowgradefuel, crude.oil) | 100 / 500 | 1 000 / 2 000 | 5 000 / 5 000 | 10 000 / 10 000 |
 | Компоненты (gears, metalpipe, rope, techparts…) | 10–50 | 200 | 500 | 2 000 |
 | Патроны (rifle/pistol / shotgun) | 128 / 64 | 512 / 256 | 1 280 / 640 | 2 560 / 1 280 |
 | Взрывчатка (C4, ракеты, гранаты) | ванилла | ванилла | ×2 | ×5 |
@@ -44,7 +44,7 @@
 
 ## Порядок расчёта стака
 
-1. Игнор-лист (water, cardtable и пр.) → ванилла
+1. Игнор-лист и «бесконечные» стаки (vanilla = int.MaxValue: water.*) → ванилла
 2. Явный `Абсолютный размер` → база
 3. Явный `Множитель по предмету` → база × множитель
 4. Ванилла = 1 → **стоп** (оружие/тулзы — только явные оверрайды)
