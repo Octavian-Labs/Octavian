@@ -1,5 +1,6 @@
 # RCON-отправка команд на тест-сервер: python rcon-send.py "cmd1" "cmd2" ...
 import sys, json, asyncio, websockets
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 async def main():
     async with websockets.connect("ws://127.0.0.1:28116/Octavian_2026_ChangeMe") as ws:
