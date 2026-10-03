@@ -365,6 +365,11 @@ JSON `{Identifier, Message, Type:3}`; читать ответ — `carbon/logs/C
   держал устаревшие canAcceptItem/Pool.GetList/NetWrite/DecayTick;
   3.17.8 уже собрана под новый API — взять апстрим и ребрендить заново
   оказалось быстрее, чем патчить).
+- **Пул в текущем Carbon:** `Facepunch.Pool.GetList<T>()` мёртв
+  (CS0117). Рабочий API: `Pool.Get<List<T>>()` +
+  `Pool.FreeUnmanaged(ref list)` (using `Facepunch`). См. OctaGrade.
+- **Тип `Plugin` в хуках** (`OnPluginLoaded(Plugin p)` и т.п.) требует
+  `using Oxide.Core.Plugins` — без него CS0246/CS0103.
 
 ## 16. Деплой: NTFS-дубли файлов и «залипшая» версия
 
