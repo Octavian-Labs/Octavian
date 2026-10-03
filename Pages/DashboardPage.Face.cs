@@ -29,6 +29,8 @@ public partial class DashboardPage
         InTitleRegion.Text = s.TitleRegion;
         InTitleBase.Text = s.TitleBase;
         ChkTitleRates.IsChecked = s.TitleShowRates;
+        InTitleRates.Text = s.TitleRatesCustom;
+        InTitleRates.PlaceholderText = $"авто: {ServerTitleBuilder.RatesText(s)}";
         InTitleFeatures.Text = string.Join(", ", s.TitleFeatures);
         InTitleWipeCustom.Text = s.TitleWipeCustom;
         ChkTitleAuto.IsChecked = s.TitleAuto;
@@ -106,6 +108,7 @@ public partial class DashboardPage
         s.TitleRegion = InTitleRegion.Text.Trim();
         s.TitleBase = InTitleBase.Text.Trim();
         s.TitleShowRates = ChkTitleRates.IsChecked == true;
+        s.TitleRatesCustom = InTitleRates.Text.Trim();
         s.TitleTeamMode = ComboTag(CbTitleTeam, "auto");
         s.TitleWipeMode = ComboTag(CbTitleWipe, "auto");
         s.TitleWipeCustom = InTitleWipeCustom.Text.Trim();
@@ -214,8 +217,10 @@ public partial class DashboardPage
         if (sender is not FrameworkElement fe || fe.Tag is not ServerTitleBuilder.TitlePreset p) return;
         _faceReady = false;
         p.Fill(App.Settings);
+        App.Settings.TitleRatesCustom = ""; // пресет = честные авто-рейты, кастом сбрасываем
         InTitleRegion.Text = App.Settings.TitleRegion;
         ChkTitleRates.IsChecked = App.Settings.TitleShowRates;
+        InTitleRates.Text = "";
         InTitleFeatures.Text = string.Join(", ", App.Settings.TitleFeatures);
         InTitleWipeCustom.Text = App.Settings.TitleWipeCustom;
         SelectComboTag(CbTitleTeam, App.Settings.TitleTeamMode);

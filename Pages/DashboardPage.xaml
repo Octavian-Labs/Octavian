@@ -333,9 +333,15 @@
                                     <StackPanel Grid.Column="0">
                                         <DockPanel LastChildFill="False">
                                             <TextBlock Text="Фичи (через запятую)" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
-                                            <CheckBox x:Name="ChkTitleRates" Content="+рейты X5" FontSize="11"
-                                                      DockPanel.Dock="Right" VerticalAlignment="Center" IsChecked="True"
-                                                      Click="TitlePart_Changed" Foreground="{StaticResource B.TextDim}"/>
+                                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <CheckBox x:Name="ChkTitleRates" Content="рейты" FontSize="11"
+                                                          VerticalAlignment="Center" IsChecked="True"
+                                                          Click="TitlePart_Changed" Foreground="{StaticResource B.TextDim}"
+                                                          ToolTip="Показывать рейты в названии"/>
+                                                <ui:TextBox x:Name="InTitleRates" Width="96" Margin="6,0,0,0"
+                                                            TextChanged="TitlePart_Changed"
+                                                            ToolTip="Пусто = авто (из GatherManager/настроек). Впиши своё — хоть x1000000"/>
+                                            </StackPanel>
                                         </DockPanel>
                                         <ui:TextBox x:Name="InTitleFeatures" TextChanged="TitlePart_Changed"
                                                     ToolTip="TP, KITS, HOME, LOOT+, SHOP, CLANS, SKINBOX, PVP…"/>

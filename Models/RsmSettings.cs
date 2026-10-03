@@ -87,6 +87,7 @@ public class RsmSettings
     public string TitleRegion { get; set; } = "EU";   // "" = без префикса [EU]
     public string TitleBase { get; set; } = "OCTAVIAN RUST";
     public bool TitleShowRates { get; set; } = true;  // "X5" или "X5/X10" из GatherRate/StackMultiplier
+    public string TitleRatesCustom { get; set; } = ""; // непустое → пишется как есть (маркетинг), пустое → авто
     public string TitleTeamMode { get; set; } = "auto"; // auto|solo|duo|trio|quad|max5|nolimit|off
     public List<string> TitleFeatures { get; set; } = new() { "TP", "KITS" };
     public string TitleWipeMode { get; set; } = "auto"; // off|auto|custom — auto берёт LastWipeDate

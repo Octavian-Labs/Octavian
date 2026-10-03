@@ -21,18 +21,29 @@ public static class ServerTitleBuilder
     public static string RatesText(RsmSettings s)
     {
         var g = s.GatherRate;
-        var st = s.StackMultiplier;
+        double? stack = null; // стеки показываем только если реально стоит StackSizeController
         try
         {
+            // GatherManager.json может остаться от старого профиля без самого плагина —
+            // читаем множитель только при установленном .cs, иначе честный дефолт из настроек
             var path = Path.Combine(s.CarbonConfigDir, "GatherManager.json");
-            if (File.Exists(path))
+            if (File.Exists(path) && File.Exists(Path.Combine(s.PluginsDir, "GatherManager.cs")))
             {
                 var o = JsonNode.Parse(File.ReadAllText(path))?["Options"]?.AsObject();
                 if (o?["GatherResourceModifiers"]?["*"] is JsonNode gn)
                     g = gn.GetValue<double>();
             }
+            // стек показываем только если плагин StackSizeController реально стоит —
+            // осиротевший json от старого профиля не должен рисовать x1000
+            var spath = Path.Combine(s.CarbonConfigDir, "StackSizeController.json");
+            if (File.Exists(spath) && File.Exists(Path.Combine(s.PluginsDir, "StackSizeController.cs")))
+            {
+                var so = JsonNode.Parse(File.ReadAllText(spath))?.AsObject();
+                if (so?["GlobalStackMultiplier"] is JsonNode sn) stack = sn.GetValue<double>();
+            }
         }
         catch { }
+        var st = stack ?? g; // без плагина стеков второй X не показываем
         var gi = Math.Round(g); var si = Math.Round(st);
         bool gInt = Math.Abs(g - gi) < 0.01, sInt = Math.Abs(st - si) < 0.01;
         string gs = gInt ? $"X{gi:0}" : $"X{g:0.#}";
@@ -96,7 +107,11 @@ public static class ServerTitleBuilder
             parts[^1] += " " + head;                 // «[EU] OCTAVIAN RUST» — одна часть
         else if (head.Length > 0)
             parts.Add(head);
-        if (s.TitleShowRates) parts.Add(RatesText(s));
+        if (s.TitleShowRates)
+        {
+            var r = s.TitleRatesCustom.Trim();
+            parts.Add(r.Length > 0 ? r : RatesText(s)); // свой текст → как есть (маркетинг)
+        }
         var team = TeamText(s.TitleTeamMode, s, cfg);
         if (team.Length > 0) parts.Add(team);
         foreach (var f in s.TitleFeatures)
@@ -145,7 +160,7 @@ public static class ServerTitleBuilder
             s.TitleTeamMode = "auto"; s.TitleFeatures = new List<string>();
             s.TitleWipeMode = "auto";
         }),
-        new("Модded X5 (MRAZ)", "[EU] OCTAVIAN | X5/X10 | NOLIMIT | LOOT+ | KITS | 03.10", s =>
+        new("Модded X5", "[EU] OCTAVIAN | X5/X10 | NOLIMIT | LOOT+ | KITS | 03.10", s =>
         {
             s.TitleRegion = "EU"; s.TitleShowRates = true;
             s.TitleTeamMode = "nolimit";
