@@ -92,6 +92,8 @@ namespace Oxide.Plugins
             var origin = lc.transform.position + Vector3.up * 0.5f;
             foreach (Item item in items)
             {
+                // Drop() сам вынимает предмет из контейнера — ящик становится пустым,
+                // как будто игрок достал всё
                 item.Drop(origin, new Vector3(
                     Random.Range(-1.5f, 1.5f),
                     Random.Range(1.5f, 3f),
@@ -103,7 +105,13 @@ namespace Oxide.Plugins
             if (_config.Log)
                 Puts($"Высыпано {count} предм. из '{lc.ShortPrefabName}' при ({lc.transform.position.x:F0}, {lc.transform.position.z:F0})");
 
-            lc.Kill();
+            // пустой ящик Rust убирает сам (естественное схлопывание);
+            // страховочный Kill — если в этой сборке авто-уборки нет
+            NextTick(() =>
+            {
+                if (lc != null && !lc.IsDestroyed && lc.inventory.itemList.Count == 0)
+                    lc.Kill();
+            });
         }
     }
 }
