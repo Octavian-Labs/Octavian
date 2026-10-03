@@ -129,16 +129,22 @@ public partial class DashboardPage : Page
     {
         bool local = !App.Settings.IsRemoteMode;
         bool running = local ? App.Server.IsRunning : App.Rcon.IsConnected;
-        BtnStart.IsEnabled = local && !running;
-        BtnStop.IsEnabled = local && running;
-        BtnKill.IsEnabled = local && running;
+        BtnPower.IsEnabled = local;
         BtnRestart.IsEnabled = local && running;
+        BtnKill.IsEnabled = local && running;
         BtnForceSave.IsEnabled = App.Rcon.IsConnected;
-        // в remote нет локального процесса — кнопки питания прячем, FORCE SAVE остаётся (RCON)
-        BtnStart.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
-        BtnStop.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
-        BtnKill.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+        // power-кнопка как в плеере: ▶ старт ↔ ■ стоп, красная когда сервер жив
+        BtnPower.Content = running ? "■" : "▶";
+        BtnPower.Appearance = running
+            ? Wpf.Ui.Controls.ControlAppearance.Danger
+            : Wpf.Ui.Controls.ControlAppearance.Primary;
+        BtnPower.ToolTip = running ? "Остановить сервер (save → quit)" : "Запустить сервер";
+        TxtPowerState.Text = running ? "РАБОТАЕТ" : local ? "ОСТАНОВЛЕН" : "OFFLINE";
+        TxtPowerState.Foreground = (Brush)FindResource(running ? "B.Success" : "B.TextDim");
+        // в remote нет локального процесса — прячем питание, FORCE SAVE остаётся (RCON)
+        BtnPower.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
         BtnRestart.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
+        BtnKill.Visibility = local ? Visibility.Visible : Visibility.Collapsed;
         if (!running)
         {
             StatOnline.Text = "—"; StatFps.Text = "—"; StatUptime.Text = "—"; StatRcon.Text = "OFF";
@@ -215,6 +221,7 @@ public partial class DashboardPage : Page
             // живые числа для превью карточки на вкладке «Лицо сервера»
             _statPlayers = players; _statMax = max; _statMap = map;
             UpdateFacePreview();
+            TxtPowerState.Text = $"РАБОТАЕТ · {StatUptime.Text}";
 
             // CPU/RAM процесса — только локальный сервер; в remote их не измерить
             var snap = App.Server.GetProcessSnapshot();
@@ -256,6 +263,13 @@ public partial class DashboardPage : Page
                 MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         await App.Server.StopAsync(force: true);
         UpdateState();
+    }
+
+    // Круглая Power как в плеере: play ↔ stop одной кнопкой
+    private void BtnPower_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.Server.IsRunning) BtnStop_Click(sender, e);
+        else BtnStart_Click(sender, e);
     }
 
     private void BtnStart_Click(object sender, RoutedEventArgs e)
