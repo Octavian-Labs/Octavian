@@ -144,7 +144,10 @@ public class RsmSettings
             $"+server.maxplayers {MaxPlayers}",
             $"+server.hostname \"{Hostname}\"",
             $"+server.description \"{Description}\"",
-            $"+server.saveinterval {SaveInterval}"
+            $"+server.saveinterval {SaveInterval}",
+            // server.cfg исполняем последним — полный сгенерированный конфиг
+            // (картинки, теги, рейты, livestock) перебивает бутстрап-аргументы
+            "+server.cfg"
         };
         return string.Join(" ", args.Where(a => a != null));
     }
