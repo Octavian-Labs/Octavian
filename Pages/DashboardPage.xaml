@@ -272,185 +272,270 @@
     </Grid>
         </TabItem>
 
-        <!-- ══ ЛИЦО СЕРВЕРА: название-конструктор + маркетинг ══ -->
+        <!-- ══ ЛИЦО СЕРВЕРА: слева настройки, справа живой превью карточки ══ -->
         <TabItem Header="ЛИЦО СЕРВЕРА">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="4,8,4,16">
+            <Grid Margin="4,8,4,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="430"/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition Width="460"/>
+                </Grid.ColumnDefinitions>
 
-                    <!-- КОНСТРУКТОР НАЗВАНИЯ -->
-                    <TextBlock Text="НАЗВАНИЕ СЕРВЕРА — конструктор" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-                    <Border Style="{StaticResource OctaPanelAccent}" Padding="16,12" Margin="0,0,0,14">
-                        <StackPanel>
-                            <!-- Живой предпросмотр -->
-                            <TextBlock x:Name="TxtTitlePreview" Text="…" FontSize="16" FontWeight="Bold"
-                                       FontFamily="Consolas" Foreground="{StaticResource B.Accent}"
-                                       TextWrapping="Wrap" Margin="0,0,0,2"/>
-                            <DockPanel LastChildFill="False" Margin="0,0,0,10">
-                                <TextBlock Text="паттерн: [Регион] Имя | Рейты | Пати | Фичи | Вайп"
-                                           Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="TxtTitleLen" Text="" DockPanel.Dock="Right"
-                                           Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"/>
-                            </DockPanel>
+                <!-- ЛЕВАЯ ПОЛОВИНА: конструктор названия + медиа + публикация -->
+                <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
 
-                            <!-- Пресеты по паттернам популярных серверов -->
-                            <TextBlock Text="ПРЕСЕТЫ" Style="{StaticResource OctaFieldLabel}"/>
-                            <WrapPanel x:Name="PnlTitlePresets" Margin="0,0,0,10"/>
+                        <TextBlock Text="НАЗВАНИЕ — конструктор" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+                        <Border Style="{StaticResource OctaPanelAccent}" Padding="16,12" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="ПРЕСЕТЫ" Style="{StaticResource OctaFieldLabel}"/>
+                                <WrapPanel x:Name="PnlTitlePresets" Margin="0,0,0,10"/>
 
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="90"/>
-                                    <ColumnDefinition Width="14"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="14"/>
-                                    <ColumnDefinition Width="170"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="Регион [..]" Style="{StaticResource OctaFieldLabel}"/>
-                                    <ui:TextBox x:Name="InTitleRegion" TextChanged="TitlePart_Changed" ToolTip="EU / US / пусто = без префикса"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="Имя сервера" Style="{StaticResource OctaFieldLabel}"/>
-                                    <ui:TextBox x:Name="InTitleBase" TextChanged="TitlePart_Changed"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="4">
-                                    <TextBlock Text="Пати в названии" Style="{StaticResource OctaFieldLabel}"/>
-                                    <ComboBox x:Name="CbTitleTeam" SelectionChanged="TitlePart_Changed">
-                                        <ComboBoxItem Content="Авто (по лимиту)" Tag="auto" IsSelected="True"/>
-                                        <ComboBoxItem Content="Solo" Tag="solo"/>
-                                        <ComboBoxItem Content="Duo" Tag="duo"/>
-                                        <ComboBoxItem Content="Trio" Tag="trio"/>
-                                        <ComboBoxItem Content="Quad" Tag="quad"/>
-                                        <ComboBoxItem Content="MAX5" Tag="max5"/>
-                                        <ComboBoxItem Content="MAX8" Tag="max8"/>
-                                        <ComboBoxItem Content="NoLimit" Tag="nolimit"/>
-                                        <ComboBoxItem Content="— скрыть —" Tag="off"/>
-                                    </ComboBox>
-                                </StackPanel>
-                            </Grid>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="86"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="230"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Регион" Style="{StaticResource OctaFieldLabel}"/>
+                                        <ui:TextBox x:Name="InTitleRegion" TextChanged="TitlePart_Changed"
+                                                    ToolTip="EU / US — пусто = без префикса [..]"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Имя сервера" Style="{StaticResource OctaFieldLabel}"/>
+                                        <ui:TextBox x:Name="InTitleBase" TextChanged="TitlePart_Changed"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="Пати" Style="{StaticResource OctaFieldLabel}"/>
+                                        <ComboBox x:Name="CbTitleTeam" SelectionChanged="TitlePart_Changed">
+                                            <ComboBoxItem Content="Авто (по лимиту)" Tag="auto" IsSelected="True"/>
+                                            <ComboBoxItem Content="Solo" Tag="solo"/>
+                                            <ComboBoxItem Content="Duo" Tag="duo"/>
+                                            <ComboBoxItem Content="Trio" Tag="trio"/>
+                                            <ComboBoxItem Content="Quad" Tag="quad"/>
+                                            <ComboBoxItem Content="MAX5" Tag="max5"/>
+                                            <ComboBoxItem Content="MAX8" Tag="max8"/>
+                                            <ComboBoxItem Content="NoLimit" Tag="nolimit"/>
+                                            <ComboBoxItem Content="— скрыть —" Tag="off"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
 
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="14"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <DockPanel LastChildFill="False">
-                                        <TextBlock Text="Фичи (| разделяет)" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
-                                        <CheckBox x:Name="ChkTitleRates" Content="рейты X5" FontSize="11"
-                                                  DockPanel.Dock="Right" VerticalAlignment="Center" IsChecked="True"
-                                                  Click="TitlePart_Changed" Foreground="{StaticResource B.TextDim}"/>
-                                    </DockPanel>
-                                    <ui:TextBox x:Name="InTitleFeatures" TextChanged="TitlePart_Changed"
-                                                ToolTip="TP, KITS, HOME, LOOT+, SHOP, CLANS, SKINBOX, PVP…"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="Вайп в названии" Style="{StaticResource OctaFieldLabel}"/>
-                                    <DockPanel LastChildFill="False">
-                                        <ComboBox x:Name="CbTitleWipe" SelectionChanged="TitlePart_Changed" MinWidth="150">
-                                            <ComboBoxItem Content="Авто (дата вайпа)" Tag="auto" IsSelected="True"/>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="220"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <DockPanel LastChildFill="False">
+                                            <TextBlock Text="Фичи (через запятую)" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
+                                            <CheckBox x:Name="ChkTitleRates" Content="+рейты X5" FontSize="11"
+                                                      DockPanel.Dock="Right" VerticalAlignment="Center" IsChecked="True"
+                                                      Click="TitlePart_Changed" Foreground="{StaticResource B.TextDim}"/>
+                                        </DockPanel>
+                                        <ui:TextBox x:Name="InTitleFeatures" TextChanged="TitlePart_Changed"
+                                                    ToolTip="TP, KITS, HOME, LOOT+, SHOP, CLANS, SKINBOX, PVP…"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Вайп" Style="{StaticResource OctaFieldLabel}"/>
+                                        <ComboBox x:Name="CbTitleWipe" SelectionChanged="TitlePart_Changed">
+                                            <ComboBoxItem Content="Авто (дата)" Tag="auto" IsSelected="True"/>
                                             <ComboBoxItem Content="Свой текст" Tag="custom"/>
                                             <ComboBoxItem Content="— скрыть —" Tag="off"/>
                                         </ComboBox>
-                                        <ui:TextBox x:Name="InTitleWipeCustom" Margin="8,0,0,0" MinWidth="110"
-                                                    TextChanged="TitlePart_Changed" ToolTip="напр. JUST WIPE"/>
-                                    </DockPanel>
-                                </StackPanel>
-                            </Grid>
+                                    </StackPanel>
+                                </Grid>
+                                <ui:TextBox x:Name="InTitleWipeCustom" Margin="0,0,0,8" Width="220"
+                                            HorizontalAlignment="Left" TextChanged="TitlePart_Changed"
+                                            ToolTip="Свой текст вайпа, напр. JUST WIPE"/>
 
-                            <DockPanel LastChildFill="False" Margin="0,4,0,0">
-                                <CheckBox x:Name="ChkTitleAuto" Content="авто-обновлять название при смене рейтов/лимита пати"
-                                          Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"
-                                          Click="TitlePart_Changed"/>
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="лимит пати" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center"/>
-                                    <ui:TextBox x:Name="InTeamLimit" Width="52" Margin="6,0,0,0" TextAlignment="Center"
-                                                ToolTip="relationshipmanager.maxteamsize — 0 = без лимита"/>
-                                    <ui:Button x:Name="BtnTeamApply" Content="OK" Padding="10,4" Margin="6,0,0,0" Click="TeamApply_Click"/>
-                                </StackPanel>
-                            </DockPanel>
+                                <DockPanel LastChildFill="False" Margin="0,2,0,0">
+                                    <CheckBox x:Name="ChkTitleAuto" Content="авто при смене рейтов/пати"
+                                              Foreground="{StaticResource B.TextDim}" FontSize="11" VerticalAlignment="Center"
+                                              Click="TitlePart_Changed"/>
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="лимит пати" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center"/>
+                                        <ui:TextBox x:Name="InTeamLimit" Width="52" Margin="6,0,0,0" TextAlignment="Center"
+                                                    ToolTip="relationshipmanager.maxteamsize — 0 = тимы выкл."/>
+                                        <ui:Button x:Name="BtnTeamApply" Content="OK" Padding="10,4" Margin="6,0,0,0" Click="TeamApply_Click"/>
+                                    </StackPanel>
+                                </DockPanel>
 
-                            <DockPanel LastChildFill="False" Margin="0,10,0,0">
-                                <ui:Button Content="ПРИМЕНИТЬ НАЗВАНИЕ" Appearance="Primary" Padding="18,8"
-                                           Click="TitleApply_Click" DockPanel.Dock="Left"
-                                           ToolTip="server.hostname → server.cfg + RCON"/>
-                                <TextBlock x:Name="TxtTitleStatus" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
+                                <DockPanel LastChildFill="False" Margin="0,10,0,0">
+                                    <ui:Button Content="ПРИМЕНИТЬ НАЗВАНИЕ" Appearance="Primary" Padding="18,8"
+                                               Click="TitleApply_Click" DockPanel.Dock="Left"
+                                               ToolTip="server.hostname → server.cfg + RCON"/>
+                                    <TextBlock x:Name="TxtTitleStatus" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
+                                               Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap"/>
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="МЕДИА И ПУБЛИКАЦИЯ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+                        <Border Style="{StaticResource OctaPanel}" Padding="16,14" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Text="Описание (в списке серверов)" Style="{StaticResource OctaFieldLabel}"/>
+                                <TextBox x:Name="InFaceDesc" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56"
+                                         Margin="0,0,0,10" TextChanged="FaceField_Changed"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Сайт (server.url)" Style="{StaticResource OctaFieldLabel}"/>
+                                        <TextBox x:Name="InFaceUrl" TextChanged="FaceField_Changed"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <DockPanel LastChildFill="False">
+                                            <TextBlock Text="Теги (server.tags)" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
+                                            <ui:Button Content="АВТО" Padding="8,2" FontSize="10" DockPanel.Dock="Right"
+                                                       Click="FaceAutoTags_Click" ToolTip="Собрать теги из региона, графика вайпа и режима"/>
+                                        </DockPanel>
+                                        <TextBox x:Name="InFaceTags" TextChanged="FaceField_Changed"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Баннер (server.headerimage URL)" Style="{StaticResource OctaFieldLabel}"/>
+                                        <TextBox x:Name="InFaceHeader" TextChanged="FaceField_Changed"
+                                                 ToolTip="PNG/JPG по http(s) — отображается в окне подключения"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Лого (server.logoimage URL)" Style="{StaticResource OctaFieldLabel}"/>
+                                        <TextBox x:Name="InFaceLogo" TextChanged="FaceField_Changed"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Домен (server.favoritesEndpoint)" Style="{StaticResource OctaFieldLabel}"/>
+                                        <TextBox x:Name="InFaceDomain" ToolTip="A-запись, напр. rust.example.com"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                                        <ui:Button Content="❔ КАК НАСТРОИТЬ ДОМЕН" Style="{StaticResource OctaCmdBtn}"
+                                                   Click="FaceDomainGuide_Click" HorizontalAlignment="Left"/>
+                                    </StackPanel>
+                                </Grid>
+                                <DockPanel LastChildFill="False">
+                                    <ui:Button Content="ПРОВЕРИТЬ ПУБЛИКАЦИЮ" Style="{StaticResource OctaCmdBtn}"
+                                               DockPanel.Dock="Left" Click="FacePublication_Click"/>
+                                    <ui:Button Content="СОХРАНИТЬ ЛИЦО" Appearance="Primary" Padding="18,8"
+                                               DockPanel.Dock="Right" Click="FaceSave_Click"
+                                               ToolTip="server.cfg (+ readcfg при живом сервере)"/>
+                                </DockPanel>
+                                <TextBlock x:Name="FacePortState" Text="" Margin="0,8,0,0"
                                            Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap"/>
-                            </DockPanel>
-                        </StackPanel>
-                    </Border>
+                                <TextBlock x:Name="FaceValidation" Text="" Margin="0,4,0,0"
+                                           Foreground="{StaticResource B.Warn}" FontSize="12" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
 
-                    <!-- МАРКЕТИНГ / ЛИЦО -->
-                    <TextBlock Text="ЛИЦО СЕРВЕРА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
-                    <Border Style="{StaticResource OctaPanel}" Padding="16,14" Margin="0,0,0,14">
+                <!-- ПРАВАЯ ПОЛОВИНА: живой превью карточки подключения как в игре -->
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="ПРЕВЬЮ — как в списке серверов" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+                    <Border Style="{StaticResource OctaPanelAccent}" Padding="0" Margin="0,0,0,10">
                         <StackPanel>
-                            <TextBlock Text="Описание (в списке серверов)" Style="{StaticResource OctaFieldLabel}"/>
-                            <TextBox x:Name="InFaceDesc" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" Margin="0,0,0,10"/>
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="16"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="Сайт (server.url)" Style="{StaticResource OctaFieldLabel}"/>
-                                    <TextBox x:Name="InFaceUrl"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <DockPanel LastChildFill="False">
-                                        <TextBlock Text="Теги (server.tags, через запятую)" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
-                                        <ui:Button Content="АВТО" Padding="8,2" FontSize="10" DockPanel.Dock="Right"
-                                                   Click="FaceAutoTags_Click" ToolTip="Собрать теги из региона, графика вайпа и режима"/>
-                                    </DockPanel>
-                                    <TextBox x:Name="InFaceTags"/>
-                                </StackPanel>
-                            </Grid>
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="16"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="Баннер (server.headerimage URL)" Style="{StaticResource OctaFieldLabel}"/>
-                                    <TextBox x:Name="InFaceHeader"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="Лого Rust+ (server.logoimage URL)" Style="{StaticResource OctaFieldLabel}"/>
-                                    <TextBox x:Name="InFaceLogo"/>
-                                </StackPanel>
-                            </Grid>
-                            <Grid Margin="0,0,0,10">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="16"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="Домен сервера (server.favoritesEndpoint)" Style="{StaticResource OctaFieldLabel}"/>
-                                    <TextBox x:Name="InFaceDomain" ToolTip="A-запись, напр. rust.example.com — избранное переживает смену IP (нужны A+SRV записи)"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
-                                    <ui:Button Content="❔ КАК НАСТРОИТЬ ДОМЕН" Style="{StaticResource OctaCmdBtn}"
-                                               Click="FaceDomainGuide_Click" HorizontalAlignment="Left"/>
-                                </StackPanel>
-                            </Grid>
-                            <DockPanel LastChildFill="False">
-                                <ui:Button Content="ПРОВЕРИТЬ ПУБЛИКАЦИЮ" Style="{StaticResource OctaCmdBtn}"
-                                           DockPanel.Dock="Left" Click="FacePublication_Click"
-                                           ToolTip="Валидация тегов/URL + проверка локальных портов и A2S-ответа"/>
-                                <ui:Button Content="СОХРАНИТЬ ЛИЦО" Appearance="Primary" Padding="18,8"
-                                           DockPanel.Dock="Right" Click="FaceSave_Click"
-                                           ToolTip="Записать description/url/tags/картинки/домен в server.cfg (+ readcfg при живом сервере)"/>
-                            </DockPanel>
-                            <TextBlock x:Name="FacePortState" Text="" Margin="0,8,0,0"
-                                       Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="FaceValidation" Text="" Margin="0,4,0,0"
-                                       Foreground="{StaticResource B.Warn}" FontSize="12" TextWrapping="Wrap"/>
+                            <!-- hostname + теги -->
+                            <StackPanel Margin="14,12,14,8">
+                                <TextBlock x:Name="TxtTitlePreview" Text="…" FontSize="15" FontWeight="Bold"
+                                           FontFamily="Consolas" Foreground="{StaticResource B.Text}"
+                                           TextWrapping="Wrap"/>
+                                <WrapPanel x:Name="PnlFaceTagsChips" Margin="0,6,0,0"/>
+                            </StackPanel>
+
+                            <!-- шапка: баннер + лого в углу -->
+                            <Border Height="180" Margin="0,0,0,0" ClipToBounds="True"
+                                    Background="#FF0A0D13">
+                                <Grid>
+                                    <Image x:Name="ImgFaceHeader" Stretch="UniformToFill"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TxtHeaderPlaceholder" Text="server.headerimage — URL картинки шапки"
+                                               Foreground="#FF4A5568" FontSize="11"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <Image x:Name="ImgFaceLogo" Width="56" Height="56" Margin="10"
+                                           HorizontalAlignment="Left" VerticalAlignment="Top"
+                                           Stretch="Uniform" Visibility="Collapsed"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- строка инфо как в окне подключения -->
+                            <Border Background="#FF14181F" Padding="10,7" Margin="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="ИГРОКИ" Style="{StaticResource OctaStatLabel}"/>
+                                        <TextBlock x:Name="TxtFacePlayers" Text="0/0" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource B.Text}"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="КАРТА" Style="{StaticResource OctaStatLabel}"/>
+                                        <TextBlock x:Name="TxtFaceMap" Text="—" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource B.Text}"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="ВАЙП" Style="{StaticResource OctaStatLabel}"/>
+                                        <TextBlock x:Name="TxtFaceWipe" Text="—" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource B.Text}"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="TxtTitleLen" Text="" Grid.Column="3" VerticalAlignment="Bottom"
+                                               Foreground="{StaticResource B.TextDim}" FontSize="10"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- описание -->
+                            <Border Background="#FF0F1318" Padding="14,8">
+                                <TextBlock x:Name="TxtFaceDesc" Text="server.description — описание в списке серверов"
+                                           Foreground="#FF9AA3AD" FontSize="12" TextWrapping="Wrap" MaxHeight="96"/>
+                            </Border>
+
+                            <!-- кнопки как в игре -->
+                            <Border Background="#FF14181F" Padding="10,7" Margin="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="#FF2A3038" CornerRadius="4" Padding="0,6">
+                                        <TextBlock x:Name="TxtFaceSite" Text="ВНЕШНИЙ САЙТ" FontSize="11" FontWeight="SemiBold"
+                                                   Foreground="#FF9AA3AD" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Column="2" Background="#FF4A6B2F" CornerRadius="4" Padding="0,6"
+                                            MouseLeftButtonUp="FaceConnect_Click" Cursor="Hand"
+                                            ToolTip="steam://connect — реальное подключение">
+                                        <TextBlock Text="▶ ПОДКЛЮЧИТЬСЯ" FontSize="11" FontWeight="Bold"
+                                                   Foreground="#FFE9F5D8" HorizontalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
                         </StackPanel>
                     </Border>
+                    <TextBlock Text="превью живое: меняешь поля слева — карточка обновляется"
+                               FontSize="10" Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap"/>
                 </StackPanel>
-            </ScrollViewer>
+            </Grid>
         </TabItem>
     </TabControl>
 </Page>

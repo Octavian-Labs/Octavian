@@ -212,6 +212,10 @@ public partial class DashboardPage : Page
             StatMem.Text = mem > 0 ? $"{mem / 1048576.0:0} MB" : "—";
             StatWipe.Text = wipe.Length >= 10 ? wipe[..10] : (wipe == "" ? "—" : wipe);
 
+            // живые числа для превью карточки на вкладке «Лицо сервера»
+            _statPlayers = players; _statMax = max; _statMap = map;
+            UpdateFacePreview();
+
             // CPU/RAM процесса — только локальный сервер; в remote их не измерить
             var snap = App.Server.GetProcessSnapshot();
             if (snap is { } proc)

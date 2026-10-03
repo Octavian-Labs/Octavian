@@ -18,6 +18,9 @@ namespace OctavianRSM.Pages;
 public partial class DashboardPage
 {
     private bool _faceReady;
+    // живые числа из serverinfo — превью показывает реальный онлайн/карту
+    private int _statPlayers, _statMax;
+    private string _statMap = "";
 
     private void InitFace()
     {
@@ -59,6 +62,7 @@ public partial class DashboardPage
 
         _faceReady = true;
         UpdateTitlePreview();
+        LoadPreviewImages();
         _ = RefreshTeamLimitAsync(); // живое maxteamsize точнее настроек
     }
 
@@ -120,7 +124,90 @@ public partial class DashboardPage
         TxtTitlePreview.Text = title.Length > 0 ? title : "(пусто)";
         TxtTitleLen.Text = $"{title.Length} симв.";
         TxtTitleLen.Foreground = (Brush)FindResource(title.Length > 200 ? "B.Danger" : "B.TextDim");
+        UpdateFacePreview();
     }
+
+    // ── Живой превью карточки подключения (правая колонка) ────────────────
+
+    private void UpdateFacePreview()
+    {
+        if (PnlFaceTagsChips == null) return; // InitializeComponent ещё не отработал
+        // чипы тегов как в браузере серверов
+        PnlFaceTagsChips.Children.Clear();
+        var tags = InFaceTags.Text
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(4).ToArray();
+        if (tags.Length == 0) tags = new[] { "теги" };
+        foreach (var t in tags)
+        {
+            PnlFaceTagsChips.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x30, 0x38)),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(8, 2, 8, 2),
+                Margin = new Thickness(0, 0, 6, 4),
+                Child = new TextBlock { Text = t.ToUpperInvariant(), FontSize = 10, FontWeight = FontWeights.SemiBold,
+                                        Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0xA3, 0xAD)) }
+            });
+        }
+        TxtFaceDesc.Text = string.IsNullOrWhiteSpace(InFaceDesc.Text)
+            ? "server.description — описание в списке серверов"
+            : InFaceDesc.Text;
+        TxtFaceSite.Text = string.IsNullOrWhiteSpace(InFaceUrl.Text)
+            ? "ВНЕШНИЙ САЙТ" : $"🔗 {InFaceUrl.Text.Trim()}";
+        var s = App.Settings;
+        TxtFacePlayers.Text = _statPlayers > 0 || _statMax > 0 ? $"{_statPlayers}/{_statMax}" : $"0/{s.MaxPlayers}";
+        TxtFaceMap.Text = !string.IsNullOrEmpty(_statMap) ? _statMap
+            : string.IsNullOrWhiteSpace(s.LevelUrl) ? $"Procedural {s.WorldSize}" : "Custom";
+        TxtFaceWipe.Text = ServerTitleBuilder.WipeText(s) is { Length: > 0 } w ? w : "—";
+    }
+
+    // текстовые поля маркетинга → мгновенный превью + дебаунс на картинки
+    private int _imgSeq;
+    private async void FaceField_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (!_faceReady) return;
+        UpdateFacePreview();
+        var seq = ++_imgSeq;
+        await Task.Delay(700);
+        if (seq != _imgSeq) return; // юзер ещё печатает — ждём паузы
+        LoadPreviewImages();
+    }
+
+    private void LoadPreviewImages()
+    {
+        ImgFaceHeader.Source = TryImage(InFaceHeader.Text, ImgFaceHeader);
+        TxtHeaderPlaceholder.Visibility = ImgFaceHeader.Source == null ? Visibility.Visible : Visibility.Collapsed;
+        var logo = TryImage(InFaceLogo.Text, ImgFaceLogo);
+        ImgFaceLogo.Source = logo;
+        ImgFaceLogo.Visibility = logo == null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // BitmapImage по URL: null при невалидной ссылке; при фейле скачивания
+    // сбрасываем Source, чтобы плейсхолдер вернулся
+    private static System.Windows.Media.Imaging.BitmapImage? TryImage(string url, Image target)
+    {
+        try
+        {
+            url = url.Trim();
+            if (url.Length == 0 || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || (uri.Scheme != "http" && uri.Scheme != "https")) return null;
+            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = uri;
+            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bmp.DownloadFailed += (_, _) =>
+            {
+                if (ReferenceEquals(target.Source, bmp)) target.Source = null;
+            };
+            bmp.EndInit();
+            return bmp;
+        }
+        catch { return null; }
+    }
+
+    private void FaceConnect_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        => SteamConnect_Click(sender, e);
 
     private void TitlePreset_Click(object sender, RoutedEventArgs e)
     {
@@ -196,6 +283,8 @@ public partial class DashboardPage
         }
         else FaceValidation.Text = "✓ сохранено в server.cfg — применится при рестарте";
         FaceValidation.Foreground = (Brush)FindResource("B.Success");
+        LoadPreviewImages();
+        UpdateFacePreview();
     }
 
     // Авто-теги: регион + график вайпа + режим — словарь Steam ограничен
