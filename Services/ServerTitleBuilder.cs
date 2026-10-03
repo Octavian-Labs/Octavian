@@ -33,13 +33,32 @@ public static class ServerTitleBuilder
                 if (o?["GatherResourceModifiers"]?["*"] is JsonNode gn)
                     g = gn.GetValue<double>();
             }
-            // стек показываем только если плагин StackSizeController реально стоит —
-            // осиротевший json от старого профиля не должен рисовать x1000
-            var spath = Path.Combine(s.CarbonConfigDir, "StackSizeController.json");
-            if (File.Exists(spath) && File.Exists(Path.Combine(s.PluginsDir, "StackSizeController.cs")))
+            // стек-рейт показываем только при реально стоящем плагине стаков —
+            // осиротевший json от старого профиля не должен рисовать x1000.
+            // OctaStack: рейт = стак дерева / ванилла (1000) → balanced = X10
+            if (File.Exists(Path.Combine(s.PluginsDir, "OctaStack.cs"))
+                || File.Exists(Path.Combine(s.PluginsDir, "OctaStackTest.cs")))
             {
-                var so = JsonNode.Parse(File.ReadAllText(spath))?.AsObject();
-                if (so?["GlobalStackMultiplier"] is JsonNode sn) stack = sn.GetValue<double>();
+                foreach (var cfgName in new[] { "OctaStack.json", "OctaStackTest.json" })
+                {
+                    var op = Path.Combine(s.CarbonConfigDir, cfgName);
+                    if (!File.Exists(op)) continue;
+                    var items = JsonNode.Parse(File.ReadAllText(op))
+                        ?["Абсолютные размеры стака по предметам"]?.AsObject();
+                    if (items?["wood"] is JsonNode wn)
+                        stack = wn.GetValue<int>() / 1000.0;
+                    break;
+                }
+            }
+            // легаси-фолбэк: оригинальный StackSizeController
+            if (stack == null)
+            {
+                var spath = Path.Combine(s.CarbonConfigDir, "StackSizeController.json");
+                if (File.Exists(spath) && File.Exists(Path.Combine(s.PluginsDir, "StackSizeController.cs")))
+                {
+                    var so = JsonNode.Parse(File.ReadAllText(spath))?.AsObject();
+                    if (so?["GlobalStackMultiplier"] is JsonNode sn) stack = sn.GetValue<double>();
+                }
             }
         }
         catch { }

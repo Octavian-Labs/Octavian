@@ -9,15 +9,15 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaStackTest", "Octavian", "0.1.0")]
-    [Description("[DEV] Управление размером стаков: глобальный множитель, по категориям и по предметам. Без внешних зависимостей.")]
-    public class OctaStackTest : CovalencePlugin
+    [Info("OctaStack", "Octavian", "1.0.0")]
+    [Description("Управление размерами стаков: пресеты (vanilla/balanced/boosted/arcade), абсолютные капы по предметам, множители по категориям. Оружие и прочность не стакаются. Без внешних зависимостей.")]
+    public class OctaStack : CovalencePlugin
     {
         [PluginReference]
         private Plugin AirFuel, GetToDaChoppa, VehicleVendorOptions;
 
         private const string PermAdmin = "octastack.admin";
-        private const string VanillaFile = "OctaStackTest_vanilla";
+        private const string VanillaFile = "OctaStack_vanilla";
 
         private ConfigData _config;
 
@@ -33,13 +33,18 @@ namespace Oxide.Plugins
         {
             permission.RegisterPermission(PermAdmin, this);
 
-            // dev-анонс в чат при загрузке/перезагрузке
-            timer.Once(1f, () =>
-                BroadcastToChat($"Плагин \"{Name}\" dev — загружен"));
-
             LoadVanillaDefaults();
             EnsureConfigIntegrity();
             PopulateItemStackSizes();
+
+            // bootstrap-метка от RMS: применить пресет один раз и снять метку
+            if (!string.IsNullOrEmpty(_config.InitialPreset)
+                && _config.StackPresets.ContainsKey(_config.InitialPreset))
+            {
+                ApplyPreset(_config.InitialPreset);
+                _config.InitialPreset = "";
+                SaveConfig();
+            }
             SetStackSizes();
 
             AddCovalenceCommand("octastack.set", nameof(CmdSetStack), PermAdmin);
@@ -50,12 +55,6 @@ namespace Oxide.Plugins
             AddCovalenceCommand("octastack.catitems", nameof(CmdListCategoryItems), PermAdmin);
             AddCovalenceCommand("octastack.preset", nameof(CmdPreset), PermAdmin);
             AddCovalenceCommand("octastack.vd", nameof(CmdRegenVanilla), PermAdmin);
-        }
-
-        private void BroadcastToChat(string msg)
-        {
-            foreach (var p in BasePlayer.activePlayerList)
-                p.SendConsoleCommand("chat.add", 0, "0", msg);
         }
 
         private void Unload()
@@ -91,6 +90,10 @@ namespace Oxide.Plugins
             // все множители и ставит остальным предметам ваниллу → состояние предсказуемо
             [JsonProperty("Пресеты стаков")]
             public Dictionary<string, Dictionary<string, int>> StackPresets = DefaultPresets();
+
+            // RMS-пометка: применить пресет один раз при первой загрузке, затем очистить
+            [JsonProperty("Применить пресет при первой загрузке")]
+            public string InitialPreset = "";
         }
 
         // Ресурсы 10к/50к/100к — абсолютные капы, не множители (по ресёрчу uMod/Codefling).
@@ -450,12 +453,23 @@ namespace Oxide.Plugins
         // состояние: все множители в 1, стеки = ванилла + оверрайды пресета
         private void CmdPreset(IPlayer player, string command, string[] args)
         {
-            if (args.Length != 1 || !_config.StackPresets.TryGetValue(args[0].ToLower(), out var preset))
+            if (args.Length != 1 || !_config.StackPresets.ContainsKey(args[0].ToLower()))
             {
                 Reply(player, $"Формат: octastack.preset <{string.Join("|", _config.StackPresets.Keys)}>");
                 return;
             }
 
+            int count = ApplyPreset(args[0].ToLower());
+            SaveConfig();
+            SetStackSizes();
+            Reply(player, $"Пресет «{args[0].ToLower()}» применён: {count} оверрайдов, " +
+                $"wood → {GetStackSize(ItemManager.FindItemDefinition("wood")):N0}");
+        }
+
+        // чистое состояние: все множители в 1, стеки = ванилла + оверрайды пресета
+        private int ApplyPreset(string key)
+        {
+            var preset = _config.StackPresets[key];
             _config.GlobalStackMultiplier = 1f;
             _config.IndividualItemStackMultipliers.Clear();
             foreach (var c in _config.CategoryStackMultipliers.Keys.ToList())
@@ -465,11 +479,7 @@ namespace Oxide.Plugins
                 _config.IndividualItemStackSize[def.shortname] = VanillaSize(def);
             foreach (var kv in preset)
                 _config.IndividualItemStackSize[kv.Key] = kv.Value;
-
-            SaveConfig();
-            SetStackSizes();
-            Reply(player, $"Пресет «{args[0].ToLower()}» применён: {preset.Count} оверрайдов, " +
-                $"wood → {GetStackSize(ItemManager.FindItemDefinition("wood")):N0}");
+            return preset.Count;
         }
 
         // octastack.vd — переснять ванильный снапшот (после апдейтов игры)

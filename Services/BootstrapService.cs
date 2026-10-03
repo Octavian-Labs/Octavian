@@ -268,7 +268,7 @@ public class BootstrapService
         if (_s.InstallCarbon)
         {
             WriteJsonIfMissingOrManaged(Path.Combine(_s.CarbonConfigDir, "GatherManager.json"), GatherConfig(_s.GatherRate));
-            WriteJsonIfMissingOrManaged(Path.Combine(_s.CarbonConfigDir, "StackSizeController.json"), StackConfig(_s.StackMultiplier));
+            WriteJsonIfMissingOrManaged(Path.Combine(_s.CarbonConfigDir, "OctaStack.json"), StackConfig(_s.StackMultiplier));
         }
         return Task.CompletedTask;
     }
@@ -299,11 +299,15 @@ public class BootstrapService
     }
     """;
 
+    // StackMultiplier из визарда мапим на пресет OctaStack — плагин сам
+    // развернёт его в абсолютные капы при первой загрузке и снимет метку
+    private static string StackPreset(double mult) =>
+        mult <= 1 ? "vanilla" : mult <= 10 ? "balanced" : mult <= 50 ? "boosted" : "arcade";
+
     private static string StackConfig(double mult) => $$"""
     {
       "_managed": "octavian-rsm",
-      "RevertStackSizesToVanillaOnUnload": true,
-      "GlobalStackMultiplier": {{mult.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
+      "Применить пресет при первой загрузке": "{{StackPreset(mult)}}"
     }
     """;
 
