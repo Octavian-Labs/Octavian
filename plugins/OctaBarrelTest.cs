@@ -49,6 +49,10 @@ namespace Oxide.Plugins
 
         #endregion
 
+        // dev-анонс в чат при загрузке/перезагрузке
+        private void Init() => timer.Once(1f, () =>
+            PrintToChat($"Плагин \"{Name}\" dev — загружен"));
+
         private bool Excluded(LootContainer lc)
         {
             var name = lc.ShortPrefabName;
@@ -105,13 +109,7 @@ namespace Oxide.Plugins
             if (_config.Log)
                 Puts($"Высыпано {count} предм. из '{lc.ShortPrefabName}' при ({lc.transform.position.x:F0}, {lc.transform.position.z:F0})");
 
-            // пустой ящик Rust убирает сам (естественное схлопывание);
-            // страховочный Kill — если в этой сборке авто-уборки нет
-            NextTick(() =>
-            {
-                if (lc != null && !lc.IsDestroyed && lc.inventory.itemList.Count == 0)
-                    lc.Kill();
-            });
+            // Kill не зовём: пустой ящик схлопывает сам Rust — иначе лагает
         }
     }
 }
