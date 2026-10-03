@@ -370,6 +370,14 @@ JSON `{Identifier, Message, Type:3}`; читать ответ — `carbon/logs/C
   `Pool.FreeUnmanaged(ref list)` (using `Facepunch`). См. OctaGrade.
 - **Тип `Plugin` в хуках** (`OnPluginLoaded(Plugin p)` и т.п.) требует
   `using Oxide.Core.Plugins` — без него CS0246/CS0103.
+- **`[ConsoleCommand]` без проверки — дыра.** Серверные консольные
+  команды плагина доходят до хендлера из F1-консоли ЛЮБОГО игрока —
+  auth не проверяется автоматически. Все админские команды обязаны
+  начинаться с `if (!arg.IsAdmin) return;` (RCON/серверная консоль
+  проходят: там `Connection == null` → `IsAdmin = true`).
+  Инцидент: OctaAdminTools до 1.1.1 — 14 команд (`octa.god`, `octa.kill`,
+  `octa.spawnat`…) были открыты всем. Чатовые `[ChatCommand]` — отдельная
+  система, там проверять `player.IsAdmin`.
 
 ## 16. Деплой: NTFS-дубли файлов и «залипшая» версия
 

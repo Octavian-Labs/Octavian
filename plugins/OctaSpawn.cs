@@ -249,7 +249,11 @@ namespace Oxide.Plugins
         }
 
         [ConsoleCommand("octaspawn.stats")]
-        private void CmdStats(ConsoleSystem.Arg arg) => Puts(BuildStats());
+        private void CmdStats(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin) return;   // серверная консоль/RCON — Connection=null → IsAdmin=true
+            Puts(BuildStats());
+        }
 
         // чатовый алиас — /octaspawn.stats в игре (админ)
         [ChatCommand("octaspawn.stats")]

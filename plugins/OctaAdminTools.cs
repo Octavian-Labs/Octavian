@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaAdminTools", "Octavian", "1.1.0")]
+    [Info("OctaAdminTools", "Octavian", "1.1.1")]
     [Description("RCON-инструменты OctavianRSM: адресное администрирование, спавн, телепорт и режим обслуживания")]
     public class OctaAdminTools : RustPlugin
     {
@@ -86,6 +86,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.spawnat")]
         private void CmdSpawnAt(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var path = ResolvePrefab(arg.GetString(0));
             var target = FindPlayer(arg, 1);
             if (path == null) { arg.ReplyWith($"Unknown entity '{arg.GetString(0)}'. Known: {string.Join(", ", Prefabs.Keys)}"); return; }
@@ -106,6 +107,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.targetinfo")]
         private void CmdTargetInfo(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var target = FindPlayer(arg, 0);
             if (target == null) { arg.ReplyWith("Player not found"); return; }
             var ray = target.eyes.HeadRay();
@@ -121,6 +123,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.spawnatpos")]
         private void CmdSpawnAtPos(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var path = ResolvePrefab(arg.GetString(0));
             if (path == null) { arg.ReplyWith($"Unknown entity '{arg.GetString(0)}'"); return; }
             Spawn(path, new Vector3(arg.GetFloat(1), arg.GetFloat(2), arg.GetFloat(3)), Quaternion.identity, arg, "pos");
@@ -138,6 +141,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.killtype")]
         private void CmdKillType(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var name = arg.GetString(0).ToLowerInvariant();
             if (string.IsNullOrEmpty(name)) { arg.ReplyWith("usage: octa.killtype <shortname>"); return; }
             int n = 0;
@@ -156,6 +160,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.maintenance")]
         private void CmdMaintenance(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var action = arg.GetString(0).ToLowerInvariant();
             if (action == "status" || string.IsNullOrEmpty(action))
             {
@@ -173,6 +178,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.allow")]
         private void CmdAllow(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var action = arg.GetString(0).ToLowerInvariant();
             if (action == "list" || string.IsNullOrEmpty(action))
             {
@@ -190,6 +196,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.heal")]
         private void CmdHeal(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var p = FindPlayer(arg, 0);
             if (p == null) { arg.ReplyWith("Player not found"); return; }
             p.health = p.MaxHealth();
@@ -200,6 +207,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.revive")]
         private void CmdRevive(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var p = FindPlayer(arg, 0);
             if (p == null) { arg.ReplyWith("Player not found"); return; }
             if (p.IsWounded()) p.StopWounded();
@@ -211,6 +219,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.god")]
         private void CmdGod(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var p = FindPlayer(arg, 0);
             if (p == null) { arg.ReplyWith("Player not found"); return; }
             if (!bool.TryParse(arg.GetString(1), out var enabled)) { arg.ReplyWith("usage: octa.god <player> true|false"); return; }
@@ -221,6 +230,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.kill")]
         private void CmdKill(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var p = FindPlayer(arg, 0);
             if (p == null) { arg.ReplyWith("Player not found"); return; }
             p.Die();
@@ -230,6 +240,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.strip")]
         private void CmdStrip(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var p = FindPlayer(arg, 0);
             if (p == null) { arg.ReplyWith("Player not found"); return; }
             p.inventory.Strip();
@@ -240,6 +251,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.tppos")]
         private void CmdTpPos(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var p = FindPlayer(arg, 0);
             if (p == null) { arg.ReplyWith("Player not found"); return; }
             var pos = new Vector3(arg.GetFloat(1), arg.GetFloat(2), arg.GetFloat(3));
@@ -251,6 +263,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("octa.tpto")]
         private void CmdTpTo(ConsoleSystem.Arg arg)
         {
+            if (!arg.IsAdmin) return;
             var p = FindPlayer(arg, 0);
             var t = FindPlayer(arg, 1);
             if (p == null || t == null) { arg.ReplyWith("Player not found"); return; }
@@ -267,6 +280,9 @@ namespace Oxide.Plugins
         // octa.list — список доступных коротких имён
         [ConsoleCommand("octa.list")]
         private void CmdList(ConsoleSystem.Arg arg)
-            => arg.ReplyWith(new StringBuilder("octa entities: ").AppendJoin(", ", Prefabs.Keys).ToString());
+        {
+            if (!arg.IsAdmin) return;
+            arg.ReplyWith(new StringBuilder("octa entities: ").AppendJoin(", ", Prefabs.Keys).ToString());
+        }
     }
 }
