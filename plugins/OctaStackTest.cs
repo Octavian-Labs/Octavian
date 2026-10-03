@@ -48,6 +48,7 @@ namespace Oxide.Plugins
             AddCovalenceCommand("octastack.search", nameof(CmdItemSearch), PermAdmin);
             AddCovalenceCommand("octastack.categories", nameof(CmdListCategories), PermAdmin);
             AddCovalenceCommand("octastack.catitems", nameof(CmdListCategoryItems), PermAdmin);
+            AddCovalenceCommand("octastack.preset", nameof(CmdPreset), PermAdmin);
             AddCovalenceCommand("octastack.vd", nameof(CmdRegenVanilla), PermAdmin);
         }
 
@@ -85,6 +86,83 @@ namespace Oxide.Plugins
 
             [JsonProperty("Абсолютные размеры стака по предметам")]
             public Dictionary<string, int> IndividualItemStackSize = new Dictionary<string, int>();
+
+            // пресеты = набор абсолютных размеров по shortname; применение сбрасывает
+            // все множители и ставит остальным предметам ваниллу → состояние предсказуемо
+            [JsonProperty("Пресеты стаков")]
+            public Dictionary<string, Dictionary<string, int>> StackPresets = DefaultPresets();
+        }
+
+        // Ресурсы 10к/50к/100к — абсолютные капы, не множители (по ресёрчу uMod/Codefling).
+        // Оружие, тулзы, двери (ванилла=1) и прочность не перечисляем — их не трогаем никогда.
+        // gunpowder/explosives — ресурсы рейдовой экономики, держим заниженно.
+        internal static Dictionary<string, Dictionary<string, int>> DefaultPresets()
+        {
+            var res = new[] { "wood", "stones", "metal.fragments", "sulfur", "charcoal",
+                "scrap", "cloth", "leather", "bone.fragments", "fat.animal", "fertilizer" };
+            var comps = new[] { "gears", "metalpipe", "metalspring", "sewingkit", "propanetank",
+                "rope", "glue", "techparts", "sheetmetal", "metalblade", "roadsigns", "tarp",
+                "riflebody", "semibody", "smgbody", "fuse" };
+            var ammoHi = new[] { "ammo.rifle", "ammo.rifle.hv", "ammo.rifle.incendiary",
+                "ammo.pistol", "ammo.pistol.hv", "ammo.pistol.fire", "ammo.paintball" };
+            var ammoLo = new[] { "ammo.shotgun", "ammo.shotgun.fire", "ammo.handmade.shell",
+                "ammo.nailgun.nails" };
+            var seeds = new[] { "seed.hemp", "seed.corn", "seed.pumpkin", "seed.wheat",
+                "seed.potato", "seed.black.berry", "seed.blue.berry", "seed.green.berry",
+                "seed.red.berry", "seed.white.berry", "seed.yellow.berry" };
+
+            Dictionary<string, int> Build(int resCap, int gunpowder, int explosives, int hqm,
+                int fuel, int comp, int diesel, int aHi, int aLo, int slug, int ammoExpl,
+                int rocket, int mlrs, int nade, int beancan, int molly, int util, int c4,
+                int bandage, int syringe, int seed)
+            {
+                var d = new Dictionary<string, int>();
+                foreach (var s in res) d[s] = resCap;
+                d["gunpowder"] = gunpowder; d["explosives"] = explosives;
+                d["metal.refined"] = hqm;
+                d["crude.oil"] = fuel; d["lowgradefuel"] = fuel;
+                foreach (var s in comps) d[s] = comp;
+                d["diesel_barrel"] = diesel;
+                foreach (var s in ammoHi) d[s] = aHi;
+                foreach (var s in ammoLo) d[s] = aLo;
+                d["ammo.shotgun.slug"] = slug;
+                if (ammoExpl > 0) d["ammo.rifle.explosive"] = ammoExpl;
+                if (rocket > 0)
+                {
+                    d["ammo.rocket.basic"] = rocket; d["ammo.rocket.fire"] = rocket;
+                    d["ammo.rocket.hv"] = rocket; d["ammo.rocket.smoke"] = rocket;
+                    d["ammo.rocket.seeker"] = rocket + 1; d["ammo.rocket.mlrs"] = mlrs;
+                }
+                if (nade > 0)
+                {
+                    d["grenade.f1"] = nade; d["grenade.beancan"] = beancan;
+                    d["grenade.molotov"] = molly; d["grenade.bee"] = nade;
+                    d["grenade.smoke"] = util; d["grenade.flashbang"] = util;
+                }
+                if (c4 > 0) { d["explosive.timed"] = c4; d["explosive.satchel"] = c4; }
+                d["bandage"] = bandage; d["medical.honey.bandage"] = bandage;
+                d["syringe.medical"] = syringe;
+                foreach (var s in seeds) d[s] = seed;
+                d["scraptea"] = seed / 5;
+                d["scraptea.pure"] = seed / 10; d["scraptea.pure.milky"] = seed / 10;
+                d["scraptea.pure.creamy"] = seed / 10; d["scraptea.advanced"] = seed / 10;
+                return d;
+            }
+
+            return new Dictionary<string, Dictionary<string, int>>
+            {
+                // ванилла — пустой набор: применение просто откатывает всё к заводским
+                ["vanilla"] = new Dictionary<string, int>(),
+                // A «Разумные»: ресурсы 10к, взрывчатка ванильная
+                ["balanced"] = Build(10000, 2000, 500, 1000, 2000, 200, 100,
+                    512, 256, 128, 0, 0, 0, 0, 0, 0, 0, 0, 15, 10, 200),
+                // B «Бустер»: ресурсы 50к, взрывчатка x2
+                ["boosted"] = Build(50000, 10000, 2000, 5000, 5000, 500, 200,
+                    1280, 640, 320, 256, 6, 12, 6, 8, 6, 10, 20, 30, 20, 500),
+                // C «Аркада»: ресурсы 100к, взрывчатка x5
+                ["arcade"] = Build(100000, 25000, 5000, 10000, 10000, 2000, 500,
+                    2560, 1280, 640, 640, 15, 30, 15, 20, 15, 25, 50, 50, 40, 1000),
+            };
         }
 
         protected override void LoadConfig()
@@ -111,6 +189,7 @@ namespace Oxide.Plugins
             _config.CategoryStackMultipliers ??= def.CategoryStackMultipliers;
             _config.IndividualItemStackMultipliers ??= def.IndividualItemStackMultipliers;
             _config.IndividualItemStackSize ??= def.IndividualItemStackSize;
+            _config.StackPresets ??= def.StackPresets;
 
             // новые категории из обновлений игры
             foreach (var cat in Enum.GetNames(typeof(ItemCategory)))
@@ -217,6 +296,11 @@ namespace Oxide.Plugins
                     return Mathf.RoundToInt(stackable * m1);
                 if (_config.IndividualItemStackMultipliers.TryGetValue(def.itemid.ToString(), out var m2))
                     return Mathf.RoundToInt(stackable * m2);
+
+                // ванилла не стакается (оружие, тулзы, двери) — множители категорий
+                // и глобальный их не трогают; меняются только явным размером/множителем
+                if (VanillaSize(def) <= 1)
+                    return stackable;
 
                 // множитель категории
                 var cat = def.category.ToString();
@@ -360,6 +444,32 @@ namespace Oxide.Plugins
                     Mathf.Clamp(GetStackSize(d), 0, int.MaxValue).ToString("N0"),
                     _config.CategoryStackMultipliers[cat.ToString()].ToString());
             player.Reply(output.ToString());
+        }
+
+        // octastack.preset <vanilla|balanced|boosted|arcade> — предсказуемое
+        // состояние: все множители в 1, стеки = ванилла + оверрайды пресета
+        private void CmdPreset(IPlayer player, string command, string[] args)
+        {
+            if (args.Length != 1 || !_config.StackPresets.TryGetValue(args[0].ToLower(), out var preset))
+            {
+                Reply(player, $"Формат: octastack.preset <{string.Join("|", _config.StackPresets.Keys)}>");
+                return;
+            }
+
+            _config.GlobalStackMultiplier = 1f;
+            _config.IndividualItemStackMultipliers.Clear();
+            foreach (var c in _config.CategoryStackMultipliers.Keys.ToList())
+                _config.CategoryStackMultipliers[c] = 1f;
+
+            foreach (var def in ItemManager.GetItemDefinitions())
+                _config.IndividualItemStackSize[def.shortname] = VanillaSize(def);
+            foreach (var kv in preset)
+                _config.IndividualItemStackSize[kv.Key] = kv.Value;
+
+            SaveConfig();
+            SetStackSizes();
+            Reply(player, $"Пресет «{args[0].ToLower()}» применён: {preset.Count} оверрайдов, " +
+                $"wood → {GetStackSize(ItemManager.FindItemDefinition("wood")):N0}");
         }
 
         // octastack.vd — переснять ванильный снапшот (после апдейтов игры)
