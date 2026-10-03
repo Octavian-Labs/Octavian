@@ -6,6 +6,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using OctavianRSM.Models;
+using OctavianRSM.Services;
 
 namespace OctavianRSM.Pages;
 
@@ -123,6 +124,9 @@ public partial class RatesPage : Page
             }
             else
                 TxtStatus.Text = "✓ рейты записаны в GatherManager.json — применятся при рестарте/reload";
+
+            // название сервера само подтянет новые X-рейты, если включён авто-режим
+            _ = ServerTitleBuilder.AutoApplyAsync();
         }
         catch (Exception ex) { TxtStatus.Text = $"ошибка: {ex.Message}"; }
     }

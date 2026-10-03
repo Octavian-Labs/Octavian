@@ -55,13 +55,9 @@ public partial class ServerCfgPage : Page
         // Пустой convar → дефолт из настроек менеджера (иначе пустые поля пишут мусор в cfg)
         string Val(string key, string fallback) => string.IsNullOrWhiteSpace(cfg[key]) ? fallback : cfg[key];
 
-        In_Hostname.Text = Val("server.hostname", s.Hostname);
-        In_Description.Text = Val("server.description", s.Description);
-        In_Url.Text = cfg["server.url"];
-        In_Tags.Text = cfg["server.tags"];
-        In_Header.Text = cfg["server.headerimage"];
-        In_Logo.Text = cfg["server.logoimage"];
-        In_Domain.Text = Val("server.favoritesendpoint", s.ServerDomain);
+        // «лицо сервера» (hostname/description/url/tags/картинки/домен) переехало
+        // на дашборд → ЛИЦО СЕРВЕРА — здесь ключи остаются только в Known,
+        // чтобы не попасть в кастом-поле и не потеряться при Save
         In_MaxPlayers.Text = Val("server.maxplayers", s.MaxPlayers.ToString());
         In_SaveInterval.Text = Val("server.saveinterval", s.SaveInterval.ToString());
         In_IdleKick.Text = Val("server.idlekick", "30");
@@ -76,6 +72,9 @@ public partial class ServerCfgPage : Page
         In_QueryPort.Text = Val("server.queryport", s.QueryPort.ToString());
         In_RconPort.Text = Val("rcon.port", s.RconPort.ToString());
         In_RconPass.Text = Val("rcon.password", s.RconPassword);
+
+        In_MapsFolder.Text = s.MapsFolder;
+        LoadMapsList();
 
         // неизвестные ключи показываем как кастомные строки
         In_Custom.Text = string.Join(Environment.NewLine,
@@ -116,13 +115,6 @@ public partial class ServerCfgPage : Page
     private void Save()
     {
         var cfg = App.ServerCfg;
-        cfg["server.hostname"] = In_Hostname.Text.Trim();
-        cfg["server.description"] = In_Description.Text.Trim();
-        cfg["server.url"] = In_Url.Text.Trim();
-        cfg["server.tags"] = In_Tags.Text.Trim();
-        cfg["server.headerimage"] = In_Header.Text.Trim();
-        cfg["server.logoimage"] = In_Logo.Text.Trim();
-        cfg["server.favoritesendpoint"] = In_Domain.Text.Trim().ToLowerInvariant();
         Set("server.maxplayers", In_MaxPlayers.Text.Trim());
         Set("server.saveinterval", In_SaveInterval.Text.Trim());
         Set("server.idlekick", In_IdleKick.Text.Trim());
@@ -152,135 +144,81 @@ public partial class ServerCfgPage : Page
         }
 
         cfg.Save();
-        // hostname/description живут и в launch-аргументах — держим настройки в синхроне
-        App.Settings.Hostname = In_Hostname.Text.Trim();
-        App.Settings.Description = In_Description.Text.Trim();
-        // Домен нужен и менеджеру: строка подключения на дашборде
-        App.Settings.ServerDomain = In_Domain.Text.Trim().ToLowerInvariant();
-        App.Settings.Save(App.SettingsPath);
+        // лицо сервера (hostname/description/домен) — на дашборде, там же синхрон настроек
         TxtStatus.Text = "✓ сохранено";
     }
 
-    // Проверка публикации: валидность полей/тегов, состояние локальных портов и
-    // реальный A2S-ответ Steam Query. Ничего не сохраняет — только диагностика.
-    private async void CheckPublication_Click(object s, RoutedEventArgs e)
+    // ── Библиотека кастомных карт ────────────────────────────────────────
+    // Папка с .map файлами → выпадающий список с размером и датой,
+    // выбор пишет file:/// URI в server.levelurl (Rust грузит локальные карты
+    // по file://, для внешнего хостинга нужен http-URL как раньше)
+
+    private class MapEntry
     {
-        var errors = ValidatePublication();
-        var ip = IPGlobalProperties.GetIPGlobalProperties();
-        var udpPorts = ip.GetActiveUdpListeners().Select(p => p.Port).ToHashSet();
-        var tcpPorts = ip.GetActiveTcpListeners().Select(p => p.Port).ToHashSet();
-        var query = await QueryA2s(App.Settings.QueryPort);
-        PubPortState.Text = $"Game UDP {PortState(udpPorts, App.Settings.GamePort)} • Query {query} • " +
-            $"RCON TCP {PortState(tcpPorts, App.Settings.RconPort)} • RCON {(App.Rcon.IsConnected ? "ON" : "OFF")}";
-        PubPortState.Foreground = (Brush)FindResource(
-            errors.Count == 0 && App.Rcon.IsConnected && query.StartsWith("A2S OK") ? "B.Success" : "B.Warn");
-        PubValidation.Text = errors.Count == 0
-            ? "Поля и группы tags валидны. Внешняя видимость зависит от NAT/firewall и регистрации в Steam master."
-            : string.Join(Environment.NewLine, errors);
+        public string Path = "";
+        public string Display = "";
+        public override string ToString() => Display;
     }
 
-    private List<string> ValidatePublication()
+    private void LoadMapsList()
     {
-        var errors = new List<string>();
-        var hostname = In_Hostname.Text.Trim();
-        if (hostname.Length is < 1 or > 200) errors.Add("Название: требуется 1–200 символов.");
-        foreach (var (label, text) in new[] { ("URL", In_Url.Text), ("Header", In_Header.Text), ("Logo", In_Logo.Text) })
-            if (!string.IsNullOrWhiteSpace(text) &&
-                (!Uri.TryCreate(text.Trim(), UriKind.Absolute, out var uri)
-                 || (uri.Scheme != "http" && uri.Scheme != "https")))
-                errors.Add($"{label}: нужен абсолютный http/https URL.");
-
-        var tags = In_Tags.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        var folder = In_MapsFolder.Text.Trim();
+        CbMaps.Items.Clear();
+        if (folder.Length == 0 || !Directory.Exists(folder))
         {
-            "monthly", "biweekly", "weekly", "vanilla", "hardcore", "softcore", "pve", "roleplay",
-            "creative", "minigame", "training", "battlefield", "broyale", "builds", "tut", "premium",
-            "NA", "SA", "EU", "WA", "EA", "OC", "AF"
-        };
-        var invalid = tags.Where(t => !allowed.Contains(t)).ToArray();
-        if (invalid.Length > 0) errors.Add("Неизвестные tags: " + string.Join(", ", invalid));
-        if (tags.Count(t => new[] { "monthly", "biweekly", "weekly" }.Contains(t, StringComparer.OrdinalIgnoreCase)) > 1)
-            errors.Add("Tags: выберите только один график вайпа.");
-        if (tags.Count(t => new[] { "vanilla", "hardcore", "softcore" }.Contains(t, StringComparer.OrdinalIgnoreCase)) > 1)
-            errors.Add("Tags: выберите только одну сложность.");
-        if (tags.Length > 4) errors.Add("В server browser отображаются только первые четыре тега.");
-        if (new[] { App.Settings.GamePort, App.Settings.QueryPort, App.Settings.RconPort }.Distinct().Count() != 3)
-            errors.Add("Game, Query и RCON порты должны различаться.");
-        var domain = In_Domain.Text.Trim();
-        if (domain.Length > 0 && !Uri.CheckHostName(domain).Equals(UriHostNameType.Dns))
-            errors.Add("Домен: нужен вид rust.example.com (A-запись, без http:// и порта).");
-        return errors;
-    }
-
-    private static string PortState(HashSet<int> ports, int port)
-        => ports.Contains(port) ? $"{port} OK" : $"{port} НЕ СЛУШАЕТ";
-
-    // Встроенный гайд по DNS (сокращённая версия Docs/DOMAIN.md в репозитории)
-    private void DomainGuide_Click(object s, RoutedEventArgs e)
-        => new InfoWindow("Свой домен для сервера", DomainGuideText, Window.GetWindow(this)).Show();
-
-    private const string DomainGuideText =
-@"Rust умеет подключаться к серверу по домену через DNS SRV-запись
-(wiki.facepunch.com/rust/dns-records). Нужны ДВЕ записи у вашего
-DNS-провайдера (Cloudflare, GoDaddy, reg.ru и т.п.):
-
-  1) A-запись:    rust.example.com  ->  IPv4 сервера
-  2) SRV-запись:  _rust._udp.<имя A-записи>  ->  target: rust.example.com,
-                  port: ваш server.port
-
-ПРИМЕР ДЛЯ CLOUDFLARE  (DNS -> Records -> Add record):
-
-  • Type A:    Name = rust, IPv4 = ваш IP,
-               Proxy status = DNS only  <-- важно, серое облако!
-  • Type SRV:  Service = _rust, Proto = _udp, Name = rust,
-               Priority = 0, Weight = 0,
-               Port = ваш server.port, Target = rust.example.com
-
-ВАЖНО:
-  • Оранжевое облако (проксирование Cloudflare) у A-записи ВЫКЛЮЧИТЬ —
-    игровой трафик Rust не HTTP и через HTTP-прокси не пойдёт.
-  • Туннель cloudflared для игрового UDP-трафика не нужен:
-    достаточно обычных DNS-записей.
-  • На сервере должен быть открыт/проброшен UDP-порт server.port
-    (и query-порт для списка серверов).
-
-ПОСЛЕ НАСТРОЙКИ:
-  • Подключение из консоли клиента (F1):
-        client.connect rust.example.com
-    Порт указывать не нужно — SRV-запись отдаёт его сама.
-  • Впишите домен в поле слева — RSM пропишет
-    server.favoritesEndpoint в server.cfg: игроки, добавившие
-    сервер в избранное, найдут его даже после смены IP/порта.
-  • На дашборде строка «client.connect» начнёт показывать домен.
-
-ПРОВЕРКА ЗАПИСЕЙ (cmd/PowerShell):
-    nslookup -type=SRV _rust._udp.rust.example.com
-    Resolve-DnsName -Type SRV _rust._udp.rust.example.com";
-
-    private static async Task<string> QueryA2s(int port)
-    {
+            TxtMapInfo.Text = folder.Length == 0 ? "" : "папка не найдена";
+            return;
+        }
         try
         {
-            using var udp = new UdpClient(AddressFamily.InterNetwork);
-            udp.Connect(IPAddress.Loopback, port);
-            var request = new List<byte> { 0xFF, 0xFF, 0xFF, 0xFF, 0x54 };
-            request.AddRange(Encoding.ASCII.GetBytes("Source Engine Query\0"));
-            await udp.SendAsync(request.ToArray());
-            var result = await udp.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(2));
-            var data = result.Buffer;
-            if (data.Length >= 9 && data[4] == 0x41)
+            foreach (var f in Directory.GetFiles(folder, "*.map"))
             {
-                request.AddRange(data.Skip(5).Take(4));
-                await udp.SendAsync(request.ToArray());
-                data = (await udp.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(2))).Buffer;
+                var fi = new FileInfo(f);
+                CbMaps.Items.Add(new MapEntry
+                {
+                    Path = f,
+                    Display = $"{Path.GetFileNameWithoutExtension(f)}  ·  {fi.Length / 1048576.0:0.#} MB  ·  {fi.LastWriteTime:dd.MM.yyyy}"
+                });
             }
-            if (data.Length < 7 || data[4] != 0x49) return $"A2S НЕОЖИДАННЫЙ ({port})";
-            var index = 6;
-            var end = Array.IndexOf(data, (byte)0, index);
-            var name = end > index ? Encoding.UTF8.GetString(data, index, end - index) : "Rust";
-            return $"A2S OK {port} ({name})";
+            TxtMapInfo.Text = CbMaps.Items.Count == 0
+                ? "в папке нет .map файлов"
+                : $"найдено карт: {CbMaps.Items.Count}. Выбор пропишет file:/// в server.levelurl.";
         }
-        catch { return $"A2S НЕТ ОТВЕТА {port}"; }
+        catch (Exception ex) { TxtMapInfo.Text = ex.Message; }
+    }
+
+    private void MapsFolder_Changed(object sender, RoutedEventArgs e)
+    {
+        App.Settings.MapsFolder = In_MapsFolder.Text.Trim();
+        App.Settings.Save(App.SettingsPath);
+        LoadMapsList();
+    }
+
+    private void BrowseMaps_Click(object sender, RoutedEventArgs e)
+    {
+        // OpenFileDialog с FileName="" работает как выбор папки без лишних зависимостей
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Выберите папку с .map картами (откройте её и нажмите «Открыть»)",
+            CheckFileExists = false,
+            CheckPathExists = true,
+            FileName = "выбор папки",
+            Filter = "Папка|*.map"
+        };
+        if (dlg.ShowDialog() != true) return;
+        var dir = Path.GetDirectoryName(dlg.FileName);
+        if (string.IsNullOrEmpty(dir)) return;
+        In_MapsFolder.Text = dir;
+        MapsFolder_Changed(sender, e);
+    }
+
+    private void Map_Selected(object sender, SelectionChangedEventArgs e)
+    {
+        if (CbMaps.SelectedItem is not MapEntry m) return;
+        var fi = new FileInfo(m.Path);
+        In_LevelUrl.Text = new Uri(fi.FullName).AbsoluteUri; // file:///D:/...
+        TxtMapInfo.Text = $"{fi.Name} — {fi.Length / 1048576.0:0.#} MB, изменена {fi.LastWriteTime:dd.MM.yyyy HH:mm}. " +
+                          $"Записано в server.levelurl — применится при старте/вайпе.";
     }
 
     // ── Вкладка «Редактор файлов»: сырые cfg/json сервера и ядра Carbon ────

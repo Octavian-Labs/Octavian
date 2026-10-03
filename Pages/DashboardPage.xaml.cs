@@ -33,6 +33,7 @@ public partial class DashboardPage : Page
             : $"игра {s0.GamePort}  ·  query {s0.QueryPort}  ·  rcon {s0.RconPort}  ·  app {s0.AppPort}";
         _ = DetectConnectAddress();
         LoadOptions();
+        InitFace(); // вкладка «Лицо сервера»: конструктор названия + маркетинг
         App.Server.OnStateChanged += Server_OnStateChanged;
         // NavigationView пересоздаёт страницы — при уходе гасим фон и отписываемся,
         // иначе каждая загрузка дашборда плодит вечные циклы и подписчиков

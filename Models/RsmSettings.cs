@@ -80,6 +80,18 @@ public class RsmSettings
     // Доп. параметры запуска
     public string Gamemode { get; set; } = "vanilla";
     public string LevelUrl { get; set; } = ""; // кастомная карта: server.levelurl
+    public string MapsFolder { get; set; } = ""; // папка с кастомными .map — выпадающий список в «Карта и сеть»
+
+    // ── Конструктор названия сервера (лицо, server.hostname) ──
+    // Паттерн: [Регион] Имя | Рейты | Пати | Фичи... | Вайп — как у топовых серверов
+    public string TitleRegion { get; set; } = "EU";   // "" = без префикса [EU]
+    public string TitleBase { get; set; } = "OCTAVIAN RUST";
+    public bool TitleShowRates { get; set; } = true;  // "X5" или "X5/X10" из GatherRate/StackMultiplier
+    public string TitleTeamMode { get; set; } = "auto"; // auto|solo|duo|trio|quad|max5|nolimit|off
+    public List<string> TitleFeatures { get; set; } = new() { "TP", "KITS" };
+    public string TitleWipeMode { get; set; } = "auto"; // off|auto|custom — auto берёт LastWipeDate
+    public string TitleWipeCustom { get; set; } = "";
+    public bool TitleAuto { get; set; } = true; // пересобирать/применять при смене рейтов и лимита пати
 
     // Библиотека пресетов лута (BetterLoot/MagicLoot JSON + описание)
     public List<LootPreset> LootPresets { get; set; } = new();

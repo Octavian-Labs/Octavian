@@ -25,80 +25,6 @@
         </DockPanel>
 
         <TabControl Grid.Row="1">
-            <TabItem Header="ОБЩЕЕ">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
-                    <StackPanel>
-                <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
-                    <StackPanel>
-                        <TextBlock Text="Имя сервера" Style="{StaticResource OctaFieldLabel}"/>
-                        <TextBox x:Name="In_Hostname" Margin="0,0,0,10"/>
-                        <TextBlock Text="Описание (в списке серверов)" Style="{StaticResource OctaFieldLabel}"/>
-                        <TextBox x:Name="In_Description" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" Margin="0,0,0,10"/>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="16"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Сайт (server.url)" Style="{StaticResource OctaFieldLabel}"/>
-                                <TextBox x:Name="In_Url"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="Теги (server.tags, через запятую)" Style="{StaticResource OctaFieldLabel}"/>
-                                <TextBox x:Name="In_Tags"/>
-                            </StackPanel>
-                        </Grid>
-                        <Grid Margin="0,10,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="16"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Домен сервера (server.favoritesEndpoint)" Style="{StaticResource OctaFieldLabel}"/>
-                                <TextBox x:Name="In_Domain" ToolTip="A-запись, напр. rust.example.com — подключение и избранное по домену (нужны A+SRV записи)"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
-                                <DockPanel LastChildFill="False">
-                                    <ui:Button Content="❔ КАК НАСТРОИТЬ ДОМЕН" Style="{StaticResource OctaCmdBtn}"
-                                               DockPanel.Dock="Left" Click="DomainGuide_Click"
-                                               ToolTip="Гайд: A + SRV записи (Cloudflare и др.)"/>
-                                    <TextBlock Text="client.connect rust.example.com"
-                                               Foreground="{StaticResource B.TextDim}" FontSize="11"
-                                               FontFamily="Consolas" VerticalAlignment="Center" Margin="12,0,0,0"/>
-                                </DockPanel>
-                            </StackPanel>
-                        </Grid>
-                        <Grid Margin="0,10,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="16"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Баннер (server.headerimage URL)" Style="{StaticResource OctaFieldLabel}"/>
-                                <TextBox x:Name="In_Header"/>
-                            </StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="Лого Rust+ (server.logoimage URL)" Style="{StaticResource OctaFieldLabel}"/>
-                                <TextBox x:Name="In_Logo"/>
-                            </StackPanel>
-                        </Grid>
-                        <DockPanel LastChildFill="False" Margin="0,12,0,0">
-                            <ui:Button Content="ПРОВЕРИТЬ ПУБЛИКАЦИЮ" Style="{StaticResource OctaCmdBtn}"
-                                       DockPanel.Dock="Left" Click="CheckPublication_Click"
-                                       ToolTip="Валидация тегов/URL + проверка локальных портов и A2S-ответа"/>
-                            <TextBlock x:Name="PubPortState" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
-                                       Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap"/>
-                        </DockPanel>
-                        <TextBlock x:Name="PubValidation" Text="" Margin="0,8,0,0"
-                                   Foreground="{StaticResource B.Warn}" FontSize="12" TextWrapping="Wrap"/>
-                    </StackPanel>
-                </Border>
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
             <TabItem Header="ЛИМИТЫ И ФЛАГИ">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
                     <StackPanel>
@@ -146,6 +72,7 @@
                                FontSize="11" VerticalAlignment="Center" Visibility="Collapsed"/>
                 </DockPanel>
                 <Border x:Name="PnlMap" Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                    <StackPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -167,6 +94,28 @@
                             <TextBox x:Name="In_WorldSize"/>
                         </StackPanel>
                     </Grid>
+
+                    <!-- Библиотека кастомных карт: папка → выпадающий список .map -->
+                    <Border Height="1" Background="{StaticResource B.Border}" Margin="0,12,0,10"/>
+                    <DockPanel LastChildFill="False" Margin="0,0,0,6">
+                        <TextBlock Text="Папка кастомных карт (.map)" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
+                        <ui:Button Content="ОБЗОР…" Padding="10,3" FontSize="10" DockPanel.Dock="Right"
+                                   Click="BrowseMaps_Click" ToolTip="Выбрать папку с .map-файлами"/>
+                    </DockPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="In_MapsFolder" Grid.Column="0" LostFocus="MapsFolder_Changed"
+                                 ToolTip="Каталог, где лежат .map файлы — сканируется автоматически"/>
+                        <ComboBox x:Name="CbMaps" Grid.Column="2" SelectionChanged="Map_Selected"
+                                  ToolTip="Выбор карты запишет file:/// URI в server.levelurl"/>
+                    </Grid>
+                    <TextBlock x:Name="TxtMapInfo" Text="" Margin="0,6,0,0"
+                               Foreground="{StaticResource B.TextDim}" FontSize="11" TextWrapping="Wrap"/>
+                    </StackPanel>
                 </Border>
 
                 <!-- СЕТЬ — launch-lock -->
