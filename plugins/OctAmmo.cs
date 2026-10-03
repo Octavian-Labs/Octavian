@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctAmmo", "Octavian", "1.1.0")]
+    [Info("OctAmmo", "Octavian", "1.2.0")]
     [Description("Гибкая ёмкость магазинов по уровням (Default/Senior/Middle/High) через permissions. Без UI. Хранит базовые значения из игры.")]
     public class OctAmmo : CovalencePlugin
     {
@@ -73,6 +73,15 @@ namespace Oxide.Plugins
             public int MinCapacity = 0;
             public int MaxCapacity = 512;
             public float ReapplyInterval = 10.0f; // сек
+
+            // множители тира от базовой ёмкости — для стволов без явных Levels
+            // (автозасеянные вроде smg.mp5): High≈2x, Middle≈1.6x, Senior≈1.3x
+            public Dictionary<string, float> TierMultipliers = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Senior"] = 1.3f,
+                ["Middle"] = 1.6f,
+                ["High"]   = 2.0f,
+            };
         }
 
         protected override void LoadDefaultConfig()
@@ -138,6 +147,8 @@ namespace Oxide.Plugins
             // Подстрахуем новые поля
             if (_config.Weapons == null)
                 _config.Weapons = new Dictionary<string, WeaponEntry>(StringComparer.OrdinalIgnoreCase);
+            if (_config.TierMultipliers == null || _config.TierMultipliers.Count == 0)
+                _config.TierMultipliers = new PluginConfig().TierMultipliers;
 
             foreach (var kv in _config.Weapons.ToList())
             {
@@ -477,6 +488,8 @@ namespace Oxide.Plugins
                     {
                         if (we.Levels != null && we.Levels.TryGetValue(g.Name, out var cap))
                             return Mathf.Clamp(cap, _config.MinCapacity, _config.MaxCapacity);
+                        var fb = TierFallback(we, g.Name); // нет явного уровня — множитель от базы
+                        if (fb > 0) return fb;
                     }
                 }
                 catch
@@ -487,10 +500,26 @@ namespace Oxide.Plugins
 
             // VIP-тир из OctVIP, если ни один octammo.*-пермишен не сработал
             var vipTier = GetVipTier((ulong)player.userID);
-            if (vipTier != null && we.Levels != null && we.Levels.TryGetValue(vipTier, out var vipCap))
-                return Mathf.Clamp(vipCap, _config.MinCapacity, _config.MaxCapacity);
+            if (vipTier != null)
+            {
+                if (we.Levels != null && we.Levels.TryGetValue(vipTier, out var vipCap))
+                    return Mathf.Clamp(vipCap, _config.MinCapacity, _config.MaxCapacity);
+                var fb = TierFallback(we, vipTier);
+                if (fb > 0) return fb;
+            }
 
             return Mathf.Clamp(we.Default, _config.MinCapacity, _config.MaxCapacity);
+        }
+
+        // тир без явного Levels — ёмкость = базовая × TierMultipliers[tier]
+        private int TierFallback(WeaponEntry we, string tierName)
+        {
+            if (we == null || string.IsNullOrEmpty(tierName) || _config?.TierMultipliers == null)
+                return -1;
+            if (!_config.TierMultipliers.TryGetValue(tierName, out var mult) || mult <= 0)
+                return -1;
+            var baseCap = we.BaseGame > 0 ? we.BaseGame : we.Default;
+            return Mathf.Clamp(Mathf.RoundToInt(baseCap * mult), _config.MinCapacity, _config.MaxCapacity);
         }
 
         // PluginReference залипает на выгруженной инстанции — ищем живой плагин по имени
