@@ -133,8 +133,8 @@ public partial class DashboardPage : Page
         BtnRestart.IsEnabled = local && running;
         BtnKill.IsEnabled = local && running;
         BtnForceSave.IsEnabled = App.Rcon.IsConnected;
-        // power-кнопка как в плеере: ▶ старт ↔ ■ стоп, красная когда сервер жив
-        BtnPower.Content = running ? "■" : "▶";
+        // кнопка состояния: ЗАПУСТИТЬ (акцент) ↔ ОСТАНОВИТЬ (красная)
+        BtnPower.Content = running ? "■ ОСТАНОВИТЬ" : "ЗАПУСТИТЬ";
         BtnPower.Appearance = running
             ? Wpf.Ui.Controls.ControlAppearance.Danger
             : Wpf.Ui.Controls.ControlAppearance.Primary;
