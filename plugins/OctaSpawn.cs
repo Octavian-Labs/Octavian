@@ -9,9 +9,9 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaSpawnTest", "Octavian", "0.1.0")]
-    [Description("[DEV] Случайные точки спавна по биомам карты: вдали от построек, воды и монументов. Биомы включаются по онлайну.")]
-    public class OctaSpawnTest : RustPlugin
+    [Info("OctaSpawn", "Octavian", "1.0.0")]
+    [Description("Случайные точки спавна по биомам карты: вдали от построек, воды, склонов и монументов. Биомы включаются по онлайну.")]
+    public class OctaSpawn : RustPlugin
     {
         [PluginReference]
         private Plugin ZoneManager;
@@ -21,9 +21,6 @@ namespace Oxide.Plugins
 
         private bool _disabled;
 
-        // админы, у которых точки спавна подсвечены маркерами на карте
-        private readonly HashSet<ulong> _mapViewers = new HashSet<ulong>();
-
         // слои для проверки «рядом постройки» и «точка на террейне»
         private const int VisRaycastLayers = 1 << 8 | 1 << 17 | 1 << 21;
         private const int PointRaycastLayers = 1 << 4 | 1 << 8 | 1 << 10 | 1 << 15 | 1 << 16 | 1 << 21 | 1 << 23 | 1 << 27 | 1 << 28 | 1 << 29;
@@ -31,10 +28,6 @@ namespace Oxide.Plugins
         private int _blockedTopology;
 
         private ConfigData _config;
-
-        // dev-анонс в чат при загрузке/перезагрузке
-        private void Init() => timer.Once(1f, () =>
-            PrintToChat($"Плагин \"{Name}\" dev — загружен"));
 
         private void Loaded()
         {
@@ -218,6 +211,7 @@ namespace Oxide.Plugins
 
         #region Команды
 
+        // Админская визуализация точек в мире: сфера + луч вверх (ddraw)
         [ChatCommand("octaspawn.show")]
         private void CmdShowSpawns(BasePlayer player, string command, string[] args)
         {
@@ -240,61 +234,7 @@ namespace Oxide.Plugins
             }
         }
 
-        // Тогл маркеров спавна на карте — только для этого админа
-        [ChatCommand("octaspawn.map")]
-        private void CmdMapSpawns(BasePlayer player, string command, string[] args)
-        {
-            if (!player.IsAdmin) return;
-
-            var uid = (ulong)player.userID;
-            if (_mapViewers.Remove(uid))
-            {
-                SendReply(player, "OctaSpawn: маркеры спавна на карте ВЫКЛ (уже отображённые пропадут после перезахода)");
-                return;
-            }
-            _mapViewers.Add(uid);
-            SendReply(player, $"OctaSpawn: маркеры спавна на карте ВКЛ — {_spawnpoints.Sum(x => x.Value.Count)} точек. Открой карту (G)");
-            // подталкиваем отправку маркеров клиенту
-            player.SendMarkersToClient();
-        }
-
-        // Цвет маркера по биому (палитра клиента: 0 желт, 1 син, 2 зел, 3 красн, 4 розн, 5 циан)
-        private static int BiomeColour(TerrainBiome.Enum b)
-        {
-            switch (b)
-            {
-                case TerrainBiome.Enum.Arctic:    return 1;
-                case TerrainBiome.Enum.Tundra:    return 5;
-                case TerrainBiome.Enum.Temperate: return 2;
-                case TerrainBiome.Enum.Arid:      return 0;
-                case TerrainBiome.Enum.Jungle:    return 4;
-                default:                          return 3;
-            }
-        }
-
-        // Подмешиваем точки спавна в маркеры, которые сервер шлёт конкретному клиенту
-        private void OnPlayerMarkersSend(BasePlayer player, ProtoBuf.MapNoteList list)
-        {
-            if (list?.notes == null) return;
-            if (!_mapViewers.Contains((ulong)player.userID)) return;
-
-            foreach (var kvp in _spawnpoints)
-            {
-                int colour = BiomeColour(kvp.Key);
-                foreach (var pos in kvp.Value)
-                {
-                    var note = Pool.Get<ProtoBuf.MapNote>();
-                    note.ShouldPool = false;
-                    note.worldPosition = pos;
-                    note.icon = 7; // sleeping bag — иконка спавна
-                    note.colourIndex = colour;
-                    note.label = "";
-                    list.notes.Add(note);
-                }
-            }
-        }
-
-        [ConsoleCommand("octaspawntest.stats")]
+        [ConsoleCommand("octaspawn.stats")]
         private void CmdStats(ConsoleSystem.Arg arg)
         {
             var sb = new System.Text.StringBuilder();
@@ -339,10 +279,11 @@ namespace Oxide.Plugins
                 public Dictionary<TerrainBiome.Enum, BiomeOptions> Biomes { get; set; } =
                     new Dictionary<TerrainBiome.Enum, BiomeOptions>
                     {
-                        [TerrainBiome.Enum.Arctic]   = new BiomeOptions { Enabled = true, Players = 30 },
-                        [TerrainBiome.Enum.Tundra]   = new BiomeOptions { Enabled = true, Players = 20 },
-                        [TerrainBiome.Enum.Arid]     = new BiomeOptions { Enabled = true, Players = 10 },
+                        [TerrainBiome.Enum.Arctic]    = new BiomeOptions { Enabled = true, Players = 30 },
+                        [TerrainBiome.Enum.Tundra]    = new BiomeOptions { Enabled = true, Players = 20 },
+                        [TerrainBiome.Enum.Arid]      = new BiomeOptions { Enabled = true, Players = 10 },
                         [TerrainBiome.Enum.Temperate] = new BiomeOptions { Enabled = true, Players = 1 },
+                        [TerrainBiome.Enum.Jungle]    = new BiomeOptions { Enabled = true, Players = 5 },
                     };
 
                 [JsonProperty("Запретные зоны ZoneManager (ID зон)")]
