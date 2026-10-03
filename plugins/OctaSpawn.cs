@@ -234,8 +234,7 @@ namespace Oxide.Plugins
             }
         }
 
-        [ConsoleCommand("octaspawn.stats")]
-        private void CmdStats(ConsoleSystem.Arg arg)
+        private string BuildStats()
         {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"Точек спавна: {_spawnpoints.Sum(x => x.Value.Count)}, биомов: {_spawnpoints.Count}, disabled={_disabled}");
@@ -246,7 +245,18 @@ namespace Oxide.Plugins
                 var players = opts != null ? opts.Players : 0;
                 sb.AppendLine($"  {kvp.Key}: {kvp.Value.Count} точек (enabled={enabled}, minOnline={players})");
             }
-            Puts(sb.ToString());
+            return sb.ToString();
+        }
+
+        [ConsoleCommand("octaspawn.stats")]
+        private void CmdStats(ConsoleSystem.Arg arg) => Puts(BuildStats());
+
+        // чатовый алиас — /octaspawn.stats в игре (админ)
+        [ChatCommand("octaspawn.stats")]
+        private void CmdStatsChat(BasePlayer player, string command, string[] args)
+        {
+            if (!player.IsAdmin) return;
+            SendReply(player, BuildStats());
         }
 
         #endregion
