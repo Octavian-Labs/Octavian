@@ -292,19 +292,20 @@ namespace Oxide.Plugins
             var first = oven.fuelSlots;
             var last = Mathf.Min(oven.fuelSlots + oven.inputSlots, cont.capacity);
 
-            // сколько топлива съест плавка всего сырья: время самого долгого слота
-            var maxTime = 0f;
+            // сколько топлива съест плавка всего сырья: предмет готовится
+            // за cookTime/smeltSpeed сек; расход = temp/200 топлива в секунду × фактор
+            var totalTime = 0f;
             for (var i = first; i < last; i++)
             {
                 var it = cont.GetSlot(i);
                 var cook = it?.info?.GetComponent<ItemModCookable>();
                 if (cook == null) continue;
-                var t = it.amount * cook.cookTime;
-                if (t > maxTime) maxTime = t;
+                totalTime += it.amount * cook.cookTime;
             }
-            if (maxTime <= 0f) return;
+            if (totalTime <= 0f) return;
 
-            var fuelNeeded = maxTime * (oven.cookingTemperature / 200f);
+            var speed = Mathf.Max(1, oven.smeltSpeed);
+            var fuelNeeded = (totalTime / speed) * (oven.cookingTemperature / 200f) * Settings.FuelBurnFactor;
             var fuelInOven = 0f;
             for (var i = 0; i < oven.fuelSlots; i++)
             {
@@ -588,6 +589,13 @@ namespace Oxide.Plugins
             [JsonProperty("Автозагрузка топлива")]
             public bool AutoFuel
             { get; set; } = true;
+
+            // множитель расхода топлива при расчёте автозагрузки:
+            // топливо = Σ(кол-во × cookTime / smeltSpeed) × (temp/200) × фактор.
+            // 0.6 → ~0.5 дерева на руду серы (5000 руды = 2500 дерева)
+            [JsonProperty("Расход топлива (множитель)")]
+            public float FuelBurnFactor
+            { get; set; } = 0.6f;
 
             // уровень владельца печи → доп. множитель или мгновенная плавка.
             // эффективная скорость = Oven.Multiplier × Level.SpeedMultiplier
