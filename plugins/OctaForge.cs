@@ -143,22 +143,30 @@ namespace Oxide.Plugins
 
             if (levelCfg.Instant)
             {
-                // мгновенная плавка: крутим циклы, пока в печи есть что готовить.
-                // топливо тратится честно — как будто плавили в обычном темпе
+                // мгновенная плавка: крутим циклы, пока есть что плавить ИЛИ жечь.
+                // топливо тратится честно — уголь выходит в том же темпе, что и руда
                 var guard = 0;
-                while (guard++ < InstantLoopCap && HasCookable(Oven))
+                var fuel = Fuel;
+                var burnable = Burnable;
+                while (guard++ < InstantLoopCap)
                 {
+                    var cookable = HasCookable(Oven);
+                    if (fuel == null || fuel.amount <= 0)
+                    {
+                        fuel = FindFuel(Oven);
+                        burnable = fuel?.info.GetComponent<ItemModBurnable>();
+                    }
+                    if (!cookable && fuel == null) break; // нечего ни плавить, ни жечь
+
                     Oven.inventory.OnCycle(0.5f);
                     if (Slot) Slot.SendMessage("Cook", 0.5f, SendMessageOptions.DontRequireReceiver);
 
-                    if (hasFuel)
+                    if (fuel == null) continue;
+                    fuel.fuel -= 0.5f * (Oven.cookingTemperature / 200f);
+                    if (fuel.fuel <= 0f)
                     {
-                        Fuel.fuel -= 0.5f * (Oven.cookingTemperature / 200f);
-                        if (Fuel.fuel <= 0f)
-                        {
-                            Oven.ConsumeFuel(Fuel, Burnable);
-                            if (Fuel.amount <= 0 || Fuel.fuel <= 0f) break;
-                        }
+                        Oven.ConsumeFuel(fuel, burnable);
+                        if (fuel.amount <= 0) fuel = null;
                     }
                 }
                 return;
@@ -178,6 +186,19 @@ namespace Oxide.Plugins
                     if (Fuel.fuel <= 0f) Oven.ConsumeFuel(Fuel, Burnable);
                 }
             }
+        }
+
+        // первый топливный предмет в топливных слотах [0, fuelSlots)
+        private static Item FindFuel(BaseOven oven)
+        {
+            if (oven?.inventory == null) return null;
+            var n = Mathf.Min(oven.fuelSlots, oven.inventory.capacity);
+            for (var i = 0; i < n; i++)
+            {
+                var it = oven.inventory.GetSlot(i);
+                if (it != null && it.amount > 0) return it;
+            }
+            return null;
         }
 
         private static bool HasCookable(BaseOven oven)
@@ -210,7 +231,7 @@ namespace Oxide.Plugins
                 {
                     if (oven != null && !oven.IsDestroyed)
                     {
-                        if (Settings.AutoSplit) SplitInputs(oven);
+                        if (Settings.AutoSplit) { SplitInputs(oven); SplitFuel(oven); }
                         if (Settings.AutoFuel) AutoFuel(oven);
                     }
                 }
@@ -247,6 +268,17 @@ namespace Oxide.Plugins
                 Redistribute(oven, def, first, last);
             cont.MarkDirty();
             oven.SendNetworkUpdate();
+        }
+
+        // топливо поровну по топливным слотам [0, fuelSlots)
+        private void SplitFuel(BaseOven oven)
+        {
+            var cont = oven.inventory;
+            var n = Mathf.Min(oven.fuelSlots, cont.capacity);
+            if (n < 2) return;
+            var def = oven.fuelType;
+            if (def == null) return;
+            Redistribute(oven, def, 0, n);
         }
 
         private void Redistribute(BaseOven oven, ItemDefinition def, int first, int last)
