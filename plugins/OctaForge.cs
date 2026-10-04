@@ -4,7 +4,12 @@
 //   - базовый множитель = рейт сервера (по умолчанию x5);
 //   - уровни: octaforge.t1..t6 ИЛИ OctVIP GetVipLevel — эффективная скорость
 //     = Oven.Multiplier × Level.SpeedMultiplier; Instant=true — плавит весь
-//     инпут за один цикл (топливо списывается как при обычной плавке).
+//     инпут за один цикл (топливо списывается как при обычной плавке);
+//   - автосплит: сырьё раскладывается поровну по входным слотам печи;
+//   - автотопливо: дерево подгружается из инвентаря — сколько нужно на
+//     плавку лежащего сырья (или всё что есть, если не хватает);
+//   - biofuel_generator.deployed: множитель делит processInterval,
+//     Instant — почти непрерывная переработка и автопомешивание.
 using System.Collections.Generic;
 using Facepunch.Extend;
 using Newtonsoft.Json;
@@ -26,6 +31,17 @@ namespace Oxide.Plugins
                 if (!string.IsNullOrEmpty(perm)) permission.RegisterPermission(perm, this);
 
             DefaultSettings();
+            // печи могли добавиться после первого запуска — дописываем недостающие
+            var dirty = false;
+            foreach (var oven in Ovens)
+                if (!Settings.Ovens.ContainsKey(oven))
+                {
+                    Settings.Ovens.Add(oven, new SettingsObject.OvenSettings());
+                    dirty = true;
+                }
+            if (dirty) SaveConfig();
+
+            timer.Every(5f, ScanBioGenerators);
 
             foreach (ItemDefinition Item in ItemManager.itemList)
             {
@@ -166,6 +182,215 @@ namespace Oxide.Plugins
                 if (item.info.GetComponent<ItemModCookable>() != null) return true;
             }
             return false;
+        }
+
+        // автосплит: раскладываем сырьё поровну по input-слотам + автотопливо
+        private readonly HashSet<ItemContainerId> _busy = new HashSet<ItemContainerId>();
+
+        private void OnItemAddedToContainer(ItemContainer container, Item item)
+        {
+            var oven = container?.entityOwner as BaseOven;
+            if (oven == null || item == null) return;
+            if (!Settings.AutoSplit && !Settings.AutoFuel) return;
+            if (_busy.Contains(container.uid)) return; // наши же MoveToContainer дёргают хук
+            if (item.info?.GetComponent<ItemModCookable>() == null) return;
+
+            // откладываем на тик — пакет переливания (шифт-клики) обработается разом
+            _busy.Add(container.uid);
+            timer.Once(0.05f, () =>
+            {
+                try
+                {
+                    if (oven != null && !oven.IsDestroyed)
+                    {
+                        if (Settings.AutoSplit) SplitInputs(oven);
+                        if (Settings.AutoFuel) AutoFuel(oven);
+                    }
+                }
+                finally
+                {
+                    _busy.Remove(container.uid);
+                }
+            });
+        }
+
+        private void OnOvenToggle(BaseOven oven, BasePlayer player)
+        {
+            if (oven == null || !oven.IsOn()) return;
+            if (Settings.AutoSplit) SplitInputs(oven);
+            if (Settings.AutoFuel) AutoFuel(oven, player);
+        }
+
+        // входные слоты: [fuelSlots, fuelSlots+inputSlots); топливо — первые fuelSlots
+        private void SplitInputs(BaseOven oven)
+        {
+            var cont = oven.inventory;
+            var first = oven.fuelSlots;
+            var last = Mathf.Min(oven.fuelSlots + oven.inputSlots, cont.capacity);
+            if (last - first < 2) return;
+
+            var seen = new HashSet<ItemDefinition>();
+            for (var i = first; i < last; i++)
+            {
+                var it = cont.GetSlot(i);
+                if (it?.info?.GetComponent<ItemModCookable>() != null)
+                    seen.Add(it.info);
+            }
+            foreach (var def in seen)
+                Redistribute(oven, def, first, last);
+            cont.MarkDirty();
+            oven.SendNetworkUpdate();
+        }
+
+        private void Redistribute(BaseOven oven, ItemDefinition def, int first, int last)
+        {
+            var cont = oven.inventory;
+            var pool = 0;
+            var free = new List<int>();
+            for (var i = first; i < last; i++)
+            {
+                var it = cont.GetSlot(i);
+                if (it == null) free.Add(i);
+                else if (it.info == def) { free.Add(i); pool += it.amount; it.RemoveFromContainer(); it.Remove(); }
+            }
+            if (pool == 0 || free.Count == 0) return;
+
+            // поровну по всем доступным слотам (в т.ч. свободным)
+            var per = Mathf.Max(1, Mathf.CeilToInt(pool / (float)free.Count));
+            foreach (var slot in free)
+            {
+                if (pool <= 0) break;
+                var ni = ItemManager.Create(def, Mathf.Min(per, pool));
+                if (!ni.MoveToContainer(cont, slot))
+                {
+                    pool += ni.amount;
+                    ni.Remove();
+                }
+                else pool -= ni.amount;
+            }
+            // остаток (не влез из-за maxstack) — в любой свободный слот контейнера
+            if (pool > 0)
+            {
+                var rest = ItemManager.Create(def, pool);
+                if (!rest.MoveToContainer(cont)) rest.Drop(oven.transform.position + Vector3.up, Vector3.zero);
+            }
+        }
+
+        // подгружает топливо из инвентаря игрока, лутающего печь:
+        // столько, сколько нужно на плавку лежащего сырья (или всё что есть)
+        private void AutoFuel(BaseOven oven, BasePlayer player = null)
+        {
+            var def = oven.fuelType;
+            if (def == null) return;
+            player = player ?? FindLooter(oven);
+            if (player == null) return;
+
+            var burnable = def.GetComponent<ItemModBurnable>();
+            var fuelPerUnit = burnable != null ? Mathf.Max(1f, burnable.fuelAmount) : 10f;
+
+            var cont = oven.inventory;
+            var first = oven.fuelSlots;
+            var last = Mathf.Min(oven.fuelSlots + oven.inputSlots, cont.capacity);
+
+            // сколько топлива съест плавка всего сырья: время самого долгого слота
+            var maxTime = 0f;
+            for (var i = first; i < last; i++)
+            {
+                var it = cont.GetSlot(i);
+                var cook = it?.info?.GetComponent<ItemModCookable>();
+                if (cook == null) continue;
+                var t = it.amount * cook.cookTime;
+                if (t > maxTime) maxTime = t;
+            }
+            if (maxTime <= 0f) return;
+
+            var fuelNeeded = maxTime * (oven.cookingTemperature / 200f);
+            var fuelInOven = 0f;
+            for (var i = 0; i < oven.fuelSlots; i++)
+            {
+                var it = cont.GetSlot(i);
+                // item.fuel — остаток только у горящего юнита; остаток стека — полные единицы
+                if (it != null && it.info == def) fuelInOven += it.fuel + (it.amount - 1) * fuelPerUnit;
+            }
+            var deficit = fuelNeeded - fuelInOven;
+            if (deficit <= 0.5f) return;
+
+            foreach (var from in new[] { player.inventory.containerMain, player.inventory.containerBelt })
+            {
+                for (var i = from.itemList.Count - 1; i >= 0 && deficit > 0f; i--)
+                {
+                    var it = from.itemList[i];
+                    if (it.info != def) continue;
+                    var take = (int)Mathf.Min(it.amount, Mathf.Ceil(deficit / fuelPerUnit));
+                    if (take <= 0) continue;
+                    Item moved = take >= it.amount ? it : it.SplitItem(take);
+                    if (moved != null && moved.MoveToContainer(cont))
+                    {
+                        deficit -= take * fuelPerUnit;
+                        it.MarkDirty();
+                    }
+                    else if (moved != null && moved != it)
+                        moved.Remove();
+                }
+            }
+            cont.MarkDirty();
+            oven.SendNetworkUpdate();
+        }
+
+        private BasePlayer FindLooter(BaseEntity ent)
+        {
+            foreach (var p in BasePlayer.activePlayerList)
+                if (p.inventory.loot.entitySource == ent) return p;
+            return null;
+        }
+
+        // --- BiofuelGenerator: множитель делит processInterval, Instant — авто-помешивание
+        private void ScanBioGenerators()
+        {
+            foreach (var ent in BaseEntity.saveList)
+            {
+                var bio = ent as BiofuelGenerator;
+                if (bio == null) continue;
+                ApplyBio(bio);
+            }
+        }
+
+        private void ApplyBio(BiofuelGenerator bio)
+        {
+            SettingsObject.OvenSettings info;
+            if (!Settings.Ovens.TryGetValue(BioPrefab, out info)) return;
+
+            float baseInterval;
+            if (!_bioBase.TryGetValue(bio.net?.ID.Value ?? 0, out baseInterval))
+            {
+                baseInterval = bio.processInterval;
+                _bioBase[bio.net?.ID.Value ?? 0] = baseInterval;
+            }
+
+            var level = ResolveLevel(bio.OwnerID);
+            var lc = GetLevel(level);
+            if (lc.Instant)
+            {
+                bio.processInterval = 0.05f;
+                bio.StirCharge = 1f;
+                bio.SetStirred(true);
+            }
+            else
+            {
+                var eff = info.Multiplier * lc.SpeedMultiplier;
+                bio.processInterval = Mathf.Max(0.1f, baseInterval / eff);
+            }
+        }
+
+        private readonly Dictionary<ulong, float> _bioBase = new Dictionary<ulong, float>();
+        private const string BioPrefab = "biofuel_generator.deployed";
+
+        private void OnEntitySpawned(BaseNetworkable entity)
+        {
+            var bio = entity as BiofuelGenerator;
+            if (bio == null) return;
+            // OwnerID ставится при развёртывании — чуть позже спавна
+            timer.Once(1f, () => { if (bio != null && !bio.IsDestroyed) ApplyBio(bio); });
         }
 
         private object OnFuelConsume(BaseOven Oven, Item Fuel, ItemModBurnable Burnable)
@@ -354,6 +579,16 @@ namespace Oxide.Plugins
             public bool NoBurntMeat
             { get; set; }
 
+            // сырьё раскладывается поровну по входным слотам печи
+            [JsonProperty("Автосплит сырья по слотам")]
+            public bool AutoSplit
+            { get; set; } = true;
+
+            // топливо подгружается из инвентаря игрока, лутающего печь
+            [JsonProperty("Автозагрузка топлива")]
+            public bool AutoFuel
+            { get; set; } = true;
+
             // уровень владельца печи → доп. множитель или мгновенная плавка.
             // эффективная скорость = Oven.Multiplier × Level.SpeedMultiplier
             // (база печи уже = рейт сервера x5 → ванила 30 мин ~ за 6 мин)
@@ -456,6 +691,7 @@ namespace Oxide.Plugins
         private static readonly List<string> Ovens = new List<string>
         {
             "bbq.deployed",
+            "biofuel_generator.deployed",
             "campfire",
             "fireplace.deployed",
             "furnace.large",
