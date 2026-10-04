@@ -19,7 +19,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaForge", "Octavian", "1.0.0")]
+    [Info("OctaForge", "Octavian", "1.1.0")]
     [Description("VIP-tiered smelting speed, cookable output and fuel settings")]
 
     public class OctaForge : RustPlugin
@@ -127,7 +127,37 @@ namespace Oxide.Plugins
                 Burnable.byproductAmount = kvp.Value.ByProductAmount;
                 Burnable.byproductChance = kvp.Value.ByProductChance;
             }
+
+            _toggler.Clear();
         }
+
+        // VIP-уровень печи определяет тот, кто ей пользуется.
+        // Статичные печи (НПЗ, хобо-бочки, мангалы на монументах) владельца не имеют —
+        // уровень берём от того, кто их включил / сейчас лутает. Из пользователя и владельца выбираем лучший.
+        private int EffectiveLevel(BaseOven oven)
+        {
+            var level = ResolveLevel(FindUser(oven));
+            var owner = ResolveLevel(oven?.OwnerID ?? 0);
+            return level > owner ? level : owner;
+        }
+
+        // кто пользуется: сейчас лутает > кто включал > владелец
+        private ulong FindUser(BaseOven oven)
+        {
+            foreach (var p in BasePlayer.activePlayerList)
+                if (p.inventory.loot.entitySource == oven) return p.userID;
+            if (oven?.net != null && _toggler.TryGetValue(oven.net.ID.Value, out var uid))
+                return uid;
+            return oven?.OwnerID ?? 0;
+        }
+
+        private void OnEntityKill(BaseNetworkable entity)
+        {
+            if (entity is BaseOven && entity.net != null)
+                _toggler.Remove(entity.net.ID.Value);
+        }
+
+        private readonly Dictionary<ulong, ulong> _toggler = new Dictionary<ulong, ulong>();
 
         private void OnOvenCooked(BaseOven Oven, Item Fuel, BaseEntity Slot)
         {
@@ -138,7 +168,7 @@ namespace Oxide.Plugins
             if (!Settings.Ovens.TryGetValue(Oven?.ShortPrefabName, out Info))
                 return;
 
-            var level = ResolveLevel(Oven.OwnerID);
+            var level = EffectiveLevel(Oven);
             var levelCfg = GetLevel(level);
 
             if (levelCfg.Instant)
@@ -244,7 +274,23 @@ namespace Oxide.Plugins
 
         private void OnOvenToggle(BaseOven oven, BasePlayer player)
         {
-            if (oven == null || !oven.IsOn()) return;
+            if (oven == null) return;
+
+            // запоминаем, кто включил/выключил печь, — от этого пользователя считается VIP-уровень.
+            // состояние на момент хука может быть ещё старым — читаем на следующий тик
+            if (oven.net != null && player != null)
+            {
+                var id = oven.net.ID.Value;
+                var uid = player.userID;
+                NextTick(() =>
+                {
+                    if (oven == null || oven.IsDestroyed) return;
+                    if (oven.IsOn()) _toggler[id] = uid;
+                    else _toggler.Remove(id);
+                });
+            }
+
+            if (!oven.IsOn()) return;
             if (Settings.AutoSplit) SplitInputs(oven);
             if (Settings.AutoFuel) AutoFuel(oven, player);
         }
@@ -747,6 +793,9 @@ namespace Oxide.Plugins
         private static readonly List<string> Ovens = new List<string>
         {
             "bbq.deployed",
+            "bbq.static",
+            "bbq.static_hidden",
+            "bbq.campermodule",
             "biofuel_generator.deployed",
             "campfire",
             "fireplace.deployed",
