@@ -96,7 +96,7 @@ namespace Oxide.Plugins
                                 ByProductAmount = (int)Burnable.byproductAmount
                             });
 
-                            Burnable.fuelAmount = Info.FuelAmount;
+                            Burnable.fuelAmount = Info.FuelAmount * Settings.FuelEnergyMult;
                             Burnable.byproductAmount = Info.ByProductAmount;
                             Burnable.byproductChance = 1 - Info.ByProductChance;
                         }
@@ -592,10 +592,19 @@ namespace Oxide.Plugins
 
             // множитель расхода топлива при расчёте автозагрузки:
             // топливо = Σ(кол-во × cookTime / smeltSpeed) × (temp/200) × фактор.
-            // 0.6 → ~0.5 дерева на руду серы (5000 руды = 2500 дерева)
+            // 1.5 → реальный расход ~12.5 топлива на руду серы
+            // (замерено в игре: 2500 ванильного дерева = 2000 серы)
             [JsonProperty("Расход топлива (множитель)")]
             public float FuelBurnFactor
-            { get; set; } = 0.6f;
+            { get; set; } = 1.5f;
+
+            // энергоёмкость ВСЕГО топлива: применяется к fuelAmount всех
+            // горючих предметов (Fuel.FuelAmount × этот множитель).
+            // Ванилла: дерево=10 → 1 дров на ~1.2 руды. x2.5 → дерево=25 →
+            // 1 дров на 2 руды (5000 серы = 2500 дерева)
+            [JsonProperty("Энергоёмкость топлива (множитель)")]
+            public float FuelEnergyMult
+            { get; set; } = 2.5f;
 
             // уровень владельца печи → доп. множитель или мгновенная плавка.
             // эффективная скорость = Oven.Multiplier × Level.SpeedMultiplier
