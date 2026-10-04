@@ -1,9 +1,10 @@
 // OctaRecycle — скорость переработчиков по VIP-уровню игрока.
-// Механика: ванильный RecycleThink() обрабатывает один предмет из входных
-// слотов за цикл. Плагин после каждого ванильного цикла догоняет цикл
-// вручную (рефлексией) — эффективная скорость = Базовый множитель (рейт
-// сервера x5) × Множитель уровня. Instant — крутит цикл, пока во входных
-// слотах есть что перерабатывать (все 6 слотов за один тик).
+// Механика: переработчик крутит RecycleThink() (приватный, рефлексия) —
+// один вызов перерабатывает стек из одного входного слота. Плагин вешает
+// свой таймер на включённый переработчик с интервалом по уровню:
+//   без статуса 5с, бронза 4с, серебро 3с, золото 2с, бриллиант 1с.
+// За тик делается Multiplier × Level.SpeedMultiplier циклов; Instant —
+// крутит цикл, пока во входных слотах есть что перерабатывать.
 // Уровни: octarecycle.t1..t6 ИЛИ OctVIP GetVipLevel — та же лестница,
 // что и в OctaForge. Пользователь = игрок, включивший переработчик
 // (OnRecyclerToggle), иначе тот, кто его сейчас лутает.
@@ -16,7 +17,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaRecycle", "Octavian", "1.0.0")]
+    [Info("OctaRecycle", "Octavian", "1.1.0")]
     [Description("VIP-tiered recycling speed")]
 
     public class OctaRecycle : RustPlugin
@@ -26,6 +27,10 @@ namespace Oxide.Plugins
         {
             foreach (var perm in PermLevel)
                 if (!string.IsNullOrEmpty(perm)) permission.RegisterPermission(perm, this);
+
+            // подхватываем переработчики, оставшиеся включёнными после перезагрузки
+            foreach (var rec in UnityEngine.Object.FindObjectsOfType<Recycler>())
+                if (rec.IsOn()) Arm(rec);
         }
 
         // кто включил переработчик — его уровень и задаёт скорость.
@@ -38,52 +43,15 @@ namespace Oxide.Plugins
             NextTick(() =>
             {
                 if (recycler == null || recycler.IsDestroyed) return;
-                if (recycler.IsOn()) _toggler[id] = uid;
-                else _toggler.Remove(id);
-            });
-        }
-
-        // ванильный цикл переработал один предмет — догоняем по уровню
-        private void OnItemRecycle(Item item, Recycler recycler)
-        {
-            if (recycler?.net == null || recycler.inventory == null) return;
-            var id = recycler.net.ID.Value;
-            if (!_inFlight.Add(id)) return; // наш ручной цикл сам дёргает хук
-
-            // на следующий тик — после завершения ванильного цикла
-            NextTick(() =>
-            {
-                try
+                if (recycler.IsOn())
                 {
-                    if (recycler == null || recycler.IsDestroyed || !recycler.IsOn()) return;
-
-                    var level = ResolveLevel(FindUser(recycler));
-                    var lc = GetLevel(level);
-
-                    if (lc.Instant)
-                    {
-                        var guard = 0;
-                        while (recycler.IsOn() && recycler.HasRecyclable() && guard++ < InstantLoopCap)
-                        {
-                            var before = InputCount(recycler);
-                            RecycleThink(recycler);
-                            // выход забит или предмет не перерабатывается — выходим, не крутим впустую
-                            if (InputCount(recycler) >= before) break;
-                        }
-                        return;
-                    }
-
-                    var effective = Settings.Multiplier * lc.SpeedMultiplier;
-                    for (var i = 1; i < (int)effective && recycler.IsOn() && recycler.HasRecyclable(); i++)
-                    {
-                        var before = InputCount(recycler);
-                        RecycleThink(recycler);
-                        if (InputCount(recycler) >= before) break;
-                    }
+                    _toggler[id] = uid;
+                    Arm(recycler);
                 }
-                finally
+                else
                 {
-                    _inFlight.Remove(id);
+                    _toggler.Remove(id);
+                    KillTimer(id);
                 }
             });
         }
@@ -91,13 +59,17 @@ namespace Oxide.Plugins
         private void OnEntityKill(BaseNetworkable entity)
         {
             if (entity is Recycler && entity.net != null)
+            {
                 _toggler.Remove(entity.net.ID.Value);
+                KillTimer(entity.net.ID.Value);
+            }
         }
 
         private void Unload()
         {
+            foreach (var t in _timers.Values) t?.Destroy();
+            _timers.Clear();
             _toggler.Clear();
-            _inFlight.Clear();
         }
         #endregion
 
@@ -111,6 +83,42 @@ namespace Oxide.Plugins
         {
             if (recycler == null || recycler.IsDestroyed) return;
             _recycleThink?.Invoke(recycler, null);
+        }
+
+        // вешает таймер с интервалом уровня на работающий переработчик
+        private void Arm(Recycler recycler)
+        {
+            if (recycler?.net == null) return;
+            var id = recycler.net.ID.Value;
+            var level = ResolveLevel(FindUser(recycler));
+            var lc = GetLevel(level);
+            var interval = IntervalFor(level, lc);
+            KillTimer(id);
+            _timers[id] = timer.Every(interval, () => Burst(recycler));
+        }
+
+        private void Burst(Recycler recycler)
+        {
+            if (recycler == null || recycler.IsDestroyed) return;
+            var id = recycler.net.ID.Value;
+            if (!recycler.IsOn() || !recycler.HasRecyclable())
+            {
+                KillTimer(id);
+                return;
+            }
+
+            var level = ResolveLevel(FindUser(recycler));
+            var lc = GetLevel(level);
+
+            var effective = lc.Instant ? InstantLoopCap : (int)(Settings.Multiplier * lc.SpeedMultiplier);
+            for (var i = 0; i < effective; i++)
+            {
+                if (!recycler.IsOn() || !recycler.HasRecyclable()) break;
+                var before = InputCount(recycler);
+                RecycleThink(recycler);
+                // выход забит или предмет не перерабатывается — выходим, не крутим впустую
+                if (InputCount(recycler) >= before) break;
+            }
         }
 
         // сумма предметов во входных слотах (первая половина контейнера)
@@ -136,8 +144,13 @@ namespace Oxide.Plugins
             return recycler.OwnerID;
         }
 
+        private void KillTimer(ulong id)
+        {
+            if (_timers.TryGetValue(id, out var t)) { t?.Destroy(); _timers.Remove(id); }
+        }
+
         private readonly Dictionary<ulong, ulong> _toggler = new Dictionary<ulong, ulong>();
-        private readonly HashSet<ulong> _inFlight = new HashSet<ulong>();
+        private readonly Dictionary<ulong, Timer> _timers = new Dictionary<ulong, Timer>();
         #endregion
 
         #region --- VIP-УРОВНИ -----------------------------------------------------------------------------------------------
@@ -149,6 +162,17 @@ namespace Oxide.Plugins
         };
 
         private const int InstantLoopCap = 20000; // страховка от бесконечного цикла
+
+        // интервал тика по уровню, если в конфиге 0 (дефолт): 5/4/3/2/1/1/1 сек
+        private static readonly float[] DefaultInterval = { 5f, 4f, 3f, 2f, 1f, 1f, 1f };
+
+        private float IntervalFor(int level, SettingsObject.LevelSettings lc)
+        {
+            if (lc.IntervalSeconds > 0f) return lc.IntervalSeconds;
+            if (level < 0) level = 0;
+            if (level >= DefaultInterval.Length) level = DefaultInterval.Length - 1;
+            return DefaultInterval[level];
+        }
 
         // PluginReference залипает на выгруженной инстанции — ищем живой плагин по имени (PITFALLS §11)
         private Plugin FindOctaPlugin(string name)
@@ -221,7 +245,10 @@ namespace Oxide.Plugins
         {
             Settings.Multiplier = Mathf.Clamp(Settings.Multiplier, 1, 100);
             foreach (KeyValuePair<int, SettingsObject.LevelSettings> kvp in Settings.Levels)
+            {
                 kvp.Value.SpeedMultiplier = Mathf.Clamp(kvp.Value.SpeedMultiplier, 1f, 100f);
+                kvp.Value.IntervalSeconds = Mathf.Clamp(kvp.Value.IntervalSeconds, 0f, 60f);
+            }
             Settings.DefaultLevel.SpeedMultiplier = Mathf.Clamp(Settings.DefaultLevel.SpeedMultiplier, 1f, 100f);
         }
 
@@ -234,7 +261,7 @@ namespace Oxide.Plugins
             public readonly VersionNumber Revision = new VersionNumber
             {
                 Major = 1,
-                Minor = 0,
+                Minor = 1,
                 Patch = 0
             };
 
@@ -246,17 +273,19 @@ namespace Oxide.Plugins
             public int Multiplier
             { get; set; } = 5;
 
-            // уровень игрока → доп. множитель или мгновенная переработка.
-            // эффективная скорость = Multiplier × Level.SpeedMultiplier
+            // уровень игрока → интервал тика, доп. множитель или мгновенная
+            // переработка. Интервал 0 = таблица по умолчанию (5/4/3/2/1с).
+            // Эффективная скорость = Multiplier × Level.SpeedMultiplier циклов
+            // за тик; Instant — все входные слоты за тик.
             [JsonProperty("Уровни (0=default 1=bronze 2=silver 3=gold 4=brilliant 5=moderator 6=admin)")]
             public Dictionary<int, LevelSettings> Levels
             { get; set; } = new Dictionary<int, LevelSettings>
             {
-                [0] = new LevelSettings { SpeedMultiplier = 1.0f },  // default: чистый рейт x5
-                [1] = new LevelSettings { SpeedMultiplier = 1.5f },  // bronze:  x7.5
-                [2] = new LevelSettings { SpeedMultiplier = 2.0f },  // silver:  x10
-                [3] = new LevelSettings { SpeedMultiplier = 3.0f },  // gold:    x15
-                [4] = new LevelSettings { Instant = true },          // brilliant: все слоты сразу
+                [0] = new LevelSettings { SpeedMultiplier = 1.0f },  // default: 5с, x5
+                [1] = new LevelSettings { SpeedMultiplier = 1.5f },  // bronze:  4с, x7.5
+                [2] = new LevelSettings { SpeedMultiplier = 2.0f },  // silver:  3с, x10
+                [3] = new LevelSettings { SpeedMultiplier = 3.0f },  // gold:    2с, x15
+                [4] = new LevelSettings { Instant = true },          // brilliant: 1с, всё сразу
                 [5] = new LevelSettings { Instant = true },
                 [6] = new LevelSettings { Instant = true },
             };
@@ -267,12 +296,17 @@ namespace Oxide.Plugins
 
             internal class LevelSettings
             {
-                // доп. множитель к базовой скорости (1 = без бонуса)
+                // интервал между тиками переработки, сек (0 = авто: 5/4/3/2/1)
+                [JsonProperty("Интервал тика (сек)")]
+                public float IntervalSeconds
+                { get; set; } = 0f;
+
+                // циклов за тик = Multiplier × это значение (1 = без бонуса)
                 [JsonProperty("Множитель скорости")]
                 public float SpeedMultiplier
                 { get; set; } = 1.0f;
 
-                // мгновенная переработка: все входные слоты за один тик
+                // мгновенная переработка: все входные слоты за тик
                 [JsonProperty("Мгновенная переработка")]
                 public bool Instant
                 { get; set; } = false;
