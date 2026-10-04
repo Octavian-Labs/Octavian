@@ -132,6 +132,7 @@ namespace Oxide.Plugins
         private void OnOvenCooked(BaseOven Oven, Item Fuel, BaseEntity Slot)
         {
             ItemModBurnable Burnable = Fuel?.info.GetComponent<ItemModBurnable>();
+            var hasFuel = Fuel != null; // электропечи готовят без топлива
 
             SettingsObject.OvenSettings Info = null;
             if (!Settings.Ovens.TryGetValue(Oven?.ShortPrefabName, out Info))
@@ -150,11 +151,14 @@ namespace Oxide.Plugins
                     Oven.inventory.OnCycle(0.5f);
                     if (Slot) Slot.SendMessage("Cook", 0.5f, SendMessageOptions.DontRequireReceiver);
 
-                    Fuel.fuel -= 0.5f * (Oven.cookingTemperature / 200f);
-                    if (Fuel.fuel <= 0f)
+                    if (hasFuel)
                     {
-                        Oven.ConsumeFuel(Fuel, Burnable);
-                        if (Fuel == null || Fuel.amount <= 0 || Fuel.fuel <= 0f) break;
+                        Fuel.fuel -= 0.5f * (Oven.cookingTemperature / 200f);
+                        if (Fuel.fuel <= 0f)
+                        {
+                            Oven.ConsumeFuel(Fuel, Burnable);
+                            if (Fuel.amount <= 0 || Fuel.fuel <= 0f) break;
+                        }
                     }
                 }
                 return;
@@ -168,8 +172,11 @@ namespace Oxide.Plugins
                 Oven.inventory.OnCycle(0.5f);
                 if (Slot) Slot.SendMessage("Cook", 0.5f, SendMessageOptions.DontRequireReceiver);
 
-                Fuel.fuel -= 0.5f * (Oven.cookingTemperature / 200f);
-                if (Fuel.fuel <= 0f) Oven.ConsumeFuel(Fuel, Burnable);
+                if (hasFuel)
+                {
+                    Fuel.fuel -= 0.5f * (Oven.cookingTemperature / 200f);
+                    if (Fuel.fuel <= 0f) Oven.ConsumeFuel(Fuel, Burnable);
+                }
             }
         }
 
@@ -715,6 +722,10 @@ namespace Oxide.Plugins
             "furnace",
             "hobobarrel_static",
             "hobobarrel.deployed",
+            "legacy_furnace",
+            "industrial.furnace.large",
+            "electricfurnace.deployed",
+            "industrial_electric_furnace.deployed",
             "refinery_small_deployed",
             "skull_fire_pit",
             "small_refinery_static"
