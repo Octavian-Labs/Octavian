@@ -28,17 +28,23 @@ namespace Oxide.Plugins
                 if (!string.IsNullOrEmpty(perm)) permission.RegisterPermission(perm, this);
         }
 
-        // кто включил переработчик — его уровень и задаёт скорость
+        // кто включил переработчик — его уровень и задаёт скорость.
+        // хук стреляет ДО применения состояния — читаем IsOn на следующий тик
         private void OnRecyclerToggle(Recycler recycler, BasePlayer player)
         {
             if (recycler?.net == null || player == null) return;
             var id = recycler.net.ID.Value;
-            if (recycler.IsOn()) _toggler[id] = player.userID;
-            else _toggler.Remove(id);
+            var uid = player.userID;
+            NextTick(() =>
+            {
+                if (recycler == null || recycler.IsDestroyed) return;
+                if (recycler.IsOn()) _toggler[id] = uid;
+                else _toggler.Remove(id);
+            });
         }
 
         // ванильный цикл переработал один предмет — догоняем по уровню
-        private void OnItemRecycle(Recycler recycler, Item item)
+        private void OnItemRecycle(Item item, Recycler recycler)
         {
             if (recycler?.net == null || recycler.inventory == null) return;
             var id = recycler.net.ID.Value;
@@ -58,13 +64,22 @@ namespace Oxide.Plugins
                     {
                         var guard = 0;
                         while (recycler.IsOn() && recycler.HasRecyclable() && guard++ < InstantLoopCap)
+                        {
+                            var before = InputCount(recycler);
                             RecycleThink(recycler);
+                            // выход забит или предмет не перерабатывается — выходим, не крутим впустую
+                            if (InputCount(recycler) >= before) break;
+                        }
                         return;
                     }
 
                     var effective = Settings.Multiplier * lc.SpeedMultiplier;
                     for (var i = 1; i < (int)effective && recycler.IsOn() && recycler.HasRecyclable(); i++)
+                    {
+                        var before = InputCount(recycler);
                         RecycleThink(recycler);
+                        if (InputCount(recycler) >= before) break;
+                    }
                 }
                 finally
                 {
@@ -96,6 +111,19 @@ namespace Oxide.Plugins
         {
             if (recycler == null || recycler.IsDestroyed) return;
             _recycleThink?.Invoke(recycler, null);
+        }
+
+        // сумма предметов во входных слотах (первая половина контейнера)
+        private static int InputCount(Recycler recycler)
+        {
+            var total = 0;
+            var n = recycler.inventory.capacity / 2;
+            for (var i = 0; i < n; i++)
+            {
+                var it = recycler.inventory.GetSlot(i);
+                if (it != null) total += it.amount;
+            }
+            return total;
         }
 
         // кто пользуется: сейчас лутает > кто включал > владелец
