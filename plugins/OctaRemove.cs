@@ -18,7 +18,7 @@ using Random = UnityEngine.Random;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaRemove", "Octavian", "1.0.0")]
+    [Info("OctaRemove", "Octavian", "1.1.0")]
     [Description("Инструмент сноса построек и сущностей (OctaRemove) — Octavian")]
     public class OctaRemove : RustPlugin
     {
@@ -1536,6 +1536,17 @@ namespace Oxide.Plugins
 
         private bool HasAccess(BasePlayer player, BaseEntity targetEntity)
         {
+            // Шкаф определяет владение постройкой:
+            // зона покрыта шкафом и игрок в нём не авторизован — доступа нет.
+            if (player.IsBuildingBlocked(targetEntity.WorldSpaceBounds()))
+            {
+                return false;
+            }
+            // Сущность в зоне шкафа и игрок авторизован — владеет шкафом, значит владеет базой.
+            if (targetEntity.GetBuildingPrivilege() != null)
+            {
+                return !_configData.global.useBuildingLocks || CanOpenAllLocks(player, targetEntity);
+            }
             if (_configData.global.useBuildingOwners && BuildingOwners != null)
             {
                 var buildingBlock = targetEntity as BuildingBlock;
@@ -1552,45 +1563,12 @@ namespace Oxide.Plugins
                     }
                 }
             }
-            //var 1 = configData.globalS.excludeTwigs && (targetEntity as BuildingBlock)?.grade == BuildingGrade.Enum.Twigs;
+            // Вне зоны шкафа — доступ по владельцу сущности.
             if (_configData.global.useEntityOwners)
             {
-                if (AreFriends(targetEntity.OwnerID, player.userID))
-                {
-                    if (!_configData.global.useToolCupboards)
-                    {
-                        return true;
-                    }
-                    if (HasTotalAccess(player, targetEntity))
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-            if (_configData.global.useToolCupboards)
-            {
-                if (HasTotalAccess(player, targetEntity))
-                {
-                    return true;
-                }
+                return AreFriends(targetEntity.OwnerID, player.userID);
             }
             return false;
-        }
-
-        private static bool HasTotalAccess(BasePlayer player, BaseEntity targetEntity)
-        {
-            if (player.IsBuildingBlocked(targetEntity.WorldSpaceBounds()))
-            {
-                return false;
-            }
-            if (_configData.global.useBuildingLocks && !CanOpenAllLocks(player, targetEntity))
-            {
-                //reason = Lang("Can'tOpenAllLocks", player.UserIDString);
-                return false;
-            }
-            return true;
         }
 
         private static bool CanOpenAllLocks(BasePlayer player, BaseEntity targetEntity)
@@ -3687,7 +3665,7 @@ namespace Oxide.Plugins
             public string removeAnchorMax = "0.996 1";
 
             [JsonProperty(PropertyName = "Remove Title - Box - Background Color")]
-            public string removeBackgroundColor = "0.31 0.88 0.71 1";
+            public string removeBackgroundColor = "0.91 0.72 0.29 0.95";
 
             [JsonProperty(PropertyName = "Remove Title - Text - Min Anchor (in Main Box)")]
             public string removeTextAnchorMin = "0.05 0.84";
@@ -3696,7 +3674,7 @@ namespace Oxide.Plugins
             public string removeTextAnchorMax = "0.6 1";
 
             [JsonProperty(PropertyName = "Remove Title - Text - Text Color")]
-            public string removeTextColor = "1 0.1 0.1 1";
+            public string removeTextColor = "0.02 0.02 0.01 1";
 
             [JsonProperty(PropertyName = "Remove Title - Text - Text Size")]
             public int removeTextSize = 18;
@@ -3729,7 +3707,7 @@ namespace Oxide.Plugins
             public string entityAnchorMax = "1 0.84";
 
             [JsonProperty(PropertyName = "Entity - Box - Background Color")]
-            public string entityBackgroundColor = "0.82 0.58 0.30 1";
+            public string entityBackgroundColor = "0.03 0.03 0.03 0.9";
 
             [JsonProperty(PropertyName = "Entity - Text - Min Anchor (in Entity Box)")]
             public string entityTextAnchorMin = "0.05 0";
@@ -3762,10 +3740,10 @@ namespace Oxide.Plugins
             public string authorizationsAnchorMax = "1 0.68";
 
             [JsonProperty(PropertyName = "Authorization Check - Box - Allowed Background Color")]
-            public string allowedBackgroundColor = "0.22 0.78 0.27 1";
+            public string allowedBackgroundColor = "0.16 0.45 0.18 0.95";
 
             [JsonProperty(PropertyName = "Authorization Check - Box - Refused Background Color")]
-            public string refusedBackgroundColor = "0.78 0.22 0.27 1";
+            public string refusedBackgroundColor = "0.48 0.12 0.12 0.95";
 
             [JsonProperty(PropertyName = "Authorization Check - Text - Min Anchor (in Authorization Check Box)")]
             public string authorizationsTextAnchorMin = "0.05 0";
@@ -3798,7 +3776,7 @@ namespace Oxide.Plugins
             public string priceAnchorMax = "1 0.6";
 
             [JsonProperty(PropertyName = "Price - Box - Background Color")]
-            public string priceBackgroundColor = "0 0 0 0.8";
+            public string priceBackgroundColor = "0.03 0.03 0.03 0.9";
 
             [JsonProperty(PropertyName = "Price - Text - Min Anchor (in Price Box)")]
             public string priceTextAnchorMin = "0.05 0";
@@ -3807,7 +3785,7 @@ namespace Oxide.Plugins
             public string priceTextAnchorMax = "0.25 1";
 
             [JsonProperty(PropertyName = "Price - Text - Text Color")]
-            public string priceTextColor = "1 1 1 0.9";
+            public string priceTextColor = "0.91 0.72 0.29 0.95";
 
             [JsonProperty(PropertyName = "Price - Text - Text Size")]
             public int priceTextSize = 18;
@@ -3834,7 +3812,7 @@ namespace Oxide.Plugins
             public string refundAnchorMax = "1 0.3";
 
             [JsonProperty(PropertyName = "Refund - Box - Background Color")]
-            public string refundBackgroundColor = "0 0 0 0.8";
+            public string refundBackgroundColor = "0.03 0.03 0.03 0.9";
 
             [JsonProperty(PropertyName = "Refund - Text - Min Anchor (in Refund Box)")]
             public string refundTextAnchorMin = "0.05 0";
@@ -3843,7 +3821,7 @@ namespace Oxide.Plugins
             public string refundTextAnchorMax = "0.25 1";
 
             [JsonProperty(PropertyName = "Refund - Text - Text Color")]
-            public string refundTextColor = "1 1 1 0.9";
+            public string refundTextColor = "0.91 0.72 0.29 0.95";
 
             [JsonProperty(PropertyName = "Refund - Text - Text Size")]
             public int refundTextSize = 18;
@@ -3879,7 +3857,7 @@ namespace Oxide.Plugins
             public string crosshairOffsetMax = "15 15";
 
             [JsonProperty(PropertyName = "Crosshair - Box - Image Color")]
-            public string crosshairColor = "1 0 0 1";
+            public string crosshairColor = "0.91 0.72 0.29 1";
 
             [JsonIgnore]
             public Vector2 Price2TextAnchorMin, Price2TextAnchorMax, Refund2TextAnchorMin, Refund2TextAnchorMax;
@@ -4143,19 +4121,19 @@ namespace Oxide.Plugins
                     string value;
                     if (GetConfigValue(out value, "GUI", "Authorization Check - Box - Allowed Background"))
                     {
-                        _configData.ui.allowedBackgroundColor = value == "0 1 0 0.8" ? "0.22 0.78 0.27 1" : value;
+                        _configData.ui.allowedBackgroundColor = value == "0 1 0 0.8" ? "0.16 0.45 0.18 0.95" : value;
                     }
                     if (GetConfigValue(out value, "GUI", "Authorization Check - Box - Refused Background"))
                     {
-                        _configData.ui.refusedBackgroundColor = value == "1 0 0 0.8" ? "0.78 0.22 0.27 1" : value;
+                        _configData.ui.refusedBackgroundColor = value == "1 0 0 0.8" ? "0.48 0.12 0.12 0.95" : value;
                     }
                     if (_configData.ui.removeBackgroundColor == "0.42 0.88 0.88 1")
                     {
-                        _configData.ui.removeBackgroundColor = "0.31 0.88 0.71 1";
+                        _configData.ui.removeBackgroundColor = "0.91 0.72 0.29 0.95";
                     }
                     if (_configData.ui.entityBackgroundColor == "0 0 0 0.8")
                     {
-                        _configData.ui.entityBackgroundColor = "0.82 0.58 0.30 1";
+                        _configData.ui.entityBackgroundColor = "0.03 0.03 0.03 0.9";
                     }
                 }
                 _configData.version = Version;
