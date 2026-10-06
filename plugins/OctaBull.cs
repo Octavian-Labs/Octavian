@@ -139,6 +139,9 @@ namespace Oxide.Plugins
         private BaseCombatEntity _boss;
         private Rust.Ai.Gen2.LivestockAnimal _bossAi;
         private readonly List<BaseCombatEntity> _escorts = new List<BaseCombatEntity>();
+        // труп босса — отдельная сущность, спавнится на смерть с дефолтным масштабом;
+        // запоминаем позицию+scale и масштабируем труп при его спавне
+        private readonly List<Tuple<Vector3, float, DateTime>> _pendingCorpseScale = new List<Tuple<Vector3, float, DateTime>>();
         private MapMarkerGenericRadius _marker;
         private DateTime _nextSpawnAt;
         private DateTime _bossSpawnedAt;
@@ -475,6 +478,11 @@ namespace Oxide.Plugins
             if (entity == null || !BossAlive && _boss == null) return;
             if (entity != _boss) return;
 
+            // туша — новая сущность с дефолтным масштабом, масштабируем при спавне
+            _pendingCorpseScale.Add(Tuple.Create(entity.transform.position, _cfg.Boss.Scale, DateTime.UtcNow.AddSeconds(10)));
+            var corpsePos = entity.transform.position; var corpseScale = _cfg.Boss.Scale;
+            timer.Once(0.4f, () => ScaleCorpseNear(corpsePos, corpseScale));
+
             var killer = info?.InitiatorPlayer;
             var killerName = killer != null ? killer.displayName.ToString() : "сервер";
             _lastKillInfo = $"{killerName} — {DateTime.UtcNow:HH:mm}";
@@ -491,6 +499,38 @@ namespace Oxide.Plugins
             _bossAi = null;
             _escorts.Clear(); // свита остаётся пастись — обычные коровы
             ScheduleNext();
+        }
+
+        // труп животного — отдельная entity: ставим масштаб до того, как он уйдёт клиентам
+        private void OnEntitySpawned(BaseNetworkable entity)
+        {
+            var bc = entity as BaseCorpse;
+            if (bc == null || _pendingCorpseScale.Count == 0) return;
+            for (var i = _pendingCorpseScale.Count - 1; i >= 0; i--)
+            {
+                var p = _pendingCorpseScale[i];
+                if (DateTime.UtcNow > p.Item3) { _pendingCorpseScale.RemoveAt(i); continue; }
+                if (Vector3.Distance(bc.transform.position, p.Item1) > 8f) continue;
+                bc.networkEntityScale = true;
+                bc.transform.localScale = Vector3.one * p.Item2;
+                _pendingCorpseScale.RemoveAt(i);
+                break;
+            }
+        }
+
+        // страховка: если хук не попал в снапшот — поправим пост-фактум
+        private void ScaleCorpseNear(Vector3 pos, float scale)
+        {
+            foreach (var e in BaseNetworkable.serverEntities)
+            {
+                var bc = e as BaseCorpse;
+                if (bc == null || bc.IsDestroyed) continue;
+                if (Vector3.Distance(bc.transform.position, pos) > 6f) continue;
+                if (Mathf.Abs(bc.transform.localScale.x - scale) < 0.01f) continue;
+                bc.networkEntityScale = true;
+                bc.transform.localScale = Vector3.one * scale;
+                try { bc.SendNetworkUpdateImmediate(); } catch { }
+            }
         }
 
         private void SpawnLoot(Vector3 pos)
