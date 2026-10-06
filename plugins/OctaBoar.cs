@@ -14,7 +14,7 @@ namespace Oxide.Plugins
     // OctaBoar — «Кабан-Босс»: элитный кабан со свитой поросят,
     // спавнится по расписанию недалеко от ранчо, мап-маркер, лут, награды.
     // Клон OctaBull: boar.prefab — кабаны агрессивны сами по себе.
-    [Info("OctaBoar", "Octavian", "1.0.0")]
+    [Info("OctaBoar", "Octavian", "1.1.0")]
     [Description("Элитный босс-кабан у ранчо: расписание спавна, свита поросят, лут, награды")]
     public class OctaBoar : RustPlugin
     {
@@ -47,6 +47,8 @@ namespace Oxide.Plugins
             [JsonProperty("Радиус агро (м)")] public float AggroRadius = 90f;
             [JsonProperty("Макс. время жизни (мин)")] public float MaxLifeMinutes = 60f;
             [JsonProperty("Масштаб модели (1 = обычный)")] public float Scale = 2f;
+            [JsonProperty("Множитель скорости (1 = обычная)")] public float SpeedMultiplier = 1.5f;
+            [JsonProperty("Экстра агрессия (не убегает от пуль)")] public bool HyperAggro = true;
             [JsonProperty("Свита: кабанчиков вокруг босса (шт)")] public int EscortCount = 5;
             [JsonProperty("Свита: радиус спавна (м)")] public float EscortRadius = 10f;
             [JsonProperty("Свита: масштаб кабанчиков (1 = обычный)")] public float EscortScale = 0.55f;
@@ -75,36 +77,36 @@ namespace Oxide.Plugins
             [JsonProperty("Время жизни мешка с лутом (сек)")] public float LootLifetimeSeconds = 3600f;
             [JsonProperty("Лут-таблица")] public List<LootEntry> Loot = new List<LootEntry>
             {
-                // ресурсы
-                new LootEntry { ShortName = "scrap", MinAmount = 1500, MaxAmount = 3000, Chance = 1f },
-                new LootEntry { ShortName = "metal.refined", MinAmount = 300, MaxAmount = 700, Chance = 0.9f },
-                new LootEntry { ShortName = "sulfur", MinAmount = 6000, MaxAmount = 12000, Chance = 0.9f },
-                new LootEntry { ShortName = "gunpowder", MinAmount = 3000, MaxAmount = 6000, Chance = 0.7f },
-                new LootEntry { ShortName = "tech.trash", MinAmount = 30, MaxAmount = 60, Chance = 0.6f },
+                // ресурсы (~в 3 раза скромнее быка)
+                new LootEntry { ShortName = "scrap", MinAmount = 500, MaxAmount = 1000, Chance = 1f },
+                new LootEntry { ShortName = "metal.refined", MinAmount = 100, MaxAmount = 250, Chance = 0.9f },
+                new LootEntry { ShortName = "sulfur", MinAmount = 2000, MaxAmount = 4000, Chance = 0.9f },
+                new LootEntry { ShortName = "gunpowder", MinAmount = 1000, MaxAmount = 2000, Chance = 0.7f },
+                new LootEntry { ShortName = "techparts", MinAmount = 10, MaxAmount = 20, Chance = 0.6f },
                 // карты
-                new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
-                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                // топ-оружие
-                new LootEntry { ShortName = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "rifle.l96", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "ammo.rifle.expl", MinAmount = 60, MaxAmount = 128, Chance = 0.4f },
-                new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 2, MaxAmount = 4, Chance = 0.3f },
-                // фрагменты продвинутого чертежа — гарантированно 3 шт
-                new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 3, MaxAmount = 3, Chance = 1f },
-                // чертежи 3-го верстака
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.18f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.chestplate", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                // топ-оружие (реже, чем у быка)
+                new LootEntry { ShortName = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
+                new LootEntry { ShortName = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "rifle.l96", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
+                new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "ammo.rifle.explosive", MinAmount = 20, MaxAmount = 42, Chance = 0.25f },
+                new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 1, MaxAmount = 2, Chance = 0.15f },
+                // фрагмент продвинутого чертежа — гарантированно 1 шт
+                new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 1, MaxAmount = 1, Chance = 1f },
+                // чертежи 3-го верстака (реже, чем у быка)
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.12f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.03f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.06f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.1f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.plate.torso", MinAmount = 1, MaxAmount = 1, Chance = 0.1f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
             };
         }
 
@@ -304,6 +306,28 @@ namespace Oxide.Plugins
             }
             catch { }
 
+            // скорость: NavMesh-агент Gen2 — крутим все пороги ходьбы/бега
+            if (Mathf.Abs(_cfg.Boss.SpeedMultiplier - 1f) > 0.01f)
+            {
+                try
+                {
+                    var agent = _boss.GetComponentInChildren<Rust.Ai.Gen2.RustNavMeshAgent>();
+                    if (agent != null)
+                    {
+                        var sm = _cfg.Boss.SpeedMultiplier;
+                        agent.speed *= sm;
+                        agent.angularSpeed *= sm;
+                        agent.sneakSpeed *= sm;
+                        agent.walkSpeed *= sm;
+                        agent.jogSpeed *= sm;
+                        agent.runSpeed *= sm;
+                        agent.sprintSpeed *= sm;
+                        agent.fullSprintSpeed *= sm;
+                    }
+                }
+                catch { }
+            }
+
             SpawnMarker(pos);
             SpawnEscorts(pos);
             StartAggroLoop();
@@ -406,7 +430,25 @@ namespace Oxide.Plugins
                 _raging = true;
                 Announce("★ Кабан-Босс ВПАЛ В ЯРОСТЬ — урон вырос!");
             }
-            // кабаны сами агрессивные — форс-провокация не нужна
+
+            // экстра-агрессия: FSM не даём уйти в бегство — держим в боевом статусе
+            if (_cfg.Boss.HyperAggro)
+            {
+                var npc = _boss as Rust.Ai.Gen2.BaseNPC2;
+                if (npc != null)
+                {
+                    var radius = _raging ? _cfg.Boss.AggroRadius * 1.5f : _cfg.Boss.AggroRadius;
+                    foreach (var p in BasePlayer.activePlayerList)
+                    {
+                        if (p == null || !p.IsConnected || p.IsDead() || p.IsFlying || p.limitNetworking) continue;
+                        if (Vector3.Distance(p.transform.position, _boss.transform.position) < radius)
+                        {
+                            try { npc.MarkHostileFor(10f); } catch { }
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         #endregion
@@ -420,6 +462,9 @@ namespace Oxide.Plugins
             // урон ПО боссу: броня + иммунитеты + трекинг урона
             if (BossAlive && entity == _boss)
             {
+                // гипер-агрессия: каждый выстрел = боевой статус, не бегство
+                if (_cfg.Boss.HyperAggro && info.InitiatorPlayer != null)
+                    try { (entity as Rust.Ai.Gen2.BaseNPC2)?.MarkHostileFor(30f); } catch { }
                 ApplyBossArmor(info);
                 var attacker = info.InitiatorPlayer;
                 if (attacker != null && !attacker.IsNpc)

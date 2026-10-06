@@ -79,7 +79,7 @@ namespace Oxide.Plugins
                 new LootEntry { ShortName = "metal.refined", MinAmount = 300, MaxAmount = 700, Chance = 0.9f },
                 new LootEntry { ShortName = "sulfur", MinAmount = 6000, MaxAmount = 12000, Chance = 0.9f },
                 new LootEntry { ShortName = "gunpowder", MinAmount = 3000, MaxAmount = 6000, Chance = 0.7f },
-                new LootEntry { ShortName = "tech.trash", MinAmount = 30, MaxAmount = 60, Chance = 0.6f },
+                new LootEntry { ShortName = "techparts", MinAmount = 30, MaxAmount = 60, Chance = 0.6f },
                 // карты
                 new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
                 new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
@@ -90,7 +90,7 @@ namespace Oxide.Plugins
                 new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
                 new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
                 new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "ammo.rifle.expl", MinAmount = 60, MaxAmount = 128, Chance = 0.4f },
+                new LootEntry { ShortName = "ammo.rifle.explosive", MinAmount = 60, MaxAmount = 128, Chance = 0.4f },
                 new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 2, MaxAmount = 4, Chance = 0.3f },
                 // фрагменты продвинутого чертежа — гарантированно 3 шт
                 new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 3, MaxAmount = 3, Chance = 1f },
@@ -102,7 +102,7 @@ namespace Oxide.Plugins
                 new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
                 new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.18f },
                 new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.chestplate", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.plate.torso", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
                 new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
             };
         }
