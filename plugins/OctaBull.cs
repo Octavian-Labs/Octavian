@@ -30,13 +30,14 @@ namespace Oxide.Plugins
             [JsonProperty("Макс. кол-во")] public int MaxAmount = 300;
             [JsonProperty("Шанс (0-1)")] public float Chance = 0.5f;
             [JsonProperty("Скин ID (0 = без)")] public ulong SkinId = 0;
+            [JsonProperty("Чертёж: целевой предмет (если шортнейм = blueprint)")] public string BlueprintTarget = "";
         }
 
         private class BossSettings
         {
             [JsonProperty("Префаб босса")] public string Prefab = "assets/rust.ai/agents/bull/bull.prefab";
             [JsonProperty("Имя босса")] public string DisplayName = "БЫК-БОСС";
-            [JsonProperty("Здоровье")] public float Health = 7500f;
+            [JsonProperty("Здоровье")] public float Health = 2000f;
             [JsonProperty("Множитель входящего урона (пули)")] public float BulletScale = 0.7f;
             [JsonProperty("Множитель входящего урона (взрывы)")] public float ExplosionScale = 0.9f;
             [JsonProperty("Множитель входящего урона (миляшник/прочее)")] public float OtherScale = 0.9f;
@@ -71,14 +72,34 @@ namespace Oxide.Plugins
             [JsonProperty("Время жизни мешка с лутом (сек)")] public float LootLifetimeSeconds = 3600f;
             [JsonProperty("Лут-таблица")] public List<LootEntry> Loot = new List<LootEntry>
             {
-                new LootEntry { ShortName = "scrap", MinAmount = 400, MaxAmount = 800, Chance = 1f },
-                new LootEntry { ShortName = "metal.refined", MinAmount = 150, MaxAmount = 300, Chance = 0.8f },
-                new LootEntry { ShortName = "sulfur", MinAmount = 2000, MaxAmount = 5000, Chance = 0.8f },
+                // ресурсы
+                new LootEntry { ShortName = "scrap", MinAmount = 1500, MaxAmount = 3000, Chance = 1f },
+                new LootEntry { ShortName = "metal.refined", MinAmount = 300, MaxAmount = 700, Chance = 0.9f },
+                new LootEntry { ShortName = "sulfur", MinAmount = 6000, MaxAmount = 12000, Chance = 0.9f },
+                new LootEntry { ShortName = "gunpowder", MinAmount = 3000, MaxAmount = 6000, Chance = 0.7f },
+                new LootEntry { ShortName = "tech.trash", MinAmount = 30, MaxAmount = 60, Chance = 0.6f },
+                // карты
                 new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
-                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.12f },
+                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                // топ-оружие
+                new LootEntry { ShortName = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
+                new LootEntry { ShortName = "rifle.l96", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
                 new LootEntry { ShortName = "ammo.rifle.expl", MinAmount = 60, MaxAmount = 128, Chance = 0.4f },
-                new LootEntry { ShortName = "jackhammer", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 2, MaxAmount = 4, Chance = 0.3f },
+                // чертежи 3-го верстака
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.18f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "metal.chestplate", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "blueprint", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
             };
         }
 
@@ -478,6 +499,18 @@ namespace Oxide.Plugins
                 {
                     PrintWarning($"OctaBull: неизвестный предмет в луте: {e.ShortName}");
                     continue;
+                }
+                if (!string.IsNullOrEmpty(e.BlueprintTarget))
+                {
+                    var bpTarget = ItemManager.FindItemDefinition(e.BlueprintTarget);
+                    if (bpTarget == null)
+                    {
+                        PrintWarning($"OctaBull: неизвестная цель чертежа: {e.BlueprintTarget}");
+                        item.Remove();
+                        continue;
+                    }
+                    item.blueprintTarget = bpTarget.itemid;
+                    item.blueprintAmount = 1;
                 }
                 if (!item.MoveToContainer(bag.inventory))
                     item.Remove();
