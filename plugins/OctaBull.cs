@@ -6,6 +6,7 @@ using Newtonsoft.Json;
 using Oxide.Core;
 using Oxide.Core.Libraries;
 using Oxide.Core.Plugins;
+using Oxide.Game.Rust.Cui;
 using Rust;
 using UnityEngine;
 
@@ -15,7 +16,7 @@ namespace Oxide.Plugins
     // мап-маркером, трекингом урона, лутом и наградами.
     // Модель: живой Gen2-булл (Rust.Ai.Gen2.Cow, префаб bull) —
     // родной FSM умеет бодаться, агрессия форсируется через Provoke.
-    [Info("OctaBull", "Octavian", "1.1.0")]
+    [Info("OctaBull", "Octavian", "1.2.0")]
     [Description("Элитный босс-бык: расписание спавна, маркер на карте, лут, награды")]
     public class OctaBull : RustPlugin
     {
@@ -626,6 +627,211 @@ namespace Oxide.Plugins
             var body = JsonConvert.SerializeObject(new { content = $"🐂 {text}" });
             webrequest.Enqueue(_cfg.Notify.DiscordWebhook, body, (code, resp) => { }, this,
                 RequestMethod.POST, new Dictionary<string, string> { ["Content-Type"] = "application/json" });
+        }
+
+        #endregion
+
+        #region Admin UI
+
+        private const string AdminUIName = "OctaBull_AdminUI";
+        private const string ColGold = "0.91 0.72 0.29 1";
+        private const string ColGoldDim = "0.75 0.6 0.25 1";
+        private const string ColBg = "0.06 0.06 0.06 0.97";
+        private const string ColRow = "0.10 0.10 0.10 1";
+        private const string ColInput = "0.16 0.16 0.16 1";
+        private const string ColText = "0.9 0.85 0.7 1";
+        private const string ColWhite = "1 1 1 1";
+
+        [ChatCommand("bull_admin")]
+        private void CmdAdminUI(BasePlayer player)
+        {
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octabull.admin"))
+            {
+                SendReply(player, "<color=#E8B84B>◆ OctaBull</color> Нет прав (octabull.admin)");
+                return;
+            }
+            DrawAdminUI(player);
+        }
+
+        // ключ -> (название, getter, setter)
+        private List<KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>> AdminFields()
+        {
+            var b = _cfg.Boss; var s = _cfg.Spawn; var r = _cfg.Rewards;
+            return new List<KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>>
+            {
+                KV("health",   "Здоровье",                 () => b.Health.ToString("0"),            v => b.Health = F(v, b.Health)),
+                KV("scale",    "Масштаб (x обычного)",     () => b.Scale.ToString("0.##"),          v => b.Scale = F(v, b.Scale)),
+                KV("speed",    "Скорость (x)",             () => b.SpeedMultiplier.ToString("0.##"),v => b.SpeedMultiplier = F(v, b.SpeedMultiplier)),
+                KV("dmg",      "Урон босса (x)",           () => b.DamageMultiplier.ToString("0.##"),v => b.DamageMultiplier = F(v, b.DamageMultiplier)),
+                KV("rage",     "Урон в ярости (x)",        () => b.RageDamageMultiplier.ToString("0.##"), v => b.RageDamageMultiplier = F(v, b.RageDamageMultiplier)),
+                KV("rageth",   "Порог ярости (0-1)",       () => b.RageThreshold.ToString("0.##"),  v => b.RageThreshold = F(v, b.RageThreshold)),
+                KV("aggro",    "Радиус агро (м)",          () => b.AggroRadius.ToString("0"),       v => b.AggroRadius = F(v, b.AggroRadius)),
+                KV("life",     "Время жизни (мин)",        () => b.MaxLifeMinutes.ToString("0"),    v => b.MaxLifeMinutes = F(v, b.MaxLifeMinutes)),
+                KV("escort",   "Коров в свите (шт)",       () => b.EscortCount.ToString(),          v => b.EscortCount = I(v, b.EscortCount)),
+                KV("escortr",  "Радиус свиты (м)",         () => b.EscortRadius.ToString("0"),      v => b.EscortRadius = F(v, b.EscortRadius)),
+                KV("interval", "Респаун (мин)",            () => s.IntervalMinutes.ToString("0"),   v => s.IntervalMinutes = F(v, s.IntervalMinutes)),
+                KV("jitter",   "Разброс респауна ± (мин)", () => s.IntervalJitterMinutes.ToString("0"), v => s.IntervalJitterMinutes = F(v, s.IntervalJitterMinutes)),
+                KV("warn",     "Предупреждение за (мин)",  () => s.WarnBeforeMinutes.ToString("0"), v => s.WarnBeforeMinutes = F(v, s.WarnBeforeMinutes)),
+                KV("marker",   "Радиус маркера (0-1)",     () => s.MarkerRadius.ToString("0.###"),  v => s.MarkerRadius = F(v, s.MarkerRadius)),
+                KV("currency", "Награда RP за килл",       () => r.Currency.ToString(),             v => r.Currency = I(v, r.Currency)),
+            };
+        }
+
+        private static KeyValuePair<string, Tuple<string, Func<string>, Action<string>>> KV(
+            string key, string label, Func<string> get, Action<string> set) =>
+            new KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>(
+                key, Tuple.Create(label, get, set));
+
+        private static float F(string v, float def) =>
+            float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var r) ? r : def;
+        private static int I(string v, int def) =>
+            int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var r) ? r : def;
+
+        private void DrawAdminUI(BasePlayer player)
+        {
+            CuiHelper.DestroyUi(player, AdminUIName);
+            var c = new CuiElementContainer();
+
+            var fields = AdminFields();
+            var rowH = 0.045f;
+            var topPad = 0.075f;
+            var height = topPad + fields.Count * rowH + 0.115f;
+            var midX = 0.5f; var w = 0.17f;
+            var top = 0.62f; var bot = top - height;
+
+            var root = c.Add(new CuiPanel
+            {
+                Image = { Color = ColBg },
+                RectTransform = { AnchorMin = $"{midX - w} {bot}", AnchorMax = $"{midX + w} {top}" },
+                CursorEnabled = true
+            }, "Overlay", AdminUIName);
+            c.Add(new CuiElement { Components = { new CuiNeedsCursorComponent() }, Parent = root });
+
+            // шапка — золото на чёрном
+            c.Add(new CuiPanel
+            {
+                Image = { Color = ColGold },
+                RectTransform = { AnchorMin = "0 0.955", AnchorMax = "1 1" }
+            }, root);
+            c.Add(new CuiLabel
+            {
+                Text = { Text = "OCTABULL — НАСТРОЙКИ БОССА", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
+                RectTransform = { AnchorMin = "0 0.955", AnchorMax = "0.9 1" }
+            }, root);
+            c.Add(new CuiButton
+            {
+                Button = { Command = "octabullui close", Color = "0 0 0 0" },
+                Text = { Text = "X", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
+                RectTransform = { AnchorMin = "0.93 0.955", AnchorMax = "0.99 1" }
+            }, root);
+
+            // статус
+            var status = BossAlive
+                ? $"ЖИВ  |  HP {_boss.Health():0}/{_boss.MaxHealth():0}  |  {GridOf(_boss.transform.position)}{(_raging ? "  |  ЯРОСТЬ" : "")}"
+                : $"нет на карте  |  респаун через {(int)(_nextSpawnAt - DateTime.UtcNow).TotalMinutes} мин";
+            c.Add(new CuiLabel
+            {
+                Text = { Text = status, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = ColGold },
+                RectTransform = { AnchorMin = "0.03 0.905", AnchorMax = "0.97 0.95" }
+            }, root);
+
+            // строки полей
+            var i = 0;
+            foreach (var kv in fields)
+            {
+                var t = kv.Value;
+                var yTop = 0.90f - i * rowH;
+                var yBot = yTop - rowH + 0.008f;
+                var stripe = i % 2 == 0;
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = stripe ? ColRow : "0.08 0.08 0.08 1" },
+                    RectTransform = { AnchorMin = $"0.02 {yBot}", AnchorMax = $"0.98 {yTop}" }
+                }, root);
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = t.Item1, FontSize = 11, Align = TextAnchor.MiddleLeft, Color = ColText },
+                    RectTransform = { AnchorMin = $"0.04 {yBot}", AnchorMax = $"0.62 {yTop}" }
+                }, root);
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = ColInput },
+                    RectTransform = { AnchorMin = $"0.64 {yBot + 0.003f}", AnchorMax = $"0.96 {yTop - 0.003f}" }
+                }, root, $"{AdminUIName}_in{i}");
+                c.Add(new CuiElement
+                {
+                    Parent = $"{AdminUIName}_in{i}",
+                    Components =
+                    {
+                        new CuiInputFieldComponent
+                        {
+                            Text = t.Item2(),
+                            Command = $"octabullui set {kv.Key}",
+                            FontSize = 11,
+                            Align = TextAnchor.MiddleCenter,
+                            Color = ColWhite,
+                            CharsLimit = 12,
+                            NeedsKeyboard = true
+                        },
+                        new CuiNeedsCursorComponent()
+                    }
+                });
+                i++;
+            }
+
+            // кнопки снизу
+            var btnY = 0.012f;
+            AddAdminButton(c, root, "octabullui spawn", "СПАВНИТЬ", $"0.03 {btnY}", $"0.33 {btnY + 0.045f}", ColGold);
+            AddAdminButton(c, root, "octabullui kill", "УБИТЬ", $"0.36 {btnY}", $"0.66 {btnY + 0.045f}", "0.6 0.15 0.1 1");
+            AddAdminButton(c, root, "octabullui save", "СОХРАНИТЬ", $"0.69 {btnY}", $"0.97 {btnY + 0.045f}", "0.25 0.45 0.2 1");
+
+            CuiHelper.AddUi(player, c);
+        }
+
+        private void AddAdminButton(CuiElementContainer c, string parent, string cmd, string text, string min, string max, string color)
+        {
+            c.Add(new CuiButton
+            {
+                Button = { Command = cmd, Color = color },
+                Text = { Text = text, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
+                RectTransform = { AnchorMin = min, AnchorMax = max }
+            }, parent);
+        }
+
+        private void OnPlayerCommand(BasePlayer player, string command, string[] args)
+        {
+            if (command != "octabullui" || args == null || args.Length == 0) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octabull.admin")) return;
+
+            var redraw = true;
+            switch (args[0])
+            {
+                case "close":
+                    CuiHelper.DestroyUi(player, AdminUIName);
+                    redraw = false;
+                    break;
+                case "spawn":
+                    SpawnBoss(player.transform.position + player.transform.forward * 15f);
+                    break;
+                case "kill":
+                    if (BossAlive) _boss.Kill();
+                    break;
+                case "save":
+                    SaveConfig();
+                    SendReply(player, "<color=#E8B84B>◆ OctaBull</color> Конфиг сохранён");
+                    break;
+                case "set":
+                    if (args.Length >= 3)
+                    {
+                        var key = args[1];
+                        var value = string.Join(" ", args, 2, args.Length - 2);
+                        foreach (var kv in AdminFields())
+                            if (kv.Key == key) { kv.Value.Item3(value); break; }
+                        SaveConfig();
+                    }
+                    break;
+            }
+            if (redraw) DrawAdminUI(player);
         }
 
         #endregion
