@@ -141,7 +141,9 @@ namespace Oxide.Plugins
 
         private BaseCombatEntity _boss;
         private readonly List<BaseCombatEntity> _escorts = new List<BaseCombatEntity>();
-        // трупы — отдельные сущности с дефолтным масштабом; масштабируем при спавне
+        // трупы — отдельные сущности, спавнятся спустя ~минуту после смерти;
+        // матчим по parentEnt + фолбэк по позиции
+        private readonly Dictionary<BaseEntity, float> _corpseByParent = new Dictionary<BaseEntity, float>();
         private readonly List<Tuple<Vector3, float, DateTime>> _pendingCorpseScale = new List<Tuple<Vector3, float, DateTime>>();
         private MapMarkerGenericRadius _marker;
         private DateTime _nextSpawnAt;
@@ -401,7 +403,7 @@ namespace Oxide.Plugins
         private void StartAggroLoop()
         {
             _timerAggro?.Destroy();
-            _timerAggro = timer.Every(4f, AggroTick);
+            _timerAggro = timer.Every(1f, AggroTick);
         }
 
         private void AggroTick()
@@ -427,19 +429,33 @@ namespace Oxide.Plugins
                 Announce("★ Кабан-Босс ВПАЛ В ЯРОСТЬ — урон вырос!");
             }
 
-            // экстра-агрессия: FSM не даём уйти в бегство — держим в боевом статусе
+            // экстра-агрессия: каждую секунду снимаем факты страха из blackboard
+            // и держим боевой статус — FSM не даём уйти в бегство
             if (_cfg.Boss.HyperAggro)
             {
                 var npc = _boss as Rust.Ai.Gen2.BaseNPC2;
                 if (npc != null)
                 {
+                    try
+                    {
+                        var bb = npc.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
+                        if (bb != null)
+                        {
+                            bb.Remove("flee");
+                            bb.Remove("fleeing");
+                            bb.Remove("threatened");
+                            bb.Remove("flee_damage_percentage");
+                        }
+                    }
+                    catch { }
+
                     var radius = _raging ? _cfg.Boss.AggroRadius * 1.5f : _cfg.Boss.AggroRadius;
                     foreach (var p in BasePlayer.activePlayerList)
                     {
                         if (p == null || !p.IsConnected || p.IsDead() || p.IsFlying || p.limitNetworking) continue;
                         if (Vector3.Distance(p.transform.position, _boss.transform.position) < radius)
                         {
-                            try { npc.MarkHostileFor(10f); } catch { }
+                            try { npc.MarkHostileFor(60f); } catch { }
                             break;
                         }
                     }
@@ -458,9 +474,18 @@ namespace Oxide.Plugins
             // урон ПО боссу: броня + иммунитеты + трекинг урона
             if (BossAlive && entity == _boss)
             {
-                // гипер-агрессия: каждый выстрел = боевой статус, не бегство
+                // гипер-агрессия: каждый выстрел = боевой статус + снос фактов страха
                 if (_cfg.Boss.HyperAggro && info.InitiatorPlayer != null)
-                    try { (entity as Rust.Ai.Gen2.BaseNPC2)?.MarkHostileFor(30f); } catch { }
+                {
+                    try
+                    {
+                        var n = entity as Rust.Ai.Gen2.BaseNPC2;
+                        n?.MarkHostileFor(60f);
+                        var bb = n?.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
+                        if (bb != null) { bb.Remove("flee"); bb.Remove("fleeing"); bb.Remove("threatened"); }
+                    }
+                    catch { }
+                }
                 ApplyBossArmor(info);
                 var attacker = info.InitiatorPlayer;
                 if (attacker != null && !attacker.IsNpc)
@@ -521,18 +546,23 @@ namespace Oxide.Plugins
             if (_escorts.Contains(entity))
             {
                 _escorts.Remove(entity);
-                _pendingCorpseScale.Add(Tuple.Create(entity.transform.position, _cfg.Boss.EscortScale, DateTime.UtcNow.AddSeconds(10)));
-                var ep = entity.transform.position; var es = _cfg.Boss.EscortScale;
-                timer.Once(0.4f, () => ScaleCorpseNear(ep, es));
+                _corpseByParent[entity] = _cfg.Boss.EscortScale;
+                _pendingCorpseScale.Add(Tuple.Create(entity.transform.position, _cfg.Boss.EscortScale, DateTime.UtcNow.AddMinutes(5)));
                 return;
             }
 
-            if (_boss == null || entity != _boss) return;
+            if (entity == _boss) HandleBossDeath(entity, info);
+        }
 
-            // туша босса — новая сущность с дефолтным масштабом, масштабируем при спавне
-            _pendingCorpseScale.Add(Tuple.Create(entity.transform.position, _cfg.Boss.Scale, DateTime.UtcNow.AddSeconds(10)));
-            var corpsePos = entity.transform.position; var corpseScale = _cfg.Boss.Scale;
-            timer.Once(0.4f, () => ScaleCorpseNear(corpsePos, corpseScale));
+        // общий обработчик смерти босса — вызывается из хука И вручную из админ-килла
+        // (BaseCombatEntity.Kill() не всегда триггерит OnEntityDeath)
+        private void HandleBossDeath(BaseCombatEntity entity, HitInfo info)
+        {
+            if (entity != _boss) return; // дабл-кол хук+вручную не нужен
+
+            // туша босса — новая сущность с дефолтным масштабом; масштабируем в OnEntitySpawned по parentEnt
+            _corpseByParent[entity] = _cfg.Boss.Scale;
+            _pendingCorpseScale.Add(Tuple.Create(entity.transform.position, _cfg.Boss.Scale, DateTime.UtcNow.AddMinutes(5)));
 
             var killer = info?.InitiatorPlayer;
             var killerName = killer != null ? killer.displayName.ToString() : "сервер";
@@ -551,36 +581,34 @@ namespace Oxide.Plugins
             ScheduleNext();
         }
 
-        // труп животного — отдельная entity: ставим масштаб до того, как он уйдёт клиентам
+        // труп животного — отдельная entity: ставим масштаб до того, как он уйдёт клиентам.
+        // труп спавнится внутри Die() РАНЬШЕ OnEntityDeath — матчим по parentEnt, а не по очереди
         private void OnEntitySpawned(BaseNetworkable entity)
         {
             var bc = entity as BaseCorpse;
-            if (bc == null || _pendingCorpseScale.Count == 0) return;
-            for (var i = _pendingCorpseScale.Count - 1; i >= 0; i--)
+            if (bc == null) return;
+            var src = bc.parentEnt;
+            float? scale = null;
+            if (src != null && _corpseByParent.TryGetValue(src, out var sc0))
             {
-                var p = _pendingCorpseScale[i];
-                if (DateTime.UtcNow > p.Item3) { _pendingCorpseScale.RemoveAt(i); continue; }
-                if (Vector3.Distance(bc.transform.position, p.Item1) > 8f) continue;
-                bc.networkEntityScale = true;
-                bc.transform.localScale = Vector3.one * p.Item2;
-                _pendingCorpseScale.RemoveAt(i);
-                break;
+                scale = sc0;
+                _corpseByParent.Remove(src);
             }
-        }
-
-        // страховка: если хук не попал в снапшот — поправим пост-фактум
-        private void ScaleCorpseNear(Vector3 pos, float scale)
-        {
-            foreach (var e in BaseNetworkable.serverEntities)
+            // фолбэк по очереди (если parentEnt пуст — по позиции из pending)
+            if (scale == null && _pendingCorpseScale.Count > 0)
             {
-                var bc = e as BaseCorpse;
-                if (bc == null || bc.IsDestroyed) continue;
-                if (Vector3.Distance(bc.transform.position, pos) > 6f) continue;
-                if (Mathf.Abs(bc.transform.localScale.x - scale) < 0.01f) continue;
-                bc.networkEntityScale = true;
-                bc.transform.localScale = Vector3.one * scale;
-                try { bc.SendNetworkUpdateImmediate(); } catch { }
+                for (var i = _pendingCorpseScale.Count - 1; i >= 0; i--)
+                {
+                    var p = _pendingCorpseScale[i];
+                    if (DateTime.UtcNow > p.Item3) { _pendingCorpseScale.RemoveAt(i); continue; }
+                    if (Vector3.Distance(bc.transform.position, p.Item1) > 8f) continue;
+                    scale = p.Item2; _pendingCorpseScale.RemoveAt(i);
+                    break;
+                }
             }
+            if (scale == null) return;
+            bc.networkEntityScale = true;
+            bc.transform.localScale = Vector3.one * scale.Value;
         }
 
         private void SpawnLoot(Vector3 pos)
@@ -766,7 +794,9 @@ namespace Oxide.Plugins
         {
             if (!arg.IsAdmin) return;
             if (!BossAlive) { Puts("OctaBoar: босса нет"); return; }
-            _boss.Kill();
+            var b = _boss;
+            b.Kill();
+            if (_boss == b) HandleBossDeath(b, null); // Kill() не всегда дёргает OnEntityDeath
             Puts("OctaBoar: убит администратором");
         }
 
