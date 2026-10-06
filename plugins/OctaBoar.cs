@@ -286,8 +286,10 @@ namespace Oxide.Plugins
                 return;
             }
 
+            // масштаб — ДО Spawn(): иначе игроки рядом получат снапшот с дефолтным размером
             ent.enableSaving = false;
             ent.networkEntityScale = true;
+            ent.transform.localScale = Vector3.one * _cfg.Boss.Scale;
             ent.Spawn();
 
             _boss = ent;
@@ -299,12 +301,7 @@ namespace Oxide.Plugins
             _boss.InitializeHealth(_cfg.Boss.Health, _cfg.Boss.Health);
             _boss.startHealth = _cfg.Boss.Health;
             _boss.maxHealthOverride = _cfg.Boss.Health;
-            try
-            {
-                _boss.transform.localScale = Vector3.one * _cfg.Boss.Scale;
-                _boss.SendNetworkUpdateImmediate();
-            }
-            catch { }
+            try { _boss.SendNetworkUpdateImmediate(); } catch { }
 
             // скорость: NavMesh-агент Gen2 — крутим все пороги ходьбы/бега
             if (Mathf.Abs(_cfg.Boss.SpeedMultiplier - 1f) > 0.01f)
@@ -368,13 +365,10 @@ namespace Oxide.Plugins
                 if (pig == null) continue;
                 pig.enableSaving = false;
                 pig.networkEntityScale = true;
+                // масштаб поросёнка — ДО Spawn(), иначе клиенты получат обычный размер
+                pig.transform.localScale = Vector3.one * _cfg.Boss.EscortScale;
                 pig.Spawn();
-                try
-                {
-                    pig.transform.localScale = Vector3.one * _cfg.Boss.EscortScale;
-                    pig.SendNetworkUpdateImmediate();
-                }
-                catch { }
+                try { pig.SendNetworkUpdateImmediate(); } catch { }
                 _escorts.Add(pig);
             }
         }

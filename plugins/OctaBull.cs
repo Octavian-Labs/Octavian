@@ -245,12 +245,20 @@ namespace Oxide.Plugins
                 return;
             }
 
+            // масштаб и пол — ДО Spawn(): иначе игроки рядом получают снапшот с дефолтом
             ent.enableSaving = false;
             ent.networkEntityScale = true;
+            ent.transform.localScale = Vector3.one * _cfg.Boss.Scale;
+            var preAi = ent as Rust.Ai.Gen2.LivestockAnimal;
+            if (preAi != null)
+            {
+                try { preAi.IsMale = true; } catch { }
+                try { preAi.AnimalName = _cfg.Boss.DisplayName; } catch { }
+            }
             ent.Spawn();
 
             _boss = ent;
-            _bossAi = ent as Rust.Ai.Gen2.LivestockAnimal;
+            _bossAi = preAi;
             _bossSpawnedAt = DateTime.UtcNow;
             _raging = false;
             _damageBy.Clear();
@@ -259,12 +267,7 @@ namespace Oxide.Plugins
             _boss.InitializeHealth(_cfg.Boss.Health, _cfg.Boss.Health);
             _boss.startHealth = _cfg.Boss.Health;
             _boss.maxHealthOverride = _cfg.Boss.Health;
-            try
-            {
-                _boss.transform.localScale = Vector3.one * _cfg.Boss.Scale;
-                _boss.SendNetworkUpdateImmediate();
-            }
-            catch { }
+            try { _boss.SendNetworkUpdateImmediate(); } catch { }
 
             // скорость: NavMesh-агент Gen2 — крутим все пороги ходьбы/бега
             if (Mathf.Abs(_cfg.Boss.SpeedMultiplier - 1f) > 0.01f)
@@ -286,12 +289,6 @@ namespace Oxide.Plugins
                     }
                 }
                 catch { }
-            }
-
-            if (_bossAi != null)
-            {
-                _bossAi.IsMale = true;
-                try { _bossAi.AnimalName = _cfg.Boss.DisplayName; } catch { }
             }
 
             SpawnMarker(pos);
@@ -333,10 +330,10 @@ namespace Oxide.Plugins
                 var cow = GameManager.server.CreateEntity(_cfg.Boss.Prefab, p, Quaternion.identity) as BaseCombatEntity;
                 if (cow == null) continue;
                 cow.enableSaving = false;
-                cow.Spawn();
-                // самка — корова, не бык
+                // самка (корова) — ДО Spawn(), иначе клиент получит модель быка
                 var ai = cow as Rust.Ai.Gen2.LivestockAnimal;
                 if (ai != null) { try { ai.IsMale = false; } catch { } }
+                cow.Spawn();
                 _escorts.Add(cow);
             }
         }
