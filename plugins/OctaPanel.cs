@@ -14,7 +14,7 @@ namespace Oxide.Plugins
 {
     // Ребрендинг ZenPanelPlus 2.5.0 (автор оригинала: FineINK)
     // Переименованы идентификаторы, пермишены, команды и дефолтные тексты — логика сохранена.
-    [Info("OctaPanel", "Octavian", "1.1.0")]
+    [Info("OctaPanel", "Octavian", "1.1.1")]
     [Description("Инфопанель Octavian: часы, онлайн, события, советы, экономика, PvP (Kills/Deaths/KD)")]
     public class OctaPanel : RustPlugin
     {
@@ -39,13 +39,10 @@ namespace Oxide.Plugins
         {
             public string Url;
             public string Name;
-            public Type Type;
             public int Count;
             public Func<BaseNetworkable, bool> Test;
             // встроенный PNG (base64) — для иконок без внешней ссылки; грузится через AddImageData
             public string PngB64;
-            // если задан — считаем по префиксу ShortPrefabName (классы deep sea internal, typeof недоступен)
-            public string PrefabPrefix;
 
             public EventIcon() => Count = 0;
         }
@@ -68,35 +65,32 @@ namespace Oxide.Plugins
             {
                 Name = "OctaPanelIconCargoPlane",
                 Url = "https://i.imgur.com/CL41EJS.png",
-                Type = typeof(CargoPlane),
                 Test = e => e is CargoPlane
             },
             new EventIcon
             {
+                // после рефакторинга вертолётов патрульный — PatrolHelicopter : BaseCombatEntity,
+                // а BaseHelicopter : BaseVehicle — родитель CH47 (не путать!)
                 Name = "OctaPanelIconPatrolHelicopter",
                 Url = "https://i.imgur.com/HtAifod.png",
-                Type = typeof(BaseHelicopter),
-                Test = e => e is BaseHelicopter
+                Test = e => e is PatrolHelicopter
             },
             new EventIcon
             {
                 Name = "OctaPanelIconTank",
                 Url = "https://i.imgur.com/j5cMDpt.png",
-                Type = typeof(BradleyAPC),
                 Test = e => e is BradleyAPC
             },
             new EventIcon
             {
                 Name = "OctaPanelIconCH47",
                 Url = "https://i.imgur.com/jRIF5y8.png",
-                Type = typeof(CH47Helicopter),
                 Test = e => e is CH47Helicopter
             },
             new EventIcon
             {
                 Name = "OctaPanelIconCargoShip",
                 Url = "https://i.imgur.com/xU8IUWO.png",
-                Type = typeof(CargoShip),
                 Test = e => e is CargoShip
             },
             // Deep Sea (Livestock Update): призрачные корабли и плавучий город.
@@ -105,14 +99,12 @@ namespace Oxide.Plugins
             {
                 Name = "OctaPanelIconGhostShip",
                 PngB64 = IconGhostShipPng,
-                PrefabPrefix = "ghostship",
                 Test = e => MatchesPrefab(e, "ghostship")
             },
             new EventIcon
             {
                 Name = "OctaPanelIconFloatingCity",
                 PngB64 = IconFloatingCityPng,
-                PrefabPrefix = "floatingcity",
                 Test = e => MatchesPrefab(e, "floatingcity")
             }
         };
@@ -510,9 +502,6 @@ namespace Oxide.Plugins
                 return "";
             }
         }
-
-        private static int CountComponentsOf(Type name) =>
-            UnityEngine.Object.FindObjectsOfType(name).ToList().Count;
 
         private static List<BasePlayer> GetActivePlayersSafe()
         {
@@ -1075,22 +1064,20 @@ namespace Oxide.Plugins
             _currOnline = $"{GetActivePlayersSafe().Count}/{max}";
         }
 
+        // Единственный источник истины по иконкам: один проход по serverEntities
+        // с предикатами иконок. Инкрементных счётчиков по событиям нет — они расходились.
         private void RefreshIconsData()
         {
             foreach (var ic in _eventIcons)
-                ic.Count = ic.PrefabPrefix != null
-                    ? CountByPrefab(ic.PrefabPrefix)
-                    : CountComponentsOf(ic.Type);
-        }
-
-        // deep sea сущности: ghostship/ghostship_c/... — без карты-маркеров
-        private static int CountByPrefab(string prefix)
-        {
-            var n = 0;
+                ic.Count = 0;
             foreach (var e in BaseNetworkable.serverEntities)
-                if (MatchesPrefab(e, prefix))
-                    n++;
-            return n;
+            {
+                foreach (var ic in _eventIcons)
+                {
+                    if (ic.Test != null && ic.Test(e))
+                        ic.Count++;
+                }
+            }
         }
 
         private void RefreshAdviceData()
@@ -1129,7 +1116,11 @@ namespace Oxide.Plugins
                 RedrawUIForAllPlayers(DrawOnlineUI);
             });
 
-            _timers["iconTimer"] = timer.Every(1f, () => RedrawUIForAllPlayers(DrawIconsUI));
+            _timers["iconTimer"] = timer.Every(1f, () =>
+            {
+                RefreshIconsData();
+                RedrawUIForAllPlayers(DrawIconsUI);
+            });
 
             if (_config.advice.allow)
             {
@@ -1566,26 +1557,6 @@ namespace Oxide.Plugins
             SaveStats();
             DestroyTimers(_timers.Values.ToList());
             DestroyAllUI();
-        }
-
-        private void OnEntitySpawned(BaseNetworkable entity)
-        {
-            if (entity == null) return;
-            foreach (var ic in _eventIcons)
-            {
-                if (ic.Test == null || !ic.Test(entity)) continue;
-                ic.Count++;
-            }
-        }
-
-        private void OnEntityKill(BaseNetworkable entity)
-        {
-            if (entity == null) return;
-            foreach (var ic in _eventIcons)
-            {
-                if (ic.Test == null || !ic.Test(entity)) continue;
-                if (ic.Count > 0) ic.Count--;
-            }
         }
 
         // PvP: Считаем только убийства игроков
