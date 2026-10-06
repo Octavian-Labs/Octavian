@@ -14,7 +14,9 @@ namespace Oxide.Plugins
     [Description("Отладочный плагин: стратегии масштаба туш Gen2-животных")]
     public class OctaProbeScale : RustPlugin
     {
-        private const string Prefab = "assets/rust.ai/agents/bull/bull.prefab";
+        private const string PrefabBull = "assets/rust.ai/agents/bull/bull.prefab";
+        private const string PrefabBoar = "assets/rust.ai/agents/boar/boar.prefab";
+        private string _prefab = PrefabBull;
 
         private class Variant
         {
@@ -34,6 +36,19 @@ namespace Oxide.Plugins
         [ConsoleCommand("probescale.run")]
         private void CmdRun(ConsoleSystem.Arg arg)
         {
+            _prefab = PrefabBull;
+            RunSpawn(arg, false);
+        }
+
+        [ConsoleCommand("probescale.runboar")]
+        private void CmdRunBoar(ConsoleSystem.Arg arg)
+        {
+            _prefab = PrefabBoar;
+            RunSpawn(arg, true);
+        }
+
+        private void RunSpawn(ConsoleSystem.Arg arg, bool boar)
+        {
             if (!arg.IsAdmin) return;
             var p = arg.Player();
             if (p == null) // RCON — берём первого онлайн-игрока
@@ -43,6 +58,7 @@ namespace Oxide.Plugins
 
             _v.Clear(); _corpseFor.Clear(); _deathSpots.Clear();
 
+            var esc = boar ? 0.55f : 0.5f; // у кабана свита 0.55
             _v.Add(new Variant { Tag = "0 ctrl scale1", Scale = 1f });
             _v.Add(new Variant { Tag = "1 scale2 plain", Scale = 2f });
             _v.Add(new Variant { Tag = "2 scale2+corpsehook", Scale = 2f, TrackCorpse = true });
@@ -50,7 +66,7 @@ namespace Oxide.Plugins
             _v.Add(new Variant { Tag = "4 scale2+lateRescale", Scale = 2f, LateRescale = true });
             _v.Add(new Variant { Tag = "5 scale3+corpsehook", Scale = 3f, TrackCorpse = true });
             _v.Add(new Variant { Tag = "6 scale2+hook+noDepl", Scale = 2f, TrackCorpse = true, NoDeployable = true });
-            _v.Add(new Variant { Tag = "7 scale0.5+corpsehook", Scale = 0.5f, TrackCorpse = true });
+            _v.Add(new Variant { Tag = "7 escortscale+hook", Scale = esc, TrackCorpse = true });
 
             for (var i = 0; i < _v.Count; i++)
             {
@@ -58,7 +74,7 @@ namespace Oxide.Plugins
                 var pos = center + right * (i - _v.Count / 2f) * 5f;
                 try { pos.y = TerrainMeta.HeightMap.GetHeight(pos) + 0.2f; } catch { }
 
-                var ent = GameManager.server.CreateEntity(Prefab, pos, Quaternion.identity) as BaseCombatEntity;
+                var ent = GameManager.server.CreateEntity(_prefab, pos, Quaternion.identity) as BaseCombatEntity;
                 if (ent == null) { Puts("probe: spawn fail " + v.Tag); continue; }
 
                 ent.enableSaving = false;
@@ -79,7 +95,7 @@ namespace Oxide.Plugins
                 ent.InitializeHealth(500, 500);
                 v.Ent = ent;
             }
-            Puts("probe: заспавнено " + _v.Count + " быков");
+            Puts("probe: заспавнено " + _v.Count + " (" + (boar ? "кабаны" : "быки") + ")");
         }
 
         [ConsoleCommand("probescale.kill")]

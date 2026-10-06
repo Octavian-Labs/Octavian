@@ -1,0 +1,1417 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using Newtonsoft.Json;
+using Oxide.Core;
+using Oxide.Core.Libraries;
+using Oxide.Core.Plugins;
+using Oxide.Game.Rust.Cui;
+using Rust;
+using UnityEngine;
+
+namespace Oxide.Plugins
+{
+    // OctaBoss — фреймворк животных-боссов: список видов в конфиге
+    // (бык, кабан, волк, тигр, пантера, медведь, крокодил и т.д.).
+    // У каждого вида: префаб, статы, скорость, масштаб, свита, точка спавна
+    // (рандом / у монумента по имени), расписание, лут и награды.
+    //
+    // Грабли, которые уже выловлены и учтены:
+    //  - масштаб/пол ставятся ДО Spawn() — иначе снапшот уходит с дефолтом;
+    //  - труп — отдельная entity, масштабируется в OnEntitySpawned по parentEnt;
+    //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
+    //  - arg.Args — StringView, сравнивать через .ToString();
+    //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
+    [Info("OctaBoss", "Octavian", "1.0.0")]
+    [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
+    public class OctaBoss : RustPlugin
+    {
+        #region Config
+
+        private ConfigData _cfg;
+
+        private class LootEntry
+        {
+            [JsonProperty("Шортнейм предмета")] public string ShortName = "scrap";
+            [JsonProperty("Мин. кол-во")] public int MinAmount = 100;
+            [JsonProperty("Макс. кол-во")] public int MaxAmount = 300;
+            [JsonProperty("Шанс (0-1)")] public float Chance = 0.5f;
+            [JsonProperty("Скин ID (0 = без)")] public ulong SkinId = 0;
+            [JsonProperty("Чертёж: целевой предмет (если задан)")] public string BlueprintTarget = "";
+        }
+
+        private class EscortSettings
+        {
+            [JsonProperty("Количество")] public int Count = 5;
+            [JsonProperty("Радиус спавна (м)")] public float Radius = 10f;
+            [JsonProperty("Масштаб (1 = обычный)")] public float Scale = 1f;
+            [JsonProperty("Префаб (пусто = как у босса)")] public string Prefab = "";
+            // null = пол как у префаба; true = самец; false = самка
+            [JsonProperty("Пол: male/female (пусто = как у префаба)")] public bool? Male = null;
+            [JsonProperty("Убивать свиту при деспавне босса")] public bool KillOnDespawn = true;
+        }
+
+        private class SpecSpawn
+        {
+            [JsonProperty("Интервал спавна (мин)")] public float IntervalMinutes = 180f;
+            [JsonProperty("Разброс интервала ± (мин)")] public float IntervalJitterMinutes = 30f;
+            [JsonProperty("Предупреждение за (мин)")] public float WarnBeforeMinutes = 5f;
+            [JsonProperty("Радиус маркера на карте (0-1, доля карты)")] public float MarkerRadius = 0.03f;
+            [JsonProperty("Показывать маркер на карте")] public bool ShowMarker = true;
+            [JsonProperty("Держаться от края карты (м)")] public float MapMargin = 400f;
+            [JsonProperty("Монументы-якоря (через запятую, частичное совпадение; пусто = любая точка)")] public string MonumentNames = "";
+            [JsonProperty("Дистанция от края монумента мин (м)")] public float MonumentMinDist = 15f;
+            [JsonProperty("Дистанция от края монумента макс (м)")] public float MonumentMaxDist = 70f;
+        }
+
+        private class SpecRewards
+        {
+            [JsonProperty("Валюта за убийство (ServerRewards/Economics)")] public int Currency = 750;
+            [JsonProperty("Валюта участникам (нанёс >= порога урона)")] public int CurrencyParticipation = 150;
+            [JsonProperty("Порог участия (доля урона)")] public float ParticipationPct = 0.05f;
+            [JsonProperty("Бафф урона победителя (x)")] public float BuffDamage = 1.2f;
+            [JsonProperty("Длительность баффа (мин)")] public float BuffMinutes = 15f;
+            [JsonProperty("Время жизни мешка с лутом (сек)")] public float LootLifetimeSeconds = 3600f;
+            [JsonProperty("Лут-таблица")] public List<LootEntry> Loot = new List<LootEntry>();
+        }
+
+        private class BossSpec
+        {
+            [JsonProperty("Включён")] public bool Enabled = true;
+            [JsonProperty("Ключ (латиницей, для команд)")] public string Key = "boar";
+            [JsonProperty("Префаб босса")] public string Prefab = "assets/rust.ai/agents/boar/boar.prefab";
+            [JsonProperty("Имя босса")] public string DisplayName = "КАБАН-БОСС";
+            [JsonProperty("Пол босса: male/female (пусто = как у префаба)")] public bool? Male = null;
+            [JsonProperty("Здоровье")] public float Health = 2000f;
+            [JsonProperty("Множитель входящего урона (пули)")] public float BulletScale = 0.7f;
+            [JsonProperty("Множитель входящего урона (взрывы)")] public float ExplosionScale = 0.9f;
+            [JsonProperty("Множитель входящего урона (миляшник/прочее)")] public float OtherScale = 0.9f;
+            [JsonProperty("Иммунитет к огню/кровотечению/отравлению/холоду")] public bool ElementalImmune = true;
+            [JsonProperty("Множитель исходящего урона")] public float DamageMultiplier = 3f;
+            [JsonProperty("Порог ярости (доля HP)")] public float RageThreshold = 0.5f;
+            [JsonProperty("Множитель урона в ярости")] public float RageDamageMultiplier = 1.5f;
+            [JsonProperty("Радиус агро (м)")] public float AggroRadius = 90f;
+            [JsonProperty("Макс. время жизни (мин)")] public float MaxLifeMinutes = 60f;
+            [JsonProperty("Масштаб модели (1 = обычный)")] public float Scale = 2f;
+            [JsonProperty("Множитель скорости (1 = обычная)")] public float SpeedMultiplier = 1f;
+            [JsonProperty("Экстра агрессия (никогда не убегает)")] public bool HyperAggro = false;
+            [JsonProperty("Форс-агро Provoke (для скотины вместо HyperAggro)")] public bool ForceProvoke = false;
+            [JsonProperty("Свита")] public EscortSettings Escort = new EscortSettings();
+            [JsonProperty("Спавн")] public SpecSpawn Spawn = new SpecSpawn();
+            [JsonProperty("Награды")] public SpecRewards Rewards = new SpecRewards();
+            [JsonProperty("Текст анонса спавна ({0}=квадрат)")] public string SpawnAnnounce = "★ {name} появился! Квадрат: <color=#FFD35C>{0}</color>";
+            [JsonProperty("Текст предупреждения ({0}=минуты)")] public string WarnAnnounce = "{name} появится через {0} мин. Готовьтесь!";
+            [JsonProperty("Текст деспавна по таймауту")] public string DespawnAnnounce = "{name} ушёл — никто не решился.";
+            [JsonProperty("Текст смерти ({0}=добивший)")] public string DeathAnnounce = "★ {name} повержен! Добил: <color=#FFD35C>{0}</color>. Лут на месте падения.";
+            [JsonProperty("Текст ярости")] public string RageAnnounce = "★ {name} ВПАЛ В ЯРОСТЬ — урон вырос!";
+        }
+
+        private class NotifySettings
+        {
+            [JsonProperty("Глобальный чат")] public bool ChatGlobal = true;
+            [JsonProperty("Discord webhook (пусто = выкл)")] public string DiscordWebhook = "";
+        }
+
+        private class ConfigData
+        {
+            [JsonProperty("Виды боссов")] public List<BossSpec> Bosses = new List<BossSpec>();
+            [JsonProperty("Уведомления")] public NotifySettings Notify = new NotifySettings();
+        }
+
+        private static List<LootEntry> RichLoot()
+        {
+            return new List<LootEntry>
+            {
+                new LootEntry { ShortName = "scrap", MinAmount = 1500, MaxAmount = 3000, Chance = 1f },
+                new LootEntry { ShortName = "metal.refined", MinAmount = 300, MaxAmount = 700, Chance = 0.9f },
+                new LootEntry { ShortName = "sulfur", MinAmount = 6000, MaxAmount = 12000, Chance = 0.9f },
+                new LootEntry { ShortName = "gunpowder", MinAmount = 3000, MaxAmount = 6000, Chance = 0.7f },
+                new LootEntry { ShortName = "techparts", MinAmount = 30, MaxAmount = 60, Chance = 0.6f },
+                new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
+                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
+                new LootEntry { ShortName = "rifle.l96", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
+                new LootEntry { ShortName = "ammo.rifle.explosive", MinAmount = 60, MaxAmount = 128, Chance = 0.4f },
+                new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 2, MaxAmount = 4, Chance = 0.3f },
+                new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 3, MaxAmount = 3, Chance = 1f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.18f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.plate.torso", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+            };
+        }
+
+        private static List<LootEntry> MidLoot()
+        {
+            return new List<LootEntry>
+            {
+                new LootEntry { ShortName = "scrap", MinAmount = 500, MaxAmount = 1000, Chance = 1f },
+                new LootEntry { ShortName = "metal.refined", MinAmount = 100, MaxAmount = 250, Chance = 0.9f },
+                new LootEntry { ShortName = "sulfur", MinAmount = 2000, MaxAmount = 4000, Chance = 0.9f },
+                new LootEntry { ShortName = "gunpowder", MinAmount = 1000, MaxAmount = 2000, Chance = 0.7f },
+                new LootEntry { ShortName = "techparts", MinAmount = 10, MaxAmount = 20, Chance = 0.6f },
+                new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                new LootEntry { ShortName = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
+                new LootEntry { ShortName = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "rifle.l96", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
+                new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "ammo.rifle.explosive", MinAmount = 20, MaxAmount = 42, Chance = 0.25f },
+                new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 1, MaxAmount = 2, Chance = 0.15f },
+                new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 1, MaxAmount = 1, Chance = 1f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.12f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.03f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.06f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.1f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.plate.torso", MinAmount = 1, MaxAmount = 1, Chance = 0.1f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
+            };
+        }
+
+        private static ConfigData DefaultBosses()
+        {
+            return new ConfigData
+            {
+                Bosses = new List<BossSpec>
+                {
+                    new BossSpec
+                    {
+                        Key = "bull",
+                        Prefab = "assets/rust.ai/agents/bull/bull.prefab",
+                        DisplayName = "БЫК-БОСС",
+                        Male = true,
+                        Health = 9000f,
+                        Scale = 2f,
+                        SpeedMultiplier = 2f,
+                        DamageMultiplier = 3f,
+                        ForceProvoke = true,
+                        Escort = new EscortSettings
+                        {
+                            Count = 5, Radius = 10f, Scale = 1f,
+                            Prefab = "assets/rust.ai/agents/bull/bull.prefab",
+                            Male = false, KillOnDespawn = true
+                        },
+                        Spawn = new SpecSpawn { MonumentNames = "" },
+                        Rewards = new SpecRewards { Loot = RichLoot() },
+                        WarnAnnounce = "{name} появится через {0} мин. Готовьтесь — это не кабанчик с ранчо!",
+                        DespawnAnnounce = "{name} ушёл в закат — никто не решился.",
+                    },
+                    new BossSpec
+                    {
+                        Key = "boar",
+                        Prefab = "assets/rust.ai/agents/boar/boar.prefab",
+                        DisplayName = "КАБАН-БОСС",
+                        Health = 2000f,
+                        Scale = 2f,
+                        SpeedMultiplier = 1.5f,
+                        HyperAggro = true,
+                        Escort = new EscortSettings
+                        {
+                            Count = 5, Radius = 10f, Scale = 0.55f,
+                            Prefab = "", Male = null, KillOnDespawn = true
+                        },
+                        Spawn = new SpecSpawn
+                        {
+                            MonumentNames = "ranch,barn",
+                            MonumentMinDist = 15f, MonumentMaxDist = 70f
+                        },
+                        Rewards = new SpecRewards { Loot = MidLoot() },
+                        WarnAnnounce = "{name} появится через {0} мин возле ранчо. Готовьтесь!",
+                        DespawnAnnounce = "{name} убежал в лес — никто не решился.",
+                        SpawnAnnounce = "★ {name} появился возле ранчо! Квадрат: <color=#FFD35C>{0}</color> — и его свита уже рыщет!",
+                    },
+                    // заготовки под остальных зверей — выключены, включить в конфиге или /boss_admin
+                    new BossSpec
+                    {
+                        Enabled = false, Key = "wolf",
+                        Prefab = "assets/rust.ai/agents/wolf/wolf2.prefab",
+                        DisplayName = "ВОЛК-БОСС",
+                        Health = 1500f, Scale = 2f, SpeedMultiplier = 1.6f,
+                        HyperAggro = true,
+                        Escort = new EscortSettings { Count = 4, Radius = 8f, Scale = 0.8f },
+                        Rewards = new SpecRewards { Loot = MidLoot() },
+                        DespawnAnnounce = "{name} ушёл в чащу — стая растворилась в темноте.",
+                    },
+                    new BossSpec
+                    {
+                        Enabled = false, Key = "tiger",
+                        Prefab = "assets/rust.ai/agents/tiger/tiger.prefab",
+                        DisplayName = "ТИГР-БОСС",
+                        Health = 2500f, Scale = 1.8f, SpeedMultiplier = 1.7f,
+                        HyperAggro = true,
+                        Escort = new EscortSettings { Count = 0 },
+                        Rewards = new SpecRewards { Loot = MidLoot() },
+                        DespawnAnnounce = "{name} скрылся в джунглях.",
+                    },
+                    new BossSpec
+                    {
+                        Enabled = false, Key = "panther",
+                        Prefab = "assets/rust.ai/agents/panther/panther.prefab",
+                        DisplayName = "ПАНТЕРА-БОСС",
+                        Health = 2500f, Scale = 1.8f, SpeedMultiplier = 1.7f,
+                        HyperAggro = true,
+                        Escort = new EscortSettings { Count = 0 },
+                        Rewards = new SpecRewards { Loot = MidLoot() },
+                        DespawnAnnounce = "{name} растворилась в тени.",
+                    },
+                    new BossSpec
+                    {
+                        Enabled = false, Key = "bear",
+                        Prefab = "assets/rust.ai/agents/bear/bear.prefab",
+                        DisplayName = "МЕДВЕДЬ-БОСС",
+                        Health = 6000f, Scale = 2.2f, SpeedMultiplier = 1.3f,
+                        HyperAggro = true,
+                        Escort = new EscortSettings { Count = 2, Scale = 0.6f },
+                        Rewards = new SpecRewards { Loot = RichLoot() },
+                        DespawnAnnounce = "{name} ушёл в берлогу.",
+                    },
+                    new BossSpec
+                    {
+                        Enabled = false, Key = "crocodile",
+                        Prefab = "assets/rust.ai/agents/crocodile/crocodile.prefab",
+                        DisplayName = "КРОКОДИЛ-БОСС",
+                        Health = 4000f, Scale = 2f, SpeedMultiplier = 1.3f,
+                        HyperAggro = true,
+                        Escort = new EscortSettings { Count = 3, Scale = 0.7f },
+                        Rewards = new SpecRewards { Loot = MidLoot() },
+                        DespawnAnnounce = "{name} ушёл под воду.",
+                    },
+                }
+            };
+        }
+
+        protected override void LoadConfig()
+        {
+            base.LoadConfig();
+            try { _cfg = Config.ReadObject<ConfigData>(); }
+            catch { _cfg = null; }
+            if (_cfg == null || _cfg.Bosses == null || _cfg.Bosses.Count == 0)
+            {
+                _cfg = DefaultBosses();
+                SaveConfig();
+            }
+        }
+
+        protected override void LoadDefaultConfig() => _cfg = DefaultBosses();
+        protected override void SaveConfig() => Config.WriteObject(_cfg = _cfg ?? DefaultBosses(), true);
+
+        #endregion
+
+        #region State
+
+        // активный босс-инстанс: спека + рантайм-состояние
+        private class BossState
+        {
+            public BossSpec Spec;
+            public BaseCombatEntity Entity;
+            public Rust.Ai.Gen2.BaseNPC2 Ai;
+            public Rust.Ai.Gen2.LivestockAnimal Livestock;
+            public readonly List<BaseCombatEntity> Escorts = new List<BaseCombatEntity>();
+            public MapMarkerGenericRadius Marker;
+            public DateTime NextSpawnAt;
+            public DateTime SpawnedAt;
+            public bool Warned;
+            public bool Raging;
+            public readonly Dictionary<ulong, float> DamageBy = new Dictionary<ulong, float>();
+
+            public bool Alive => Entity != null && !Entity.IsDestroyed && Entity.IsAlive();
+        }
+
+        private readonly Dictionary<string, BossState> _bosses = new Dictionary<string, BossState>();
+        // трупы — отдельные сущности; матчим по parentEnt + фолбэк по позиции смерти.
+        // TTL 5 мин в обеих структурах; pending-кортеж хранит сущность для точечного снятия
+        private readonly Dictionary<BaseEntity, Tuple<float, DateTime>> _corpseByParent = new Dictionary<BaseEntity, Tuple<float, DateTime>>();
+        private readonly List<Tuple<BaseEntity, Vector3, float, DateTime>> _pendingCorpseScale = new List<Tuple<BaseEntity, Vector3, float, DateTime>>();
+        // бафф победителя: steamid -> (истекает, множитель урона)
+        private readonly Dictionary<ulong, Tuple<DateTime, float>> _buffs = new Dictionary<ulong, Tuple<DateTime, float>>();
+        private readonly Dictionary<string, string> _lastKillInfo = new Dictionary<string, string>();
+        private Timer _timerSpawn, _timerAggro;
+
+        #endregion
+
+        #region Lifecycle
+
+        private void Init()
+        {
+            permission.RegisterPermission("octaboss.admin", this);
+            foreach (var spec in _cfg.Bosses.Where(s => s.Enabled))
+            {
+                var st = new BossState { Spec = spec };
+                ScheduleNext(st, first: true);
+                _bosses[spec.Key] = st;
+                Puts($"OctaBoss[{spec.Key}]: следующий спавн через {(st.NextSpawnAt - DateTime.UtcNow).TotalMinutes:0} мин");
+            }
+            _timerSpawn = timer.Every(30f, SpawnTick);
+            _timerAggro = timer.Every(1f, AggroTick);
+        }
+
+        private void Unload()
+        {
+            _timerSpawn?.Destroy();
+            _timerAggro?.Destroy();
+            foreach (var st in _bosses.Values) ClearMarker(st);
+            foreach (var p in BasePlayer.activePlayerList)
+                CuiHelper.DestroyUi(p, AdminUIName);
+            // живых боссов не трогаем — доживают как обычные животные
+        }
+
+        private void ScheduleNext(BossState st, bool first = false)
+        {
+            var jitter = UnityEngine.Random.Range(-st.Spec.Spawn.IntervalJitterMinutes, st.Spec.Spawn.IntervalJitterMinutes);
+            var mins = Math.Max(1f, st.Spec.Spawn.IntervalMinutes + jitter);
+            st.NextSpawnAt = DateTime.UtcNow.AddMinutes(first ? Math.Min(mins, 5f) : mins);
+            st.Warned = false;
+        }
+
+        #endregion
+
+        #region Spawn
+
+        private void SpawnTick()
+        {
+            var now = DateTime.UtcNow;
+            foreach (var st in _bosses.Values)
+            {
+                if (!st.Spec.Enabled || st.Alive) continue;
+                if (!st.Warned && now >= st.NextSpawnAt.AddMinutes(-st.Spec.Spawn.WarnBeforeMinutes))
+                {
+                    st.Warned = true;
+                    Announce(Fmt(st.Spec.WarnAnnounce, st.Spec, $"{st.Spec.Spawn.WarnBeforeMinutes:0}"));
+                }
+                if (now < st.NextSpawnAt) continue;
+                SpawnBoss(st);
+            }
+        }
+
+        private static readonly int AvoidTopo =
+            (int)(TerrainTopology.Enum.Monument | TerrainTopology.Enum.Building | TerrainTopology.Enum.Ocean |
+                  TerrainTopology.Enum.Lake | TerrainTopology.Enum.Cliff | TerrainTopology.Enum.Swamp |
+                  TerrainTopology.Enum.River | TerrainTopology.Enum.Riverside | TerrainTopology.Enum.Beach |
+                  TerrainTopology.Enum.Beachside);
+
+        private Vector3 FindSpawnPos(BossState st)
+        {
+            var size = ConVar.Server.worldsize;
+            var half = size * 0.5f - st.Spec.Spawn.MapMargin;
+            for (var i = 0; i < 60; i++)
+            {
+                var p = new Vector3(UnityEngine.Random.Range(-half, half), 0, UnityEngine.Random.Range(-half, half));
+                var h = TerrainMeta.HeightMap.GetHeight(p);
+                if (h < 1.5f) continue; // вода/пляж
+                p.y = h;
+                try { if (TerrainMeta.TopologyMap.GetTopology(p, AvoidTopo)) continue; } catch { }
+                p.y += 0.5f;
+                return p;
+            }
+            return Vector3.zero;
+        }
+
+        // точка рядом со случайным монументом из списка (ranch, barn и т.п.)
+        private Vector3 FindMonumentSpawnPos(BossState st)
+        {
+            try
+            {
+                var wanted = st.Spec.Spawn.MonumentNames
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim().ToLowerInvariant())
+                    .Where(s => s.Length > 0)
+                    .ToArray();
+                if (wanted.Length == 0) return Vector3.zero;
+                var mons = TerrainMeta.Path?.Monuments?
+                    .Where(m => m != null && wanted.Any(w => (m.name ?? "").ToLowerInvariant().Contains(w)))
+                    .ToList();
+                if (mons == null || mons.Count == 0) return Vector3.zero;
+
+                var mon = mons[UnityEngine.Random.Range(0, mons.Count)];
+                var center = mon.Bounds.center;
+                var edge = Mathf.Max(mon.Bounds.extents.x, mon.Bounds.extents.z);
+
+                for (var i = 0; i < 30; i++)
+                {
+                    var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+                    var dist = edge + UnityEngine.Random.Range(st.Spec.Spawn.MonumentMinDist, st.Spec.Spawn.MonumentMaxDist);
+                    var p = center + new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
+                    var h = TerrainMeta.HeightMap.GetHeight(p);
+                    if (h < 1.5f) continue;
+                    p.y = h;
+                    try { if (TerrainMeta.TopologyMap.GetTopology(p, AvoidTopo)) continue; } catch { }
+                    p.y += 0.5f;
+                    return p;
+                }
+            }
+            catch (Exception ex) { PrintWarning($"OctaBoss[{st.Spec.Key}]: поиск монумента упал: {ex.Message}"); }
+            return Vector3.zero;
+        }
+
+        private void SpawnBoss(BossState st, Vector3? at = null)
+        {
+            // если старый босс жив — убираем тихо (Kill() не триггерит OnEntityDeath,
+            // значит без лута/наград/перепланировки): иначе получим двух боссов
+            if (st.Alive) DespawnBoss(st);
+
+            var pos = at ?? FindMonumentSpawnPos(st);
+            if (pos == Vector3.zero) pos = FindSpawnPos(st);
+            if (pos == Vector3.zero)
+            {
+                PrintError($"OctaBoss[{st.Spec.Key}]: не нашёл точку спавна — перенос на следующий цикл");
+                ScheduleNext(st);
+                return;
+            }
+
+            var ent = GameManager.server.CreateEntity(st.Spec.Prefab, pos, Quaternion.identity) as BaseCombatEntity;
+            if (ent == null)
+            {
+                PrintError($"OctaBoss[{st.Spec.Key}]: префаб {st.Spec.Prefab} не заспавнился");
+                ScheduleNext(st);
+                return;
+            }
+
+            // масштаб и пол — ДО Spawn(): иначе игроки рядом получат снапшот с дефолтом
+            ent.enableSaving = false;
+            ent.networkEntityScale = true;
+            ent.transform.localScale = Vector3.one * st.Spec.Scale;
+            var livestock = ent as Rust.Ai.Gen2.LivestockAnimal;
+            if (livestock != null)
+            {
+                if (st.Spec.Male.HasValue) { try { livestock.IsMale = st.Spec.Male.Value; } catch { } }
+                try { livestock.AnimalName = st.Spec.DisplayName; } catch { }
+            }
+            ent.Spawn();
+
+            st.Entity = ent;
+            st.Ai = ent as Rust.Ai.Gen2.BaseNPC2;
+            st.Livestock = livestock;
+            st.SpawnedAt = DateTime.UtcNow;
+            st.Raging = false;
+            st.DamageBy.Clear();
+
+            ent.InitializeHealth(st.Spec.Health, st.Spec.Health);
+            ent.startHealth = st.Spec.Health;
+            ent.maxHealthOverride = st.Spec.Health;
+            try { ent.SendNetworkUpdateImmediate(); } catch { }
+
+            ApplySpeed(ent, st.Spec.SpeedMultiplier);
+            SpawnMarker(st, pos);
+            SpawnEscorts(st, pos);
+
+            var grid = GridOf(pos);
+            Announce(Fmt(st.Spec.SpawnAnnounce, st.Spec, grid));
+            NotifyDiscord($"{st.Spec.DisplayName} появился в квадрате {grid} ({pos.x:0},{pos.z:0})");
+        }
+
+        private static void ApplySpeed(BaseCombatEntity ent, float mult)
+        {
+            if (Mathf.Abs(mult - 1f) <= 0.01f) return;
+            try
+            {
+                // NavMesh-агент Gen2 — крутим все пороги ходьбы/бега
+                var agent = ent.GetComponentInChildren<Rust.Ai.Gen2.RustNavMeshAgent>();
+                if (agent == null) return;
+                agent.speed *= mult;
+                agent.angularSpeed *= mult;
+                agent.sneakSpeed *= mult;
+                agent.walkSpeed *= mult;
+                agent.jogSpeed *= mult;
+                agent.runSpeed *= mult;
+                agent.sprintSpeed *= mult;
+                agent.fullSprintSpeed *= mult;
+            }
+            catch { }
+        }
+
+        private void SpawnMarker(BossState st, Vector3 pos)
+        {
+            ClearMarker(st);
+            if (!st.Spec.Spawn.ShowMarker) return;
+            var marker = GameManager.server.CreateEntity("assets/prefabs/tools/map/genericradiusmarker.prefab", pos) as MapMarkerGenericRadius;
+            if (marker == null) return;
+            marker.enableSaving = false;
+            marker.Spawn();
+            marker.radius = st.Spec.Spawn.MarkerRadius;
+            marker.color1 = new Color(0.85f, 0.1f, 0.1f);
+            marker.color2 = new Color(0.4f, 0f, 0f);
+            marker.alpha = 0.55f;
+            marker.SendUpdate();
+            marker.SendNetworkUpdate();
+            st.Marker = marker;
+        }
+
+        private void SpawnEscorts(BossState st, Vector3 center)
+        {
+            st.Escorts.Clear();
+            var esc = st.Spec.Escort;
+            var prefab = string.IsNullOrEmpty(esc.Prefab) ? st.Spec.Prefab : esc.Prefab;
+            for (var i = 0; i < esc.Count; i++)
+            {
+                var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+                var dist = UnityEngine.Random.Range(4f, esc.Radius);
+                var p = center + new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
+                try { p.y = TerrainMeta.HeightMap.GetHeight(p) + 0.3f; } catch { p.y = center.y; }
+
+                var e = GameManager.server.CreateEntity(prefab, p, Quaternion.identity) as BaseCombatEntity;
+                if (e == null) continue;
+                e.enableSaving = false;
+                // масштаб и пол — ДО Spawn(), иначе клиент получит дефолтный снапшот
+                e.networkEntityScale = true;
+                e.transform.localScale = Vector3.one * esc.Scale;
+                var ai = e as Rust.Ai.Gen2.LivestockAnimal;
+                if (ai != null && esc.Male.HasValue) { try { ai.IsMale = esc.Male.Value; } catch { } }
+                e.Spawn();
+                try { e.SendNetworkUpdateImmediate(); } catch { }
+                st.Escorts.Add(e);
+            }
+        }
+
+        // тихий деспавн без лута/наград (старая копия при респавне, таймаут жизни)
+        private void DespawnBoss(BossState st)
+        {
+            ClearMarker(st);
+            if (st.Spec.Escort.KillOnDespawn) KillEscorts(st); else st.Escorts.Clear();
+            if (st.Alive) st.Entity.Kill();
+            st.Entity = null;
+            st.Ai = null;
+            st.Livestock = null;
+        }
+
+        private void KillEscorts(BossState st)
+        {
+            // Kill() не дёргает OnEntityDeath — регистрируем масштаб туши вручную,
+            // иначе труп свиты «вырастет» до обычного размера
+            foreach (var e in st.Escorts)
+                if (e != null && !e.IsDestroyed)
+                {
+                    RegisterCorpseScale(e, st.Spec.Escort.Scale);
+                    e.Kill();
+                }
+            st.Escorts.Clear();
+        }
+
+        private void ClearMarker(BossState st)
+        {
+            if (st.Marker != null && !st.Marker.IsDestroyed) st.Marker.Kill();
+            st.Marker = null;
+        }
+
+        private static string GridOf(Vector3 pos)
+        {
+            try { return MapHelper.PositionToString(pos); }
+            catch { return $"{pos.x:0}, {pos.z:0}"; }
+        }
+
+        // шаблоны анонсов: {name} = имя босса, {0} = аргумент (квадрат/минуты/добивший)
+        private static string Fmt(string tpl, BossSpec spec, string arg)
+        {
+            return (tpl ?? "").Replace("{name}", spec.DisplayName).Replace("{0}", arg ?? "");
+        }
+
+        #endregion
+
+        #region Aggro & Rage
+
+        private void AggroTick()
+        {
+            foreach (var st in _bosses.Values)
+            {
+                if (!st.Alive) continue;
+
+                // деспавн по старости жизни
+                if ((DateTime.UtcNow - st.SpawnedAt).TotalMinutes > st.Spec.MaxLifeMinutes)
+                {
+                    Announce(Fmt(st.Spec.DespawnAnnounce, st.Spec, null));
+                    DespawnBoss(st);
+                    ScheduleNext(st);
+                    continue;
+                }
+
+                // ярость
+                if (!st.Raging && st.Entity.Health() <= st.Entity.MaxHealth() * st.Spec.RageThreshold)
+                {
+                    st.Raging = true;
+                    Announce(Fmt(st.Spec.RageAnnounce, st.Spec, null));
+                }
+
+                var radius = st.Raging ? st.Spec.AggroRadius * 1.5f : st.Spec.AggroRadius;
+                var target = NearestPlayer(st.Entity.transform.position, radius);
+                if (target == null) continue;
+
+                if (st.Spec.HyperAggro)
+                {
+                    // кабаны/хищники Gen2 убегают — снимаем факты страха и держим боевой статус
+                    var npc = st.Ai;
+                    if (npc != null)
+                    {
+                        try
+                        {
+                            var bb = npc.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
+                            if (bb != null)
+                            {
+                                bb.Remove("flee");
+                                bb.Remove("fleeing");
+                                bb.Remove("threatened");
+                                bb.Remove("flee_damage_percentage");
+                            }
+                        }
+                        catch { }
+                        try { npc.MarkHostileFor(60f); } catch { }
+                    }
+                }
+                else if (st.Spec.ForceProvoke && st.Livestock != null)
+                {
+                    // скотина: форс-провокация на ближайшего игрока
+                    try { st.Livestock.Provoke(target); } catch { }
+                    try { st.Livestock.RememberAggressor(target); } catch { }
+                }
+            }
+        }
+
+        private static BasePlayer NearestPlayer(Vector3 pos, float radius)
+        {
+            BasePlayer closest = null;
+            var best = float.MaxValue;
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                if (p == null || !p.IsConnected || p.IsDead() || p.IsFlying || p.limitNetworking) continue;
+                var d = Vector3.Distance(p.transform.position, pos);
+                if (d < radius && d < best) { best = d; closest = p; }
+            }
+            return closest;
+        }
+
+        private BossState StateOf(BaseEntity ent)
+        {
+            foreach (var st in _bosses.Values)
+                if (st.Entity == ent) return st;
+            return null;
+        }
+
+        private BossState EscortOf(BaseEntity ent)
+        {
+            foreach (var st in _bosses.Values)
+                if (st.Escorts.Contains(ent)) return st;
+            return null;
+        }
+
+        #endregion
+
+        #region Damage
+
+        private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
+        {
+            if (entity == null || info == null) return;
+
+            // урон ПО боссу: броня + иммунитеты + трекинг урона + гипер-агрессия
+            var st = StateOf(entity);
+            if (st != null && st.Alive)
+            {
+                if (st.Spec.HyperAggro && info.InitiatorPlayer != null)
+                {
+                    // каждый выстрел = боевой статус + снос фактов страха — FSM не уйдёт в бегство
+                    try
+                    {
+                        st.Ai?.MarkHostileFor(60f);
+                        var bb = st.Ai?.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
+                        if (bb != null) { bb.Remove("flee"); bb.Remove("fleeing"); bb.Remove("threatened"); }
+                    }
+                    catch { }
+                }
+                ApplyBossArmor(st.Spec, info);
+                var attacker = info.InitiatorPlayer;
+                if (attacker != null && !attacker.IsNpc)
+                    st.DamageBy[(ulong)attacker.userID] = st.DamageBy.TryGetValue((ulong)attacker.userID, out var cur)
+                        ? cur + info.damageTypes.Total()
+                        : info.damageTypes.Total();
+                return;
+            }
+
+            // урон ОТ босса
+            var src = info.Initiator as BaseCombatEntity;
+            if (src != null)
+            {
+                var atk = StateOf(src);
+                if (atk != null && atk.Alive)
+                {
+                    var mult = atk.Spec.DamageMultiplier * (atk.Raging ? atk.Spec.RageDamageMultiplier : 1f);
+                    info.damageTypes.ScaleAll(mult);
+                    return;
+                }
+            }
+
+            // бафф победителя на исходящий урон игрока — множитель лежит в самой записи
+            var bp = info.InitiatorPlayer;
+            if (bp != null && !bp.IsNpc && _buffs.TryGetValue((ulong)bp.userID, out var buff))
+            {
+                if (buff.Item1 > DateTime.UtcNow) info.damageTypes.ScaleAll(buff.Item2);
+                else _buffs.Remove((ulong)bp.userID); // протухший бафф — выкидываем
+            }
+        }
+
+        private void ApplyBossArmor(BossSpec spec, HitInfo info)
+        {
+            var dt = info.damageTypes;
+            if (spec.ElementalImmune)
+            {
+                dt.Set(DamageType.Heat, 0f);
+                dt.Set(DamageType.Bleeding, 0f);
+                dt.Set(DamageType.Poison, 0f);
+                dt.Set(DamageType.Cold, 0f);
+                dt.Set(DamageType.Radiation, 0f);
+            }
+            dt.Scale(DamageType.Bullet, spec.BulletScale);
+            dt.Scale(DamageType.Slash, spec.OtherScale);
+            dt.Scale(DamageType.Blunt, spec.OtherScale);
+            dt.Scale(DamageType.Stab, spec.OtherScale);
+            dt.Scale(DamageType.Explosion, spec.ExplosionScale);
+            dt.Scale(DamageType.AntiVehicle, spec.ExplosionScale);
+            dt.Scale(DamageType.Fun_Water, 0f);
+            dt.Scale(DamageType.Fall, 0f);
+            dt.Scale(DamageType.Decay, 0f);
+        }
+
+        #endregion
+
+        #region Death & Rewards
+
+        private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
+        {
+            if (entity == null) return;
+
+            // член свиты — его труп тоже должен остаться в своём масштабе
+            var esc = EscortOf(entity);
+            if (esc != null)
+            {
+                esc.Escorts.Remove(entity);
+                RegisterCorpseScale(entity, esc.Spec.Escort.Scale);
+                return;
+            }
+
+            var st = StateOf(entity);
+            if (st != null) HandleBossDeath(st, info);
+        }
+
+        // общий обработчик смерти босса — вызывается из хука И вручную из админ-килла
+        // (BaseCombatEntity.Kill() не всегда триггерит OnEntityDeath)
+        private void HandleBossDeath(BossState st, HitInfo info)
+        {
+            if (!st.Alive && st.Entity == null) return;
+            var ent = st.Entity;
+
+            // туша — новая сущность с дефолтным масштабом; масштабируем в OnEntitySpawned по parentEnt
+            RegisterCorpseScale(ent, st.Spec.Scale);
+
+            var killer = info?.InitiatorPlayer;
+            var killerName = killer != null ? killer.displayName.ToString() : "сервер";
+            _lastKillInfo[st.Spec.Key] = $"{killerName} — {DateTime.UtcNow:HH:mm}";
+
+            ClearMarker(st);
+            SpawnLoot(st.Spec, ent.transform.position + Vector3.up * 0.5f);
+            GiveRewards(st, killer);
+
+            Announce(Fmt(st.Spec.DeathAnnounce, st.Spec, killerName));
+            NotifyDiscord($"{st.Spec.DisplayName} убит. Добил: {killerName}");
+
+            st.Entity = null;
+            st.Ai = null;
+            st.Livestock = null;
+            st.Escorts.Clear(); // свита остаётся — обычные животные
+            ScheduleNext(st);
+        }
+
+        // регистрация «на этой смерти ждём труп с масштабом scale» + ленивая чистка протухшего
+        private void RegisterCorpseScale(BaseEntity dead, float scale)
+        {
+            var expiry = DateTime.UtcNow.AddMinutes(5);
+            _corpseByParent[dead] = Tuple.Create(scale, expiry);
+            _pendingCorpseScale.Add(Tuple.Create(dead, dead.transform.position, scale, expiry));
+
+            var now = DateTime.UtcNow;
+            foreach (var k in _corpseByParent.Where(kv => kv.Value.Item2 < now).Select(kv => kv.Key).ToList())
+                _corpseByParent.Remove(k);
+            _pendingCorpseScale.RemoveAll(p => p.Item4 < now);
+        }
+
+        // труп животного — отдельная entity: ставим масштаб до того, как он уйдёт клиентам.
+        // труп спавнится внутри Die() РАНЬШЕ OnEntityDeath — матчим по parentEnt, а не по очереди
+        private void OnEntitySpawned(BaseNetworkable entity)
+        {
+            var bc = entity as BaseCorpse;
+            if (bc == null) return;
+            var src = bc.parentEnt;
+            float? scale = null;
+            if (src != null && _corpseByParent.TryGetValue(src, out var entry))
+            {
+                _corpseByParent.Remove(src);
+                if (entry.Item2 > DateTime.UtcNow)
+                {
+                    scale = entry.Item1;
+                    // снимаем позиционный фолбэк этой же смерти — соседний труп
+                    // не должен подобрать чужой scale по координатам
+                    _pendingCorpseScale.RemoveAll(p => p.Item1 == src);
+                }
+            }
+            // фолбэк по очереди (если parentEnt пуст — по позиции из pending)
+            if (scale == null && _pendingCorpseScale.Count > 0)
+            {
+                for (var i = _pendingCorpseScale.Count - 1; i >= 0; i--)
+                {
+                    var p = _pendingCorpseScale[i];
+                    if (DateTime.UtcNow > p.Item4) { _pendingCorpseScale.RemoveAt(i); continue; }
+                    if (Vector3.Distance(bc.transform.position, p.Item2) > 8f) continue;
+                    scale = p.Item3;
+                    if (p.Item1 != null) _corpseByParent.Remove(p.Item1);
+                    _pendingCorpseScale.RemoveAt(i);
+                    break;
+                }
+            }
+            if (scale == null) return;
+            bc.networkEntityScale = true;
+            bc.transform.localScale = Vector3.one * scale.Value;
+        }
+
+        private void SpawnLoot(BossSpec spec, Vector3 pos)
+        {
+            // мешок чуть в стороне от туши — коллизия x2-босса перекрывает взаимодействие
+            var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+            var dropPos = pos + new Vector3(Mathf.Cos(ang) * 2f, 0.6f, Mathf.Sin(ang) * 2f);
+
+            var bag = GameManager.server.CreateEntity("assets/prefabs/misc/item drop/item_drop_backpack.prefab", dropPos, Quaternion.Euler(0f, 90f, 0f)) as DroppedItemContainer;
+            if (bag == null) return;
+            bag.lootPanelName = "generic_resizable";
+            bag.playerName = spec.DisplayName;
+            bag.playerSteamID = 0;
+            bag.onlyOwnerLoot = false;
+            bag.buryLeftoverItems = false;
+
+            // свой контейнер до Spawn() — как в Backpacks: ServerInit иначе делает свой
+            bag.inventory = new ItemContainer();
+            bag.inventory.ServerInitialize(null, 30);
+            bag.inventory.GiveUID();
+            bag.inventory.entityOwner = bag;
+            bag.inventory.SetFlag(ItemContainer.Flag.NoItemInput, true);
+
+            var rng = new System.Random();
+            foreach (var e in spec.Rewards.Loot)
+            {
+                if (rng.NextDouble() > e.Chance) continue;
+                var amount = rng.Next(e.MinAmount, e.MaxAmount + 1);
+
+                Item item;
+                if (!string.IsNullOrEmpty(e.BlueprintTarget))
+                {
+                    // чертёж: blueprintbase + blueprintTarget=итем
+                    var bpTarget = ItemManager.FindItemDefinition(e.BlueprintTarget);
+                    if (bpTarget == null)
+                    {
+                        PrintWarning($"OctaBoss[{spec.Key}]: неизвестная цель чертежа: {e.BlueprintTarget}");
+                        continue;
+                    }
+                    item = ItemManager.CreateByName("blueprintbase", amount);
+                    if (item == null)
+                    {
+                        PrintWarning("OctaBoss: нет blueprintbase в сборке");
+                        continue;
+                    }
+                    item.blueprintTarget = bpTarget.itemid;
+                    item.blueprintAmount = 1;
+                }
+                else
+                {
+                    item = ItemManager.CreateByName(e.ShortName, amount, e.SkinId);
+                    if (item == null)
+                    {
+                        PrintWarning($"OctaBoss[{spec.Key}]: неизвестный предмет в луте: {e.ShortName}");
+                        continue;
+                    }
+                }
+                if (!item.MoveToContainer(bag.inventory))
+                    item.Remove();
+            }
+
+            bag.Spawn();
+            bag.ResetRemovalTime(Mathf.Max(spec.Rewards.LootLifetimeSeconds, bag.CalculateRemovalTime()));
+        }
+
+        private void GiveRewards(BossState st, BasePlayer killer)
+        {
+            var spec = st.Spec;
+            if (spec.Rewards.Currency > 0 && killer != null)
+                PayCurrency(killer, spec.Rewards.Currency, "за добивание");
+
+            // участники выше порога
+            var total = st.DamageBy.Values.Sum();
+            if (total > 0)
+            {
+                foreach (var kv in st.DamageBy)
+                {
+                    if (kv.Value / total < spec.Rewards.ParticipationPct) continue;
+                    if (killer != null && kv.Key == (ulong)killer.userID) continue;
+                    var p = FindPlayer(kv.Key);
+                    if (p != null) PayCurrency(p, spec.Rewards.CurrencyParticipation, "за участие");
+                }
+            }
+
+            // бафф победителя
+            if (killer != null && spec.Rewards.BuffDamage > 1f && spec.Rewards.BuffMinutes > 0)
+            {
+                _buffs[(ulong)killer.userID] = Tuple.Create(DateTime.UtcNow.AddMinutes(spec.Rewards.BuffMinutes), spec.Rewards.BuffDamage);
+                SendReply(killer, $"<color=#E8B84B>◆ OctaBoss</color> Бафф победителя: +{(spec.Rewards.BuffDamage - 1f) * 100:0}% урона на {spec.Rewards.BuffMinutes:0} мин");
+            }
+        }
+
+        private static BasePlayer FindPlayer(ulong id)
+        {
+            foreach (var p in BasePlayer.activePlayerList)
+                if ((ulong)p.userID == id) return p;
+            return null;
+        }
+
+        private void PayCurrency(BasePlayer player, int amount, string reason)
+        {
+            // ServerRewards -> Economics, поиск живой инстанции (PluginReference залипает)
+            foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
+            {
+                if (p.Name == "ServerRewards" && p.IsLoaded)
+                {
+                    p.Call("AddPoints", (ulong)player.userID, amount);
+                    SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> +{amount} RP {reason}");
+                    return;
+                }
+            }
+            foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
+            {
+                if (p.Name == "Economics" && p.IsLoaded)
+                {
+                    p.Call("Deposit", player.UserIDString, (double)amount);
+                    SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> +{amount} монет {reason}");
+                    return;
+                }
+            }
+        }
+
+        #endregion
+
+        #region Notify
+
+        private void Announce(string msg)
+        {
+            if (!_cfg.Notify.ChatGlobal) return;
+            Server.Broadcast($"<color=#E8B84B>◆ OctaBoss</color> {msg}");
+        }
+
+        private void NotifyDiscord(string text)
+        {
+            if (string.IsNullOrEmpty(_cfg.Notify.DiscordWebhook)) return;
+            var body = JsonConvert.SerializeObject(new { content = $"👑 {text}" });
+            webrequest.Enqueue(_cfg.Notify.DiscordWebhook, body, (code, resp) => { }, this,
+                RequestMethod.POST, new Dictionary<string, string> { ["Content-Type"] = "application/json" });
+        }
+
+        #endregion
+
+        #region Admin UI
+
+        private const string AdminUIName = "OctaBoss_AdminUI";
+        private const string ColGold = "0.91 0.72 0.29 1";
+        private const string ColGoldDim = "0.75 0.6 0.25 1";
+        private const string ColBg = "0.06 0.06 0.06 0.97";
+        private const string ColRow = "0.10 0.10 0.10 1";
+        private const string ColInput = "0.16 0.16 0.16 1";
+        private const string ColText = "0.9 0.85 0.7 1";
+        private const string ColWhite = "1 1 1 1";
+
+        // выбранный вид в панели каждого админа
+        private readonly Dictionary<ulong, string> _uiSel = new Dictionary<ulong, string>();
+
+        [ChatCommand("boss_admin")]
+        private void CmdAdminUI(BasePlayer player)
+        {
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octaboss.admin"))
+            {
+                SendReply(player, "<color=#E8B84B>◆ OctaBoss</color> Нет прав (octaboss.admin)");
+                return;
+            }
+            DrawAdminUI(player);
+        }
+
+        private BossSpec UiSpec(BasePlayer player)
+        {
+            if (_uiSel.TryGetValue((ulong)player.userID, out var key))
+            {
+                var s = _cfg.Bosses.FirstOrDefault(b => b.Key == key);
+                if (s != null) return s;
+            }
+            return _cfg.Bosses.FirstOrDefault();
+        }
+
+        // ключ -> (название, getter, setter) для выбранного вида
+        private List<KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>> AdminFields(BossSpec b)
+        {
+            var s = b.Spawn; var r = b.Rewards; var e = b.Escort;
+            return new List<KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>>
+            {
+                KV("enabled",   "Включён (1/0)",           () => b.Enabled ? "1" : "0",            v => b.Enabled = I(v, b.Enabled ? 1 : 0) == 1),
+                KV("health",    "Здоровье",                () => b.Health.ToString("0"),           v => b.Health = F(v, b.Health)),
+                KV("scale",     "Масштаб (x обычного)",    () => b.Scale.ToString("0.##"),         v => b.Scale = F(v, b.Scale)),
+                KV("speed",     "Скорость (x)",            () => b.SpeedMultiplier.ToString("0.##"),v => b.SpeedMultiplier = F(v, b.SpeedMultiplier)),
+                KV("dmg",       "Урон босса (x)",          () => b.DamageMultiplier.ToString("0.##"),v => b.DamageMultiplier = F(v, b.DamageMultiplier)),
+                KV("rage",      "Урон в ярости (x)",       () => b.RageDamageMultiplier.ToString("0.##"), v => b.RageDamageMultiplier = F(v, b.RageDamageMultiplier)),
+                KV("rageth",    "Порог ярости (0-1)",      () => b.RageThreshold.ToString("0.##"), v => b.RageThreshold = F(v, b.RageThreshold)),
+                KV("aggro",     "Радиус агро (м)",         () => b.AggroRadius.ToString("0"),      v => b.AggroRadius = F(v, b.AggroRadius)),
+                KV("hyper",     "Экстра агрессия (1/0)",   () => b.HyperAggro ? "1" : "0",         v => b.HyperAggro = I(v, b.HyperAggro ? 1 : 0) == 1),
+                KV("life",      "Время жизни (мин)",       () => b.MaxLifeMinutes.ToString("0"),   v => b.MaxLifeMinutes = F(v, b.MaxLifeMinutes)),
+                KV("escort",    "Свита (шт)",              () => e.Count.ToString(),               v => e.Count = I(v, e.Count)),
+                KV("escortr",   "Радиус свиты (м)",        () => e.Radius.ToString("0"),           v => e.Radius = F(v, e.Radius)),
+                KV("escorts",   "Масштаб свиты",           () => e.Scale.ToString("0.##"),         v => e.Scale = F(v, e.Scale)),
+                KV("interval",  "Респаун (мин)",           () => s.IntervalMinutes.ToString("0"),  v => s.IntervalMinutes = F(v, s.IntervalMinutes)),
+                KV("jitter",    "Разброс респауна ± (мин)",() => s.IntervalJitterMinutes.ToString("0"), v => s.IntervalJitterMinutes = F(v, s.IntervalJitterMinutes)),
+                KV("warn",      "Предупреждение за (мин)", () => s.WarnBeforeMinutes.ToString("0"),v => s.WarnBeforeMinutes = F(v, s.WarnBeforeMinutes)),
+                KV("marker",    "Радиус маркера (0-1)",    () => s.MarkerRadius.ToString("0.###"), v => s.MarkerRadius = F(v, s.MarkerRadius)),
+                KV("currency",  "Награда RP за килл",      () => r.Currency.ToString(),            v => r.Currency = I(v, r.Currency)),
+            };
+        }
+
+        private static KeyValuePair<string, Tuple<string, Func<string>, Action<string>>> KV(
+            string key, string label, Func<string> get, Action<string> set) =>
+            new KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>(
+                key, Tuple.Create(label, get, set));
+
+        private static float F(string v, float def) =>
+            float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var r) ? r : def;
+        private static int I(string v, int def) =>
+            int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var r) ? r : def;
+
+        private void DrawAdminUI(BasePlayer player)
+        {
+            CuiHelper.DestroyUi(player, AdminUIName);
+            var c = new CuiElementContainer();
+            var spec = UiSpec(player);
+            if (spec == null) return;
+            _bosses.TryGetValue(spec.Key, out var st);
+
+            var fields = AdminFields(spec);
+            // панель вписываем в экран: высота фикс, высоту строки считаем под число полей
+            var midX = 0.5f; var w = 0.19f;
+            var top = 0.94f; var bot = 0.06f;
+            var rowsTop = 0.855f;  // внутри панели: низ вкладок видов
+            var rowsBot = 0.065f;  // внутри панели: верх кнопок
+            var rowH = (rowsTop - rowsBot) / fields.Count;
+
+            var root = c.Add(new CuiPanel
+            {
+                Image = { Color = ColBg },
+                RectTransform = { AnchorMin = $"{midX - w} {bot}", AnchorMax = $"{midX + w} {top}" },
+                CursorEnabled = true
+            }, "Overlay", AdminUIName);
+            c.Add(new CuiElement { Components = { new CuiNeedsCursorComponent() }, Parent = root });
+
+            // шапка — золото на чёрном
+            c.Add(new CuiPanel
+            {
+                Image = { Color = ColGold },
+                RectTransform = { AnchorMin = "0 0.955", AnchorMax = "1 1" }
+            }, root);
+            c.Add(new CuiLabel
+            {
+                Text = { Text = $"OCTABOSS — {spec.DisplayName}", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
+                RectTransform = { AnchorMin = "0 0.955", AnchorMax = "0.9 1" }
+            }, root);
+            c.Add(new CuiButton
+            {
+                Button = { Command = "octabossui close", Color = "0 0 0 0" },
+                Text = { Text = "X", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
+                RectTransform = { AnchorMin = "0.93 0.955", AnchorMax = "0.99 1" }
+            }, root);
+
+            // статус
+            var status = st != null && st.Alive
+                ? $"ЖИВ  |  HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}  |  {GridOf(st.Entity.transform.position)}{(st.Raging ? "  |  ЯРОСТЬ" : "")}"
+                : $"нет на карте  |  респаун через {(st != null ? Math.Max(0, (int)(st.NextSpawnAt - DateTime.UtcNow).TotalMinutes) : 0)} мин";
+            c.Add(new CuiLabel
+            {
+                Text = { Text = status, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = ColGold },
+                RectTransform = { AnchorMin = "0.03 0.905", AnchorMax = "0.97 0.95" }
+            }, root);
+
+            // вкладки видов — все боссы из конфига, выбранный подсвечен
+            var n = _cfg.Bosses.Count;
+            if (n > 0)
+            {
+                var tabW = 0.96f / n;
+                for (var ti = 0; ti < n; ti++)
+                {
+                    var b = _cfg.Bosses[ti];
+                    var x0 = 0.02f + ti * tabW;
+                    var sel = b.Key == spec.Key;
+                    c.Add(new CuiButton
+                    {
+                        Button = { Command = $"octabossui tab {b.Key}", Color = sel ? ColGoldDim : ColInput },
+                        Text = { Text = b.Key, FontSize = 10, Align = TextAnchor.MiddleCenter, Color = sel ? "0.05 0.05 0.05 1" : ColText },
+                        RectTransform = { AnchorMin = $"{x0} 0.862", AnchorMax = $"{x0 + tabW - 0.005f} 0.898" }
+                    }, root);
+                }
+            }
+
+            // строки полей
+            var i = 0;
+            foreach (var kv in fields)
+            {
+                var t = kv.Value;
+                var yTop = rowsTop - i * rowH;
+                var yBot = yTop - rowH + 0.008f;
+                var stripe = i % 2 == 0;
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = stripe ? ColRow : "0.08 0.08 0.08 1" },
+                    RectTransform = { AnchorMin = $"0.02 {yBot}", AnchorMax = $"0.98 {yTop}" }
+                }, root);
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = t.Item1, FontSize = 11, Align = TextAnchor.MiddleLeft, Color = ColText },
+                    RectTransform = { AnchorMin = $"0.04 {yBot}", AnchorMax = $"0.62 {yTop}" }
+                }, root);
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = ColInput },
+                    RectTransform = { AnchorMin = $"0.64 {yBot + 0.003f}", AnchorMax = $"0.96 {yTop - 0.003f}" }
+                }, root, $"{AdminUIName}_in{i}");
+                c.Add(new CuiElement
+                {
+                    Parent = $"{AdminUIName}_in{i}",
+                    Components =
+                    {
+                        new CuiInputFieldComponent
+                        {
+                            Text = t.Item2(),
+                            Command = $"octabossui set {kv.Key}",
+                            FontSize = 11,
+                            Align = TextAnchor.MiddleCenter,
+                            Color = ColWhite,
+                            CharsLimit = 12,
+                            NeedsKeyboard = true
+                        },
+                        new CuiNeedsCursorComponent()
+                    }
+                });
+                i++;
+            }
+
+            // кнопки снизу
+            var btnY = 0.012f;
+            AddAdminButton(c, root, $"octabossui spawn {spec.Key}", "СПАВНИТЬ", $"0.03 {btnY}", $"0.33 {btnY + 0.045f}", ColGold);
+            AddAdminButton(c, root, $"octabossui kill {spec.Key}", "УБИТЬ", $"0.36 {btnY}", $"0.66 {btnY + 0.045f}", "0.6 0.15 0.1 1");
+            AddAdminButton(c, root, "octabossui save", "СОХРАНИТЬ", $"0.69 {btnY}", $"0.97 {btnY + 0.045f}", "0.25 0.45 0.2 1");
+
+            CuiHelper.AddUi(player, c);
+        }
+
+        private void AddAdminButton(CuiElementContainer c, string parent, string cmd, string text, string min, string max, string color)
+        {
+            c.Add(new CuiButton
+            {
+                Button = { Command = cmd, Color = color },
+                Text = { Text = text, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
+                RectTransform = { AnchorMin = min, AnchorMax = max }
+            }, parent);
+        }
+
+        [ConsoleCommand("octabossui")]
+        private void CmdBossUI(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Player();
+            if (player == null) return;
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octaboss.admin")) return;
+            var args = arg.Args;
+            if (args == null || args.Length == 0) return;
+
+            var redraw = true;
+            switch (args[0].ToString())
+            {
+                case "close":
+                    CuiHelper.DestroyUi(player, AdminUIName);
+                    redraw = false;
+                    break;
+                case "tab":
+                    if (args.Length >= 2) _uiSel[(ulong)player.userID] = args[1].ToString();
+                    break;
+                case "spawn":
+                {
+                    var st = SelectedState(player);
+                    if (st != null) SpawnBoss(st, player.transform.position + player.transform.forward * 15f);
+                    break;
+                }
+                case "kill":
+                {
+                    var st = SelectedState(player);
+                    if (st != null && st.Alive)
+                    {
+                        var b = st.Entity;
+                        b.Kill();
+                        if (st.Entity == b) HandleBossDeath(st, null);
+                    }
+                    break;
+                }
+                case "save":
+                    SaveConfig();
+                    SendReply(player, "<color=#E8B84B>◆ OctaBoss</color> Конфиг сохранён");
+                    break;
+                case "set":
+                    if (args.Length >= 3)
+                    {
+                        var key = args[1].ToString();
+                        var value = string.Join(" ", args.Skip(2).Select(a => a.ToString()));
+                        var spec = UiSpec(player);
+                        foreach (var kv in AdminFields(spec))
+                            if (kv.Key == key) { kv.Value.Item3(value); break; }
+                        // если вид выключили/включили — обновляем рантайм-список
+                        SyncRuntime();
+                        SaveConfig();
+                    }
+                    break;
+            }
+            if (redraw) DrawAdminUI(player);
+        }
+
+        private BossState SelectedState(BasePlayer player)
+        {
+            var spec = UiSpec(player);
+            if (spec == null) return null;
+            BossState st;
+            if (!_bosses.TryGetValue(spec.Key, out st))
+            {
+                st = new BossState { Spec = spec };
+                ScheduleNext(st);
+                _bosses[spec.Key] = st;
+            }
+            return st;
+        }
+
+        // подхватывает виды, включённые/выключенные через панель или конфиг на лету
+        private void SyncRuntime()
+        {
+            foreach (var spec in _cfg.Bosses)
+            {
+                if (spec.Enabled && !_bosses.ContainsKey(spec.Key))
+                {
+                    var st = new BossState { Spec = spec };
+                    ScheduleNext(st, first: true);
+                    _bosses[spec.Key] = st;
+                }
+                else if (!spec.Enabled && _bosses.TryGetValue(spec.Key, out var st))
+                {
+                    if (st.Alive) DespawnBoss(st);
+                    _bosses.Remove(spec.Key);
+                }
+            }
+        }
+
+        #endregion
+
+        #region Commands
+
+        private string BossListLine(BossState st)
+        {
+            if (st.Alive)
+                return $"{st.Spec.Key}: ЖИВ HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0} @ {GridOf(st.Entity.transform.position)}{(st.Raging ? " ЯРОСТЬ" : "")}";
+            var left = st.NextSpawnAt - DateTime.UtcNow;
+            return $"{st.Spec.Key}: нет, спавн через {(int)left.TotalMinutes}м";
+        }
+
+        [ChatCommand("bosstimer")]
+        private void CmdTimer(BasePlayer player)
+        {
+            foreach (var st in _bosses.Values)
+                SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> {BossListLine(st)}");
+        }
+
+        [ChatCommand("bossinfo")]
+        private void CmdInfo(BasePlayer player, string cmd, string[] args)
+        {
+            foreach (var st in _bosses.Values)
+            {
+                if (!st.Alive) continue;
+                var dmg = st.DamageBy.OrderByDescending(k => k.Value).FirstOrDefault();
+                var top = dmg.Key > 0 ? (FindPlayer(dmg.Key)?.displayName.ToString() ?? "?") + $" ({dmg.Value:0} dmg)" : "—";
+                SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> [{st.Spec.Key}] {st.Spec.DisplayName}: HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
+            }
+            if (!_bosses.Values.Any(s => s.Alive))
+                SendReply(player, "<color=#E8B84B>◆ OctaBoss</color> Боссов на карте нет. /bosstimer — время до спавна.");
+        }
+
+        [ChatCommand("bosslast")]
+        private void CmdLast(BasePlayer player)
+        {
+            foreach (var spec in _cfg.Bosses)
+                SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> [{spec.Key}] последний килл: {(_lastKillInfo.TryGetValue(spec.Key, out var v) ? v : "ещё никто")}");
+        }
+
+        private BossState FindState(string key)
+        {
+            BossState st;
+            return _bosses.TryGetValue(key ?? "", out st) ? st : null;
+        }
+
+        [ConsoleCommand("octaboss.spawn")]
+        private void CmdSpawn(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin) return;
+            var key = arg.Args != null && arg.Args.Length > 0 ? arg.Args[0].ToString() : "";
+            var st = FindState(key);
+            if (st == null) { Puts($"OctaBoss: вид '{key}' не найден. Доступно: {string.Join(", ", _bosses.Keys)}"); return; }
+            var p = arg.Connection?.player as BasePlayer;
+            SpawnBoss(st, p != null ? (Vector3?)(p.transform.position + p.transform.forward * 15f) : null);
+            Puts($"OctaBoss: принудительный спавн [{key}]");
+        }
+
+        [ConsoleCommand("octaboss.kill")]
+        private void CmdKill(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin) return;
+            var key = arg.Args != null && arg.Args.Length > 0 ? arg.Args[0].ToString() : "";
+            var st = FindState(key);
+            if (st == null) { Puts($"OctaBoss: вид '{key}' не найден"); return; }
+            if (!st.Alive) { Puts($"OctaBoss[{key}]: босса нет"); return; }
+            var b = st.Entity;
+            b.Kill();
+            if (st.Entity == b) HandleBossDeath(st, null); // Kill() не всегда дёргает OnEntityDeath
+            Puts($"OctaBoss[{key}]: убит администратором");
+        }
+
+        [ConsoleCommand("octaboss.next")]
+        private void CmdNext(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin) return;
+            var key = arg.Args != null && arg.Args.Length > 0 ? arg.Args[0].ToString() : "";
+            var mins = 30f;
+            if (arg.Args != null && arg.Args.Length > 1)
+                float.TryParse(arg.Args[1].ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out mins);
+            var st = FindState(key);
+            if (st == null) { Puts($"OctaBoss: вид '{key}' не найден"); return; }
+            st.NextSpawnAt = DateTime.UtcNow.AddMinutes(Math.Max(0.1f, mins));
+            st.Warned = true;
+            Puts($"OctaBoss[{key}]: следующий спавн через {mins:0.#} мин");
+        }
+
+        [ConsoleCommand("octaboss.list")]
+        private void CmdList(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin) return;
+            foreach (var st in _bosses.Values) Puts($"OctaBoss: {BossListLine(st)}");
+        }
+
+        #endregion
+    }
+}
