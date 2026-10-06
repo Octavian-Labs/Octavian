@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.2.0")]
+    [Info("OctaBoss", "Octavian", "1.3.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -108,6 +108,7 @@ namespace Oxide.Plugins
             [JsonProperty("Текст предупреждения ({0}=минуты)")] public string WarnAnnounce = "{name} появится через {0} мин. Готовьтесь!";
             [JsonProperty("Текст деспавна по таймауту")] public string DespawnAnnounce = "{name} ушёл — никто не решился.";
             [JsonProperty("Текст смерти ({0}=добивший)")] public string DeathAnnounce = "★ {name} повержен! Добил: <color=#FFD35C>{0}</color>. Лут на месте падения.";
+            [JsonProperty("Текст смерти без боя (лута нет)")] public string QuietDeathAnnounce = "{name} погиб без боя — лута не будет.";
             [JsonProperty("Текст ярости")] public string RageAnnounce = "★ {name} ВПАЛ В ЯРОСТЬ — урон вырос!";
         }
 
@@ -233,10 +234,12 @@ namespace Oxide.Plugins
                             Count = 5, Radius = 10f, Scale = 0.55f,
                             Prefab = "", Male = null, KillOnDespawn = true
                         },
+                        // «кольцо Сатурна» вокруг ранчо: 300-900м по кругу — не в безопасной
+                        // зоне и не кемпится на точке, но всегда где-то рядом с жильём
                         Spawn = new SpecSpawn
                         {
                             MonumentNames = "ranch,barn",
-                            MonumentMinDist = 15f, MonumentMaxDist = 70f,
+                            MonumentMinDist = 300f, MonumentMaxDist = 900f,
                             NativeBiome = true, NativeBiomes = "temperate,tundra"
                         },
                         Rewards = new SpecRewards { Loot = MidLoot() },
@@ -363,6 +366,9 @@ namespace Oxide.Plugins
         private void Init()
         {
             permission.RegisterPermission("octaboss.admin", this);
+            // дубли Key в конфиге = тихая потеря вида (state перезаписывается) — орём в лог
+            foreach (var g in _cfg.Bosses.GroupBy(b => b.Key).Where(g => g.Count() > 1))
+                PrintError($"OctaBoss: дублирующийся ключ вида '{g.Key}' — в спавне участвует только последний!");
             foreach (var spec in _cfg.Bosses.Where(s => s.Enabled))
             {
                 var st = new BossState { Spec = spec };
@@ -388,7 +394,10 @@ namespace Oxide.Plugins
         {
             var jitter = UnityEngine.Random.Range(-st.Spec.Spawn.IntervalJitterMinutes, st.Spec.Spawn.IntervalJitterMinutes);
             var mins = Math.Max(1f, st.Spec.Spawn.IntervalMinutes + jitter);
-            st.NextSpawnAt = DateTime.UtcNow.AddMinutes(first ? Math.Min(mins, 5f) : mins);
+            // после рестарта все боссы спавнились почти одновременно через ~5 мин —
+            // предсказуемый «вайп-фарм»; размазываем первый спавн случайно
+            st.NextSpawnAt = DateTime.UtcNow.AddMinutes(
+                first ? UnityEngine.Random.Range(5f, Math.Max(6f, Math.Min(mins, 45f))) : mins);
             st.Warned = false;
         }
 
@@ -533,17 +542,22 @@ namespace Oxide.Plugins
                 var mon = mons[UnityEngine.Random.Range(0, mons.Count)];
                 var center = mon.Bounds.center;
                 var edge = Mathf.Max(mon.Bounds.extents.x, mon.Bounds.extents.z);
+                var mask = NativeBiomeMask(st.Spec);
+                var needWater = st.Spec.Spawn.NeedsWater;
+                var waterR = st.Spec.Spawn.WaterRadius;
+                // все монументы — для отсека точек внутри чужих (там же сейф-зоны:
+                // аутпост/бандитка). Точку ВНУТРИ любого монумента не берём вообще
+                var allMons = TerrainMeta.Path?.Monuments?.Where(m => m != null).ToList()
+                              ?? new List<MonumentInfo>();
 
-                for (var i = 0; i < 30; i++)
+                for (var i = 0; i < 40; i++)
                 {
                     var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
                     var dist = edge + UnityEngine.Random.Range(st.Spec.Spawn.MonumentMinDist, st.Spec.Spawn.MonumentMaxDist);
                     var p = center + new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
-                    var h = TerrainMeta.HeightMap.GetHeight(p);
-                    if (h < 1.5f) continue;
-                    p.y = h;
-                    try { if (TerrainMeta.TopologyMap.GetTopology(p, AvoidTopo)) continue; } catch { }
-                    p.y += 0.5f;
+                    if (allMons.Any(m => m.Bounds.Contains(p))) continue;
+                    if (!ValidPoint(p, mask, needWater, waterR)) continue;
+                    p.y = TerrainMeta.HeightMap.GetHeight(p) + 0.5f;
                     return p;
                 }
             }
@@ -712,6 +726,17 @@ namespace Oxide.Plugins
             return (tpl ?? "").Replace("{name}", spec.DisplayName).Replace("{0}", arg ?? "");
         }
 
+        // ник игрока идёт в rich-text чат — вырезаем теги, иначе ник вида
+        // "<size=60>ВАЙП</size>" становится фейковым админ-анонсом на весь сервер
+        private static string CleanName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "?";
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (var ch in name)
+                if (ch != '<' && ch != '>') sb.Append(ch);
+            return sb.ToString();
+        }
+
         #endregion
 
         #region Aggro & Rage
@@ -811,19 +836,29 @@ namespace Oxide.Plugins
             var st = StateOf(entity);
             if (st != null && st.Alive)
             {
-                if (st.Spec.HyperAggro && info.InitiatorPlayer != null)
+                var attacker = info.InitiatorPlayer;
+                if (attacker != null && !attacker.IsNpc)
                 {
-                    // каждый выстрел = боевой статус + снос фактов страха — FSM не уйдёт в бегство
-                    try
+                    // ответка на ЛЮБОЙ урон от игрока, в т.ч. снайп с 200м:
+                    // без этого босс — бесплатный мешок HP, стоящий за радиусом агро
+                    try { st.Ai?.MarkHostileFor(60f); } catch { }
+                    if (st.Spec.ForceProvoke && st.Livestock != null)
                     {
-                        st.Ai?.MarkHostileFor(60f);
-                        var bb = st.Ai?.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
-                        if (bb != null) { bb.Remove("flee"); bb.Remove("fleeing"); bb.Remove("threatened"); }
+                        try { st.Livestock.Provoke(attacker); } catch { }
+                        try { st.Livestock.RememberAggressor(attacker); } catch { }
                     }
-                    catch { }
+                    if (st.Spec.HyperAggro)
+                    {
+                        // каждый выстрел = снос фактов страха — FSM не уйдёт в бегство
+                        try
+                        {
+                            var bb = st.Ai?.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
+                            if (bb != null) { bb.Remove("flee"); bb.Remove("fleeing"); bb.Remove("threatened"); }
+                        }
+                        catch { }
+                    }
                 }
                 ApplyBossArmor(st.Spec, info);
-                var attacker = info.InitiatorPlayer;
                 if (attacker != null && !attacker.IsNpc)
                     st.DamageBy[(ulong)attacker.userID] = st.DamageBy.TryGetValue((ulong)attacker.userID, out var cur)
                         ? cur + info.damageTypes.Total()
@@ -897,8 +932,11 @@ namespace Oxide.Plugins
         }
 
         // общий обработчик смерти босса — вызывается из хука И вручную из админ-килла
-        // (BaseCombatEntity.Kill() не всегда триггерит OnEntityDeath)
-        private void HandleBossDeath(BossState st, HitInfo info)
+        // (BaseCombatEntity.Kill() не всегда триггерит OnEntityDeath).
+        // adminKill=true: админ убил — ивент завершён, лут положен.
+        // Без adminKill и без урона от игроков (DieOffNavmesh, утоплен, звери) —
+        // лута и наград НЕТ: иначе бесплатный мешок = вымани крокодила с навмеша.
+        private void HandleBossDeath(BossState st, HitInfo info, bool adminKill = false)
         {
             if (!st.Alive && st.Entity == null) return;
             var ent = st.Entity;
@@ -907,15 +945,24 @@ namespace Oxide.Plugins
             RegisterCorpseScale(ent, st.Spec.Scale);
 
             var killer = info?.InitiatorPlayer;
-            var killerName = killer != null ? killer.displayName.ToString() : "сервер";
+            var killerName = killer != null ? CleanName(killer.displayName) : (adminKill ? "админ" : "сервер");
             _lastKillInfo[st.Spec.Key] = $"{killerName} — {DateTime.UtcNow:HH:mm}";
 
             ClearMarker(st);
-            SpawnLoot(st.Spec, ent.transform.position + Vector3.up * 0.5f);
-            GiveRewards(st, killer);
 
-            Announce(Fmt(st.Spec.DeathAnnounce, st.Spec, killerName));
-            NotifyDiscord($"{st.Spec.DisplayName} убит. Добил: {killerName}");
+            var hadCombat = adminKill || killer != null || st.DamageBy.Values.Sum() > 0;
+            if (hadCombat)
+            {
+                SpawnLoot(st.Spec, ent.transform.position + Vector3.up * 0.5f);
+                GiveRewards(st, killer);
+                Announce(Fmt(st.Spec.DeathAnnounce, st.Spec, killerName));
+                NotifyDiscord($"{st.Spec.DisplayName} убит. Добил: {killerName}");
+            }
+            else
+            {
+                Announce(Fmt(st.Spec.QuietDeathAnnounce, st.Spec, null));
+                NotifyDiscord($"{st.Spec.DisplayName} погиб без боя.");
+            }
 
             st.Entity = null;
             st.Ai = null;
@@ -943,6 +990,9 @@ namespace Oxide.Plugins
         {
             var bc = entity as BaseCorpse;
             if (bc == null) return;
+            // трупы игроков/учёных/лошадей — тоже BaseCorpse: не даём им подобрать
+            // боссовский масштаб по позиционному фолбэку (умер рядом → труп x2)
+            if (bc is PlayerCorpse || bc is NPCPlayerCorpse || bc is LootableCorpse || bc is HorseCorpse) return;
             var src = bc.parentEnt;
             float? scale = null;
             if (src != null && _corpseByParent.TryGetValue(src, out var entry))
@@ -1038,30 +1088,46 @@ namespace Oxide.Plugins
             bag.ResetRemovalTime(Mathf.Max(spec.Rewards.LootLifetimeSeconds, bag.CalculateRemovalTime()));
         }
 
+        // сколько дамагеров максимум получат награду за участие — защита от
+        // альт-фарма: без капа каждый твинк с одним ударом тащит участие
+        private const int MaxParticipationRewards = 5;
+
         private void GiveRewards(BossState st, BasePlayer killer)
         {
             var spec = st.Spec;
-            if (spec.Rewards.Currency > 0 && killer != null)
-                PayCurrency(killer, spec.Rewards.Currency, "за добивание");
 
-            // участники выше порога
+            // победитель = ТОП-ДАМАГЕР, а не ласт-хиттер: иначе голый с камнем
+            // ворует награду у сквада, снявшего 99% HP. Ласт-хит уходит в анонс.
+            BasePlayer winner = null;
+            var top = st.DamageBy.OrderByDescending(k => k.Value).FirstOrDefault();
+            if (top.Key != 0) winner = FindPlayer(top.Key);
+            if (winner == null) winner = killer; // топ-дамагер оффлайн — добившему
+
+            if (spec.Rewards.Currency > 0 && winner != null)
+                PayCurrency(winner, spec.Rewards.Currency, "за победу (топ урон)");
+
+            // участие: топ-5 по урону выше порога, без победителя
             var total = st.DamageBy.Values.Sum();
-            if (total > 0)
+            if (total > 0 && spec.Rewards.CurrencyParticipation > 0)
             {
-                foreach (var kv in st.DamageBy)
+                var paid = 0;
+                foreach (var kv in st.DamageBy.OrderByDescending(k => k.Value))
                 {
-                    if (kv.Value / total < spec.Rewards.ParticipationPct) continue;
-                    if (killer != null && kv.Key == (ulong)killer.userID) continue;
+                    if (paid >= MaxParticipationRewards) break;
+                    if (kv.Value / total < spec.Rewards.ParticipationPct) break; // отсортировано — дальше порога нет
+                    if (winner != null && kv.Key == (ulong)winner.userID) continue;
                     var p = FindPlayer(kv.Key);
-                    if (p != null) PayCurrency(p, spec.Rewards.CurrencyParticipation, "за участие");
+                    if (p == null) continue;
+                    PayCurrency(p, spec.Rewards.CurrencyParticipation, "за участие");
+                    paid++;
                 }
             }
 
-            // бафф победителя
-            if (killer != null && spec.Rewards.BuffDamage > 1f && spec.Rewards.BuffMinutes > 0)
+            // бафф победителя (топ-дамагеру)
+            if (winner != null && spec.Rewards.BuffDamage > 1f && spec.Rewards.BuffMinutes > 0)
             {
-                _buffs[(ulong)killer.userID] = Tuple.Create(DateTime.UtcNow.AddMinutes(spec.Rewards.BuffMinutes), spec.Rewards.BuffDamage);
-                SendReply(killer, $"<color=#E8B84B>◆ OctaBoss</color> Бафф победителя: +{(spec.Rewards.BuffDamage - 1f) * 100:0}% урона на {spec.Rewards.BuffMinutes:0} мин");
+                _buffs[(ulong)winner.userID] = Tuple.Create(DateTime.UtcNow.AddMinutes(spec.Rewards.BuffMinutes), spec.Rewards.BuffDamage);
+                SendReply(winner, $"<color=#E8B84B>◆ OctaBoss</color> Бафф победителя: +{(spec.Rewards.BuffDamage - 1f) * 100:0}% урона на {spec.Rewards.BuffMinutes:0} мин");
             }
         }
 
@@ -1355,7 +1421,7 @@ namespace Oxide.Plugins
                     {
                         var b = st.Entity;
                         b.Kill();
-                        if (st.Entity == b) HandleBossDeath(st, null);
+                        if (st.Entity == b) HandleBossDeath(st, null, adminKill: true);
                     }
                     break;
                 }
@@ -1439,7 +1505,7 @@ namespace Oxide.Plugins
             {
                 if (!st.Alive) continue;
                 var dmg = st.DamageBy.OrderByDescending(k => k.Value).FirstOrDefault();
-                var top = dmg.Key > 0 ? (FindPlayer(dmg.Key)?.displayName.ToString() ?? "?") + $" ({dmg.Value:0} dmg)" : "—";
+                var top = dmg.Key > 0 ? (CleanName(FindPlayer(dmg.Key)?.displayName ?? "?")) + $" ({dmg.Value:0} dmg)" : "—";
                 SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> [{st.Spec.Key}] {st.Spec.DisplayName}: HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
             }
             if (!_bosses.Values.Any(s => s.Alive))
@@ -1481,7 +1547,7 @@ namespace Oxide.Plugins
             if (!st.Alive) { Puts($"OctaBoss[{key}]: босса нет"); return; }
             var b = st.Entity;
             b.Kill();
-            if (st.Entity == b) HandleBossDeath(st, null); // Kill() не всегда дёргает OnEntityDeath
+            if (st.Entity == b) HandleBossDeath(st, null, adminKill: true); // Kill() не всегда дёргает OnEntityDeath
             Puts($"OctaBoss[{key}]: убит администратором");
         }
 
