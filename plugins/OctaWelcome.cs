@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Plugins;
 using Oxide.Game.Rust.Cui;
@@ -12,8 +13,8 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaWelcome", "Octavian", "1.0.0")]
-    [Description("Приветственная панель Octavian с табами и встроенным редактором")]
+    [Info("OctaWelcome", "Octavian", "1.1.0")]
+    [Description("Приветственная панель Octavian: 10 вкладок, редактор, автогенерация страниц боссов из OctaBoss")]
 
     public class OctaWelcome : RustPlugin
     {
@@ -72,6 +73,7 @@ namespace Oxide.Plugins
             LoadConfig();
             WriteCuiEntry();
             WritePageEntry();
+            PopulateBossPages();
             DependencyWarnings();
             RegisterCommands();
             RegisterPerms();
@@ -1284,19 +1286,19 @@ namespace Oxide.Plugins
                 //btn 3
                 cuiData["menuBtn3"].anchorMin = "0.1845 0.600"; cuiData["menuBtn3"].anchorMax = "0.3095 0.647";
                 cuiData["menuBtn3"].color = "0 0 0 0"; cuiData["menuBtn3"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn3"].image = "https://rustplugins.net/products/welcomepanel/1/wipe.png"; cuiData["menuBtn3"].fade = 0f;
+                cuiData["menuBtn3"].image = "https://rustplugins.net/products/welcomepanel/1/shop.png"; cuiData["menuBtn3"].fade = 0f;
                 //btn 4
                 cuiData["menuBtn4"].anchorMin = "0.1845 0.550"; cuiData["menuBtn4"].anchorMax = "0.3095 0.597";
                 cuiData["menuBtn4"].color = "0 0 0 0"; cuiData["menuBtn4"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn4"].image = "https://rustplugins.net/products/welcomepanel/1/star.png"; cuiData["menuBtn4"].fade = 0f;
+                cuiData["menuBtn4"].image = "https://rustplugins.net/products/welcomepanel/1/wipe.png"; cuiData["menuBtn4"].fade = 0f;
                 //btn 5
                 cuiData["menuBtn5"].anchorMin = "0.1845 0.500"; cuiData["menuBtn5"].anchorMax = "0.3095 0.547";
                 cuiData["menuBtn5"].color = "0 0 0 0"; cuiData["menuBtn5"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn5"].image = "https://rustplugins.net/products/welcomepanel/1/discord.png"; cuiData["menuBtn5"].fade = 0f;
+                cuiData["menuBtn5"].image = "https://rustplugins.net/products/welcomepanel/1/star.png"; cuiData["menuBtn5"].fade = 0f;
                 //btn 6
                 cuiData["menuBtn6"].anchorMin = "0.1845 0.450"; cuiData["menuBtn6"].anchorMax = "0.3095 0.497";
                 cuiData["menuBtn6"].color = "0 0 0 0"; cuiData["menuBtn6"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn6"].image = "https://rustplugins.net/products/welcomepanel/1/bug.png"; cuiData["menuBtn6"].fade = 0f;
+                cuiData["menuBtn6"].image = "https://rustplugins.net/products/welcomepanel/1/discord.png"; cuiData["menuBtn6"].fade = 0f;
                 //btn 7
                 cuiData["menuBtn7"].anchorMin = "0.1845 0.400"; cuiData["menuBtn7"].anchorMax = "0.3095 0.447";
                 cuiData["menuBtn7"].color = "0 0 0 0"; cuiData["menuBtn7"].material = "assets/icons/iconmaterial.mat";
@@ -1308,11 +1310,11 @@ namespace Oxide.Plugins
                 //btn 9
                 cuiData["menuBtn9"].anchorMin = "0.1845 0.300"; cuiData["menuBtn9"].anchorMax = "0.3095 0.347";
                 cuiData["menuBtn9"].color = "0 0 0 0"; cuiData["menuBtn9"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn9"].image = "https://rustplugins.net/products/welcomepanel/1/star.png"; cuiData["menuBtn9"].fade = 0f;
+                cuiData["menuBtn9"].image = "https://rustplugins.net/products/welcomepanel/1/rules.png"; cuiData["menuBtn9"].fade = 0f;
                 //btn 10
                 cuiData["menuBtn10"].anchorMin = "0.1845 0.250"; cuiData["menuBtn10"].anchorMax = "0.3095 0.297";
                 cuiData["menuBtn10"].color = "0 0 0 0"; cuiData["menuBtn10"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn10"].image = "https://rustplugins.net/products/welcomepanel/1/rules.png"; cuiData["menuBtn10"].fade = 0f;
+                cuiData["menuBtn10"].image = "https://rustplugins.net/products/welcomepanel/1/bug.png"; cuiData["menuBtn10"].fade = 0f;
                 //page buttons
                 //next
                 cuiData["nextButton"].anchorMin = "0.95 0.013"; cuiData["nextButton"].anchorMax = "0.99 0.06";
@@ -1333,7 +1335,7 @@ namespace Oxide.Plugins
                 config.tab7Settings.btnTitle = " МАГАЗИН";
                 config.tab8Settings.btnTitle = " АДМИНЫ";
                 config.tab9Settings.btnTitle = " НОВОСТИ";
-                config.tab10Settings.btnTitle = " КАРТА";
+                config.tab10Settings.btnTitle = " БОССЫ";
                 config.titleSettings.titleText = "<size=55><color=#E8B84B>OCTAVIAN</color></size>";
             }
 
@@ -2091,6 +2093,156 @@ namespace Oxide.Plugins
             }
         }
 
+        #region [Boss pages — генерация из OctaBoss.json]
+
+        // вкладка «БОССЫ»: стр.2..10 — по виду из конфига OctaBoss.
+        // Заполняем только пустые страницы (ручные правки админа не трогаем),
+        // принудительная регенерация — octawelcome_bosses_refresh.
+        private const int BossTabIndex = 10;
+
+        private static string JStr(JObject o, string key, string def = "") =>
+            o?[key]?.ToString() ?? def;
+        private static float JFloat(JObject o, string key, float def = 0f) =>
+            o?[key]?.ToObject<float?>() ?? def;
+        private static bool JBool(JObject o, string key, bool def = false) =>
+            o?[key]?.ToObject<bool?>() ?? def;
+
+        private void PopulateBossPages(bool force = false)
+        {
+            var tab = $"Tab{BossTabIndex}";
+            if (pageData == null || !pageData.ContainsKey(tab)) return;
+            if (!force && pageData[tab].page2.Count > 0) return;
+
+            var path = Path.Combine(Interface.Oxide.ConfigDirectory, "OctaBoss.json");
+            if (!File.Exists(path))
+            {
+                Puts("(!) OctaBoss.json не найден — страницы боссов не сгенерированы.");
+                return;
+            }
+
+            List<JObject> specs;
+            try
+            {
+                specs = (JObject.Parse(File.ReadAllText(path))["Виды боссов"] as JArray)
+                        ?.OfType<JObject>().ToList() ?? new List<JObject>();
+            }
+            catch (Exception ex)
+            {
+                Puts($"(!) OctaBoss.json не читается: {ex.Message}");
+                return;
+            }
+            if (specs.Count == 0) return;
+
+            var pages = new List<List<string>>();
+            foreach (var b in specs) pages.Add(BossPageLines(b));
+            for (var i = pages.Count; i < 9; i++) pages.Add(new List<string>()); // чистим хвосты
+
+            pageData[tab].page2 = pages.Count > 0 ? pages[0] : new List<string>();
+            pageData[tab].page3 = pages.Count > 1 ? pages[1] : new List<string>();
+            pageData[tab].page4 = pages.Count > 2 ? pages[2] : new List<string>();
+            pageData[tab].page5 = pages.Count > 3 ? pages[3] : new List<string>();
+            pageData[tab].page6 = pages.Count > 4 ? pages[4] : new List<string>();
+            pageData[tab].page7 = pages.Count > 5 ? pages[5] : new List<string>();
+            pageData[tab].page8 = pages.Count > 6 ? pages[6] : new List<string>();
+            pageData[tab].page9 = pages.Count > 7 ? pages[7] : new List<string>();
+            pageData[tab].page10 = pages.Count > 8 ? pages[8] : new List<string>();
+            SavePageData();
+            Puts($"Страницы боссов сгенерированы: {specs.Count} видов → Tab{BossTabIndex}.");
+        }
+
+        // короткое имя зверя из пути префаба: ".../boar/boar.prefab" -> "boar"
+        private static string PrefabName(string prefab)
+        {
+            if (string.IsNullOrEmpty(prefab)) return "?";
+            var f = prefab.Replace('\\', '/');
+            var slash = f.LastIndexOf('/');
+            if (slash >= 0) f = f.Substring(slash + 1);
+            return f.Replace(".prefab", "");
+        }
+
+        private List<string> BossPageLines(JObject b)
+        {
+            var key = JStr(b, "Ключ (латиницей, для команд)", "?");
+            var name = JStr(b, "Имя босса", key.ToUpper());
+            var enabled = JBool(b, "Включён", true);
+            var hp = JFloat(b, "Здоровье");
+            var scale = JFloat(b, "Масштаб модели (1 = обычный)", 1f);
+            var speed = JFloat(b, "Множитель скорости (1 = обычная)", 1f);
+            var dmg = JFloat(b, "Множитель исходящего урона", 1f);
+            var bullet = JFloat(b, "Множитель входящего урона (пули)", 1f);
+            var expl = JFloat(b, "Множитель входящего урона (взрывы)", 1f);
+            var rageTh = JFloat(b, "Порог ярости (доля HP)", 0.5f) * 100f;
+            var rageDmg = JFloat(b, "Множитель урона в ярости", 1f);
+            var aggro = JFloat(b, "Радиус агро (м)");
+
+            var esc = b["Свита"] as JObject;
+            var escCount = esc?["Количество"]?.ToObject<int?>() ?? 0;
+            var escScale = JFloat(esc, "Масштаб (1 = обычный)", 1f);
+            var escPrefab = JStr(esc, "Префаб (пусто = как у босса)");
+            if (string.IsNullOrEmpty(escPrefab)) escPrefab = JStr(b, "Префаб босса");
+            var escLine = escCount > 0
+                ? $"<size=15><color=#83b8c7>СВИТА:</color> {escCount} × {PrefabName(escPrefab)} <color=#83b8c7>(x{escScale:0.##})</color></size>"
+                : "<size=15><color=#83b8c7>СВИТА:</color> одиночка — бояться некого, кроме него самого</size>";
+
+            var sp = b["Спавн"] as JObject;
+            var interval = JFloat(sp, "Интервал спавна (мин)");
+            var jitter = JFloat(sp, "Разброс интервала ± (мин)");
+            var mons = JStr(sp, "Монументы-якоря (через запятую, частичное совпадение; пусто = любая точка)");
+            var biomes = JBool(sp, "Спавн только в родном биоме")
+                ? JStr(sp, "Родные биомы (arid,temperate,tundra,arctic,jungle через запятую)") : "любой";
+            var water = JBool(sp, "Требовать воду рядом (водные звери; крокодил иначе умирает сойдя с навмеша)");
+
+            var rw = b["Награды"] as JObject;
+            var cur = rw?["Валюта за убийство (ServerRewards/Economics)"]?.ToObject<int?>() ?? 0;
+            var part = rw?["Валюта участникам (нанёс >= порога урона)"]?.ToObject<int?>() ?? 0;
+            var buff = JFloat(rw, "Бафф урона победителя (x)", 1f);
+
+            // лут: шортнеймы, чертежи -> «чертёж X», дедуп, до 12 штук
+            var lootNames = new List<string>();
+            foreach (var e in (rw?["Лут-таблица"] as JArray)?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
+            {
+                var bp = JStr(e, "Чертёж: целевой предмет (если задан)");
+                var nm = !string.IsNullOrEmpty(bp) ? $"чертёж {bp}" : JStr(e, "Шортнейм предмета");
+                if (nm.Length > 0 && !lootNames.Contains(nm)) lootNames.Add(nm);
+                if (lootNames.Count >= 12) break;
+            }
+
+            var status = enabled
+                ? "<color=#83b8c7>АКТИВЕН</color>"
+                : "<color=#cd412b>СПИТ (выкл. в конфиге)</color>";
+            var lines = new List<string>
+            {
+                $"<size=30><color=#E8B84B>{name}</color></size>",
+                $"<size=14>{status} • {hp:0} HP • масштаб <color=#83b8c7>x{scale:0.##}</color> • скорость <color=#83b8c7>x{speed:0.##}</color></size>",
+                "",
+                $"<size=15><color=#83b8c7>БОЙ:</color> урон x{dmg:0.##} • ярость при <{rageTh:0}% HP — урон x{rageDmg:0.##}</size>",
+                $"<size=15><color=#83b8c7>БРОНЯ:</color> пули x{bullet:0.##} • взрывы x{expl:0.##} • агро {aggro:0}м</size>",
+                escLine,
+                "",
+                $"<size=15><color=#83b8c7>СПАВН:</color> каждые ~{interval:0}±{jitter:0} мин • биом: {biomes}" +
+                $"{(mons.Length > 0 ? $" • у {mons}" : "")}{(water ? " • у воды" : "")}</size>",
+                "",
+                $"<size=15><color=#83b8c7>НАГРАДА:</color> {cur} RP топ-дамагеру • {part} RP участникам • бафф x{buff:0.##}</size>",
+            };
+            if (lootNames.Count > 0)
+            {
+                lines.Add("");
+                lines.Add($"<size=14><color=#83b8c7>ЛУТ:</color> {string.Join(", ", lootNames)}</size>");
+            }
+            lines.Add("");
+            lines.Add("<size=11>/bosstimer — расписание • /bossinfo — кто жив • /bosslast — киллеры</size>");
+            return lines;
+        }
+
+        [ConsoleCommand("octawelcome_bosses_refresh")]
+        private void octawelcome_bosses_refresh(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin) return;
+            PopulateBossPages(force: true);
+        }
+
+        #endregion
+
         #endregion
 
         #region [Preset Data]
@@ -2714,7 +2866,7 @@ namespace Oxide.Plugins
                                 "shop",
                                 "admins",
                                 "news",
-                                "map"
+                                "bosses"
                             }
 
                     },
@@ -2761,13 +2913,12 @@ namespace Oxide.Plugins
                                 "<size=45><color=#E8B84B>OCTAVIAN</color></size> ",
                                 "<size=25>ВАЙПЫ <color=#83b8c7>ЕЖЕНЕДЕЛЬНЫЕ</color></size>",
                                 "<size=25>РЕЙТЫ <color=#83b8c7>x5 ДОБЫЧА</color> | <color=#83b8c7>x5 ЛУТ</color></size> ",
-                                "<size=25>ЛИМИТ ГРУППЫ <color=#83b8c7>СМ. /team</color></size>",
                                 "<size=25>КАРТА <color=#83b8c7>4200</color></size> ",
-                                "\n",
-                                "\n",
-                                "<size=15>Сервер находится в EU. Вайп карт — еженедельно, BP — ежемесячно. Вкладки слева расскажут подробнее: правила, наборы, VIP-уровни и контакты.</size>",
-                                "\n",
-                                "<size=15><color=#83b8c7>\n Наборы доступны во вкладке НАБОРЫ или командой /kits.</color></size>"
+                                "",
+                                "<size=15>Сервер в EU. Вайп карт — еженедельно, чертежи — ежемесячно.</size>",
+                                "<size=15>Вкладки слева: правила, наборы, VIP, боссы и контакты.</size>",
+                                "",
+                                "<size=15><color=#83b8c7>Наборы — вкладка НАБОРЫ или /kits • Боссы — вкладка БОССЫ или /bosses</color></size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -2791,16 +2942,16 @@ namespace Oxide.Plugins
                         mainAlign = TextAnchor.UpperLeft,
                         textLines = new List<string>
                                 {
-                                    "<size=45><color=#E8B84B>ПРАВИЛА СЕРВЕРА</color></size>",
+                                    "<size=40><color=#E8B84B>ПРАВИЛА СЕРВЕРА</color></size>",
                                     "",
-                                    "<size=18>1. Запрещены читы, макросы и багоюз.</size>",
-                                    "<size=18>2. Уважайте игроков и администрацию.</size>",
+                                    "<size=17><color=#83b8c7>1.</color> Читы, макросы, багоюз — перманентный бан без предупреждений.</size>",
+                                    "<size=17><color=#83b8c7>2.</color> Уважай игроков и администрацию — токсичность карается.</size>",
+                                    "<size=17><color=#83b8c7>3.</color> Инсайдерство и кража у своей команды запрещены.</size>",
+                                    "<size=17><color=#83b8c7>4.</color> Оффлайн-рейды разрешены — это Rust.</size>",
+                                    "<size=17><color=#83b8c7>5.</color> Реклама сторонних серверов — бан.</size>",
                                     "",
-                                    "<size=17>UpperLeft - <color=#4A95CC>0</color></size>\n<size=17>UpperCenter - <color=#4A95CC>1</color></size>\n<size=17>UpperRight - <color=#4A95CC>2</color></size>",
-                                    "<size=17>MiddleLeft - <color=#4A95CC>3</color></size>\n<size=17>MiddleCenter - <color=#4A95CC>4</color></size>\n<size=17>MiddleRight - <color=#4A95CC>5</color></size>",
-                                    "<size=17>LowerLeft - <color=#4A95CC>6</color></size>\n<size=17>LowerCenter - <color=#4A95CC>7</color></size>\n<size=17>LowerRight - <color=#4A95CC>8</color></size>",
-                                    "",
-                                    ""
+                                    "<size=14>Незнание правил не освобождает от ответственности.</size>",
+                                    "<size=14>Споры решает администрация — вкладка АДМИНЫ или ДИСКОРД.</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -2813,26 +2964,25 @@ namespace Oxide.Plugins
                     tab3Settings = new OctaWelcome.Configuration.Tab3Settings
                     {
                         btnEnabled = true,
-                        btnTitle = "   WIPE CYCLE",
+                        btnTitle = "   НАБОРЫ",
                         btnIcon = "you can change icons in data/cuiData.json",
                         mainFontSize = 15,
                         mainFontColor = "1 1 1 1",
                         fontOutlineColor = "0 0 0 1",
                         fontOutlineThick = "0",
                         mainFontStyle = "robotocondensed-bold.ttf",
-                        mainAlign = TextAnchor.MiddleCenter,
+                        mainAlign = TextAnchor.UpperLeft,
                         textLines = new List<string>
                                 {
-                                    "<size=45><color=#E8B84B>НАБОРЫ</color></size>",
+                                    "<size=40><color=#E8B84B>НАБОРЫ</color></size>",
                                     "",
-                                    "(color=#4A95CC)<color=#FF8000FF>Text Color</color>(/color)",
-                                    "(size=18)<size=18><color=#4A95CC>Text Size</color></size>(/size)",
-                                    "(b)<b><color=#4A95CC>Bold Text</color></b>(/b)",
-                                    "(i)<i><color=#4A95CC>Italic Text</color></i>(/i)",
+                                    "<size=17>Список наборов: <color=#83b8c7>/kits</color></size>",
                                     "",
+                                    "<size=17><color=#83b8c7>STARTER</color> — инструменты и еда на первый день.</size>",
+                                    "<size=17><color=#83b8c7>BUILDER</color> — материалы для быстрой постройки.</size>",
+                                    "<size=17><color=#83b8c7>VIP</color> — расширенные наборы по статусу (вкладка VIP).</size>",
                                     "",
-                                    "<size=18>Replace ( ) with <color=#4A95CC>< ></color> in actual config file, rounded brackets used only as showcase.</size>",
-                                    ""
+                                    "<size=14>Кулдауны видны прямо в /kits.</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -2845,26 +2995,24 @@ namespace Oxide.Plugins
                     tab4Settings = new OctaWelcome.Configuration.Tab4Settings
                     {
                         btnEnabled = true,
-                        btnTitle = "   STEAM GROUP",
+                        btnTitle = "   ВАЙПЫ",
                         btnIcon = "you can change icons in data/cuiData.json",
                         mainFontSize = 12,
                         mainFontColor = "1 1 1 1",
                         fontOutlineColor = "0 0 0 1",
                         fontOutlineThick = "1.5",
-                        mainFontStyle = "permanentmarker.ttf",
+                        mainFontStyle = "robotocondensed-bold.ttf",
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "<size=45><color=#E8B84B>РАСПИСАНИЕ ВАЙПОВ</color></size> ",
-                                    "<size=25>Карта: <color=#83b8c7>каждый четверг</color></size>",
-                                    "<size=25>RATES <color=#83b8c7>2x GATHER</color> | <color=#83b8c7>1.5x LOOT</color></size> ",
-                                    "<size=25>GROUP LIMIT <color=#83b8c7>MAX 5</color></size>",
-                                    "<size=25>MAPSIZE <color=#83b8c7>3500</color></size> ",
-                                    "\n",
-                                    "\n",
-                                    "<size=15>Server is located in EU. Blueprints are wiped monthly. Feel free to browse our infomation panel to find out more about the server. If you have more questions, please join our discord and we will happy to help you.</size>",
-                                    "\n",
-                                    "<size=15><color=#83b8c7>\n This is demo page for Welcome, you can find more examples by checking other tabs.</color></size>"
+                                    "<size=40><color=#E8B84B>РАСПИСАНИЕ ВАЙПОВ</color></size>",
+                                    "",
+                                    "<size=22>КАРТА <color=#83b8c7>каждый четверг</color></size>",
+                                    "<size=22>ЧЕРТЕЖИ <color=#83b8c7>первый четверг месяца</color></size>",
+                                    "",
+                                    "<size=17>До вайпа: {wipecountdown}</size>",
+                                    "",
+                                    "<size=14>Вайп карт не трогает чертежи. Точное время — в ДИСКОРД.</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -2877,7 +3025,7 @@ namespace Oxide.Plugins
                     tab5Settings = new OctaWelcome.Configuration.Tab5Settings
                     {
                         btnEnabled = true,
-                        btnTitle = "  DISCORD",
+                        btnTitle = "  VIP",
                         btnIcon = "you can change icons in data/cuiData.json",
                         mainFontSize = 18,
                         mainFontColor = "1 1 1 1",
@@ -2887,14 +3035,16 @@ namespace Oxide.Plugins
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "<size=45><color=#E8B84B>VIP СТАТУСЫ</color></size>",
+                                    "<size=40><color=#E8B84B>VIP СТАТУСЫ</color></size>",
                                     "",
+                                    "<size=20><color=#83b8c7>BRONZE → SILVER → GOLD → BRILLIANT</color></size>",
                                     "",
-                                    "<size=18>Bronze — Silver — Gold — Brilliant</size>",
-                                    "<size=18>Ускоренный крафт и печи, наборы, приоритет входа.</size>",
-                                    "robotocondensed-bold.ttf",
-                                    "robotocondensed-regular.ttf",
-                                    ""
+                                    "<size=16><color=#83b8c7>◆</color> Приоритет входа в очередь</size>",
+                                    "<size=16><color=#83b8c7>◆</color> Ускоренный крафт и печи</size>",
+                                    "<size=16><color=#83b8c7>◆</color> Расширенные наборы /kits</size>",
+                                    "<size=16><color=#83b8c7>◆</color> Увеличенный рюкзак</size>",
+                                    "",
+                                    "<size=14>Оформить — в ДИСКОРД или у администрации.</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -2907,21 +3057,27 @@ namespace Oxide.Plugins
                     tab6Settings = new OctaWelcome.Configuration.Tab6Settings
                     {
                         btnEnabled = true,
-                        btnTitle = "  BUG REPORT",
+                        btnTitle = "  ДИСКОРД",
                         btnIcon = "you can change icons in data/cuiData.json",
-                        mainFontSize = 20,
+                        mainFontSize = 18,
                         mainFontColor = "1 1 1 1",
                         fontOutlineColor = "0 0 0 1",
-                        fontOutlineThick = "1.5",
-                        mainFontStyle = "permanentmarker.ttf",
+                        fontOutlineThick = "0.5",
+                        mainFontStyle = "robotocondensed-bold.ttf",
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "Welcome \n",
-                                    "You can set background image for each tab and also change position/size",
-                                    ""
+                                    "<size=40><color=#E8B84B>ДИСКОРД</color></size>",
+                                    "",
+                                    "<size=20>Наш дом за пределами острова:</size>",
+                                    "<size=22><color=#83b8c7>discord.gg/octavian</color></size>",
+                                    "",
+                                    "<size=16>Анонсы вайпов, розыгрыши, репорты,</size>",
+                                    "<size=16>поиск тиммейтов и прямая связь с админами.</size>",
+                                    "",
+                                    "<size=14>Нашёл баг? Пиши в #reports — чиним быстро.</size>"
                                 },
-                        tabImageUrl = "http://333017_web.fakaheda.eu/bgimage.png",
+                        tabImageUrl = "",
                         tabImageAnchor = new List<string>
                                 {
                                 "0 0",
@@ -2932,23 +3088,25 @@ namespace Oxide.Plugins
                     tab7Settings = new OctaWelcome.Configuration.Tab7Settings
                     {
                         btnEnabled = true,
-                        btnTitle = " ADMIN",
+                        btnTitle = " МАГАЗИН",
                         btnIcon = "you can change icons in data/cuiData.json",
                         mainFontSize = 17,
                         mainFontColor = "1 1 1 1",
                         fontOutlineColor = "0 0 0 1",
-                        fontOutlineThick = "1.5",
+                        fontOutlineThick = "0.5",
                         mainFontStyle = "robotocondensed-regular.ttf",
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "<size=27><color=#4A95CC><i>Thank you for purchasing Welcome</i></color></size>",
+                                    "<size=40><color=#E8B84B>МАГАЗИН</color></size>",
                                     "",
+                                    "<size=17>Внутриигровой магазин: <color=#83b8c7>/shop</color></size>",
                                     "",
-                                    "If you found good use of this plugin, please don't forget leave review.",
-                                    "Suggestions are also welcomed.",
+                                    "<size=16>RP капает за активность: боссы, ивенты, часы в игре.</size>",
+                                    "<size=16>Трать на оружие, ресурсы, скины и привилегии.</size>",
                                     "",
-                                    "<size=11>DISCORD</size> <color=#4A95CC><b>!Skuli Dropek#4816</b></color>"
+                                    "<size=16>Босс-ивенты — самый жирный источник RP.</size>",
+                                    "<size=16>Смотри вкладку БОССЫ и /bosstimer.</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -2961,23 +3119,25 @@ namespace Oxide.Plugins
                     tab8Settings = new OctaWelcome.Configuration.Tab8Settings
                     {
                         btnEnabled = true,
-                        btnTitle = " SHOP",
+                        btnTitle = " АДМИНЫ",
                         btnIcon = "you can change icons in data/cuiData.json",
                         mainFontSize = 17,
                         mainFontColor = "1 1 1 1",
                         fontOutlineColor = "0 0 0 1",
-                        fontOutlineThick = "1.5",
+                        fontOutlineThick = "0.5",
                         mainFontStyle = "robotocondensed-regular.ttf",
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "<size=27><color=#4A95CC><i>Thank you for purchasing Welcome</i></color></size>",
+                                    "<size=40><color=#E8B84B>АДМИНИСТРАЦИЯ</color></size>",
                                     "",
+                                    "<size=17>Онлайн-админы видны в списке игроков (TAB).</size>",
                                     "",
-                                    "If you found good use of this plugin, please don't forget leave review.",
-                                    "Suggestions are also welcomed.",
+                                    "<size=16>Репорт игрока: <color=#83b8c7>/report <ник> <причина></color></size>",
+                                    "<size=16>Срочно: тикет в ДИСКОРД #support.</size>",
                                     "",
-                                    "<size=11>DISCORD</size> <color=#4A95CC><b>!Skuli Dropek#4816</b></color>"
+                                    "<size=14>Админы не играют на равных и не выдают лут.</size>",
+                                    "<size=14>Жалоба на админа — создателю в ДИСКОРД.</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -2990,23 +3150,23 @@ namespace Oxide.Plugins
                     tab9Settings = new OctaWelcome.Configuration.Tab9Settings
                     {
                         btnEnabled = true,
-                        btnTitle = " VIP",
+                        btnTitle = " НОВОСТИ",
                         btnIcon = "you can change icons in data/cuiData.json",
                         mainFontSize = 17,
                         mainFontColor = "1 1 1 1",
                         fontOutlineColor = "0 0 0 1",
-                        fontOutlineThick = "1.5",
+                        fontOutlineThick = "0.5",
                         mainFontStyle = "robotocondensed-regular.ttf",
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "<size=27><color=#4A95CC><i>Thank you for purchasing Welcome</i></color></size>",
+                                    "<size=40><color=#E8B84B>НОВОСТИ</color></size>",
                                     "",
+                                    "<size=17><color=#83b8c7>◆</color> Запущена система боссов-зверей — вкладка БОССЫ.</size>",
+                                    "<size=17><color=#83b8c7>◆</color> Обновлены наборы и VIP-привилегии.</size>",
+                                    "<size=17><color=#83b8c7>◆</color> Рейт x5 на добычу и лут активен.</size>",
                                     "",
-                                    "If you found good use of this plugin, please don't forget leave review.",
-                                    "Suggestions are also welcomed.",
-                                    "",
-                                    "<size=11>DISCORD</size> <color=#4A95CC><b>!Skuli Dropek#4816</b></color>"
+                                    "<size=14>Свежее — в ДИСКОРД #announcements.</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -3019,23 +3179,27 @@ namespace Oxide.Plugins
                     tab10Settings = new OctaWelcome.Configuration.Tab10Settings
                     {
                         btnEnabled = true,
-                        btnTitle = " UPDATES",
+                        btnTitle = " БОССЫ",
                         btnIcon = "you can change icons in data/cuiData.json",
-                        mainFontSize = 17,
+                        mainFontSize = 15,
                         mainFontColor = "1 1 1 1",
                         fontOutlineColor = "0 0 0 1",
-                        fontOutlineThick = "1.5",
+                        fontOutlineThick = "0.5",
                         mainFontStyle = "robotocondensed-regular.ttf",
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "<size=27><color=#4A95CC><i>Thank you for purchasing Welcome</i></color></size>",
+                                    "<size=40><color=#E8B84B>БОССЫ ОСТРОВА</color></size>",
                                     "",
+                                    "<size=16>Гигантские звери с лутом и наградами появляются по расписанию.</size>",
                                     "",
-                                    "If you found good use of this plugin, please don't forget leave review.",
-                                    "Suggestions are also welcomed.",
+                                    "<size=16><color=#83b8c7>◆</color> Место спавна — красный маркер на карте.</size>",
+                                    "<size=16><color=#83b8c7>◆</color> Награда достаётся ТОП-дамагеру, не последнему удару.</size>",
+                                    "<size=16><color=#83b8c7>◆</color> Отвлёкся на минуту — босс залечит раны.</size>",
                                     "",
-                                    "<size=11>DISCORD</size> <color=#4A95CC><b>!Skuli Dropek#4816</b></color>"
+                                    "<size=17>Листай страницы → каждый босс со статами, свитой и лутом.</size>",
+                                    "",
+                                    "<size=14>/bosstimer — расписание • /bossinfo — кто жив • /bosslast — киллеры</size>"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
