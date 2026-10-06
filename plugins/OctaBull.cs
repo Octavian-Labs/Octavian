@@ -90,6 +90,8 @@ namespace Oxide.Plugins
                 new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
                 new LootEntry { ShortName = "ammo.rifle.expl", MinAmount = 60, MaxAmount = 128, Chance = 0.4f },
                 new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 2, MaxAmount = 4, Chance = 0.3f },
+                // фрагменты продвинутого чертежа — гарантированно 3 шт
+                new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 3, MaxAmount = 3, Chance = 1f },
                 // чертежи 3-го верстака
                 new LootEntry { ShortName = "blueprint", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
                 new LootEntry { ShortName = "blueprint", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
