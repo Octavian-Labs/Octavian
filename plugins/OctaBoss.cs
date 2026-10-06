@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.3.0")]
+    [Info("OctaBoss", "Octavian", "1.4.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -101,11 +101,15 @@ namespace Oxide.Plugins
             [JsonProperty("Множитель скорости (1 = обычная)")] public float SpeedMultiplier = 1f;
             [JsonProperty("Экстра агрессия (никогда не убегает)")] public bool HyperAggro = false;
             [JsonProperty("Форс-агро Provoke (для скотины вместо HyperAggro)")] public bool ForceProvoke = false;
+            [JsonProperty("Перезарядка боя: сек без урона до регена (0 = выкл)")] public float RegenDelaySeconds = 60f;
+            [JsonProperty("Реген % макс. HP в секунду")] public float RegenPercentPerSec = 10f;
             [JsonProperty("Свита")] public EscortSettings Escort = new EscortSettings();
             [JsonProperty("Спавн")] public SpecSpawn Spawn = new SpecSpawn();
             [JsonProperty("Награды")] public SpecRewards Rewards = new SpecRewards();
             [JsonProperty("Текст анонса спавна ({0}=квадрат)")] public string SpawnAnnounce = "★ {name} появился! Квадрат: <color=#FFD35C>{0}</color>";
             [JsonProperty("Текст предупреждения ({0}=минуты)")] public string WarnAnnounce = "{name} появится через {0} мин. Готовьтесь!";
+            [JsonProperty("Варианты предупреждения (случайный, {0}=минуты)")] public List<string> WarnAnnounceVariants = new List<string>();
+            [JsonProperty("Текст зализывания ран (босс отлежался)")] public string ResetAnnounce = "{name} зализал раны и снова в форме!";
             [JsonProperty("Текст деспавна по таймауту")] public string DespawnAnnounce = "{name} ушёл — никто не решился.";
             [JsonProperty("Текст смерти ({0}=добивший)")] public string DeathAnnounce = "★ {name} повержен! Добил: <color=#FFD35C>{0}</color>. Лут на месте падения.";
             [JsonProperty("Текст смерти без боя (лута нет)")] public string QuietDeathAnnounce = "{name} погиб без боя — лута не будет.";
@@ -115,6 +119,7 @@ namespace Oxide.Plugins
         private class NotifySettings
         {
             [JsonProperty("Глобальный чат")] public bool ChatGlobal = true;
+            [JsonProperty("Имя плагина в чате (бренд перед текстом)")] public string ChatName = "◆ OctaBoss";
             [JsonProperty("Discord webhook (пусто = выкл)")] public string DiscordWebhook = "";
         }
 
@@ -215,6 +220,14 @@ namespace Oxide.Plugins
                             NativeBiome = true, NativeBiomes = "temperate,tundra"
                         },
                         Rewards = new SpecRewards { Loot = RichLoot() },
+                        WarnAnnounceVariants = new List<string>
+                        {
+                            "Кто хочет поиграть в тореадора? {name} выходит на арену через {0} мин!",
+                            "Фердинанд нюхает цветы в другом лесу — {name} нюхает твой страх. Через {0} мин.",
+                            "{name} увидел красную тряпку. Тряпка — это ты. Встреча через {0} мин.",
+                            "В бой идут одни старики... и {name} — через {0} мин.",
+                            "Родео открывается через {0} мин. {name} уже точит рога.",
+                        },
                         WarnAnnounce = "{name} появится через {0} мин. Готовьтесь — это не кабанчик с ранчо!",
                         DespawnAnnounce = "{name} ушёл в закат — никто не решился.",
                     },
@@ -241,6 +254,14 @@ namespace Oxide.Plugins
                             NativeBiome = true, NativeBiomes = "temperate,tundra"
                         },
                         Rewards = new SpecRewards { Loot = MidLoot() },
+                        WarnAnnounceVariants = new List<string>
+                        {
+                            "Кто хочет поиграть в выжившего? {name} появится через {0} мин возле ранчо!",
+                            "Калидонский вепрь вернулся за долгами — {name} через {0} мин.",
+                            "Хрю-хрю, мать вашу. {name} выходит через {0} мин.",
+                            "Три поросёнка — это был аперитив. {name} через {0} мин.",
+                            "Вепрь выходит на охоту. Угадай, кто трофей? {name} через {0} мин.",
+                        },
                         WarnAnnounce = "{name} появится через {0} мин возле ранчо. Готовьтесь!",
                         DespawnAnnounce = "{name} убежал в лес — никто не решился.",
                         SpawnAnnounce = "★ {name} появился возле ранчо! Квадрат: <color=#FFD35C>{0}</color> — и его свита уже рыщет!",
@@ -256,6 +277,14 @@ namespace Oxide.Plugins
                         Escort = new EscortSettings { Count = 4, Radius = 8f, Scale = 0.8f },
                         Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "arctic,tundra,temperate" },
                         Rewards = new SpecRewards { Loot = MidLoot() },
+                        WarnAnnounceVariants = new List<string>
+                        {
+                            "Кто боится большого злого волка? {name} ведёт стаю — через {0} мин!",
+                            "Три поросёнка съедены, бабушка дожёвывается. Ты следующий: {name} через {0} мин.",
+                            "Аууу! {name} зовёт родню — встреча через {0} мин.",
+                            "Красная Шапочка не придёт — придёт {name}. Через {0} мин.",
+                            "Волк — не тот, кто волк, а кто {name}. {0} мин на сборы.",
+                        },
                         DespawnAnnounce = "{name} ушёл в чащу — стая растворилась в темноте.",
                     },
                     new BossSpec
@@ -268,6 +297,14 @@ namespace Oxide.Plugins
                         Escort = new EscortSettings { Count = 0 },
                         Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle" },
                         Rewards = new SpecRewards { Loot = MidLoot() },
+                        WarnAnnounceVariants = new List<string>
+                        {
+                            "Шерхан не спрашивает дважды. {name} выходит через {0} мин!",
+                            "Ричард Паркер голоден — {name} через {0} мин.",
+                            "У Тони закончились хлопья. {name} идёт за настоящим мясом: {0} мин.",
+                            "Укротителей не объявилось — {name} придёт сам через {0} мин.",
+                            "Тигриный глаз смотрит на тебя. {name} через {0} мин.",
+                        },
                         DespawnAnnounce = "{name} скрылся в джунглях.",
                     },
                     new BossSpec
@@ -280,6 +317,14 @@ namespace Oxide.Plugins
                         Escort = new EscortSettings { Count = 0 },
                         Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle" },
                         Rewards = new SpecRewards { Loot = MidLoot() },
+                        WarnAnnounceVariants = new List<string>
+                        {
+                            "Багира променяла Маугли на тебя. {name} через {0} мин!",
+                            "Ты не услышишь её шагов — только свист пуль. {name} через {0} мин.",
+                            "Ваканда шлёт привет: {name} материализуется через {0} мин.",
+                            "Не розовая и не милая. {name} через {0} мин.",
+                            "Тень, которая кусается насмерть: {name} через {0} мин.",
+                        },
                         DespawnAnnounce = "{name} растворилась в тени.",
                     },
                     new BossSpec
@@ -292,6 +337,14 @@ namespace Oxide.Plugins
                         Escort = new EscortSettings { Count = 2, Scale = 0.6f },
                         Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "temperate,tundra" },
                         Rewards = new SpecRewards { Loot = RichLoot() },
+                        WarnAnnounceVariants = new List<string>
+                        {
+                            "Кто хочет поиграть в выжившего? {name} выходит из берлоги через {0} мин!",
+                            "Машка опять разбила горшок — {name} идёт разбираться через {0} мин.",
+                            "ДиКаприо выжил. Посмотрим на тебя: {name} через {0} мин.",
+                            "300 кг ярости против твоей гордости. {name} через {0} мин.",
+                            "Людоед расписанием не связан — просто {name} через {0} мин.",
+                        },
                         DespawnAnnounce = "{name} ушёл в берлогу.",
                     },
                     new BossSpec
@@ -304,6 +357,14 @@ namespace Oxide.Plugins
                         Escort = new EscortSettings { Count = 3, Scale = 0.7f },
                         Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle", NeedsWater = true, WaterRadius = 30f },
                         Rewards = new SpecRewards { Loot = MidLoot() },
+                        WarnAnnounceVariants = new List<string>
+                        {
+                            "Кто хочет поиграть в выжившего? {name} всплывёт через {0} мин!",
+                            "Гена пошёл за Чебурашкой и не вернулся. {name} ждёт через {0} мин.",
+                            "Тик-так, тик-так — капитан Крюк уже сбежал. {name} через {0} мин.",
+                            "Крокодильи слёзы — это ты будешь плакать. {name} через {0} мин.",
+                            "Данди не приедет — придёт {name}. Через {0} мин.",
+                        },
                         DespawnAnnounce = "{name} ушёл под воду.",
                     },
                 }
@@ -340,8 +401,10 @@ namespace Oxide.Plugins
             public MapMarkerGenericRadius Marker;
             public DateTime NextSpawnAt;
             public DateTime SpawnedAt;
+            public DateTime LastDamageAt;
             public bool Warned;
             public bool Raging;
+            public bool ResetDone; // уже «зализал раны» — реген и сброс трекера отработали
             public readonly Dictionary<ulong, float> DamageBy = new Dictionary<ulong, float>();
 
             public bool Alive => Entity != null && !Entity.IsDestroyed && Entity.IsAlive();
@@ -428,7 +491,11 @@ namespace Oxide.Plugins
                 if (!st.Warned && now >= st.NextSpawnAt.AddMinutes(-st.Spec.Spawn.WarnBeforeMinutes))
                 {
                     st.Warned = true;
-                    Announce(Fmt(st.Spec.WarnAnnounce, st.Spec, $"{st.Spec.Spawn.WarnBeforeMinutes:0}"));
+                    var vars = st.Spec.WarnAnnounceVariants;
+                    var tpl = vars != null && vars.Count > 0
+                        ? vars[UnityEngine.Random.Range(0, vars.Count)]
+                        : st.Spec.WarnAnnounce;
+                    Announce(Fmt(tpl, st.Spec, $"{st.Spec.Spawn.WarnBeforeMinutes:0}"));
                 }
                 if (now < st.NextSpawnAt) continue;
                 SpawnBoss(st);
@@ -618,7 +685,9 @@ namespace Oxide.Plugins
             st.Ai = ent as Rust.Ai.Gen2.BaseNPC2;
             st.Livestock = livestock;
             st.SpawnedAt = DateTime.UtcNow;
+            st.LastDamageAt = DateTime.UtcNow;
             st.Raging = false;
+            st.ResetDone = true; // свежий босс — регена не требуется
             st.DamageBy.Clear();
 
             ent.InitializeHealth(st.Spec.Health, st.Spec.Health);
@@ -785,9 +854,30 @@ namespace Oxide.Plugins
 
         private void AggroTick()
         {
+            var now = DateTime.UtcNow;
             foreach (var st in _bosses.Values)
             {
                 if (!st.Alive) continue;
+
+                // «зализывание ран»: нападавшие сдохли/сбежали — если RegenDelaySeconds
+                // без урона, босс регенится и трекер урона сбрасывается.
+                // Иначе прибежавший вторым добивает полудохлого босса за полудара.
+                var regenDelay = st.Spec.RegenDelaySeconds;
+                if (regenDelay > 0 && (now - st.LastDamageAt).TotalSeconds >= regenDelay)
+                {
+                    if (!st.ResetDone)
+                    {
+                        st.ResetDone = true;
+                        if (st.DamageBy.Count > 0)
+                            Announce(Fmt(st.Spec.ResetAnnounce, st.Spec, null));
+                        st.DamageBy.Clear();
+                        st.Raging = false;
+                    }
+                    var ent = st.Entity;
+                    if (ent.Health() < ent.MaxHealth())
+                        ent.SetHealth(Mathf.Min(ent.MaxHealth(),
+                            ent.Health() + ent.MaxHealth() * st.Spec.RegenPercentPerSec * 0.01f));
+                }
 
                 // деспавн по старости жизни
                 if ((DateTime.UtcNow - st.SpawnedAt).TotalMinutes > st.Spec.MaxLifeMinutes)
@@ -894,7 +984,11 @@ namespace Oxide.Plugins
                 }
                 ApplyBossArmor(st.Spec, info);
                 if (attacker != null && !attacker.IsNpc)
+                {
                     AddDamage(st.DamageBy, Uid(attacker), info.damageTypes.Total());
+                    st.LastDamageAt = DateTime.UtcNow;
+                    st.ResetDone = false; // бой идёт — реген отключён
+                }
                 return;
             }
 
@@ -1142,7 +1236,7 @@ namespace Oxide.Plugins
             if (winner != null && spec.Rewards.BuffDamage > 1f && spec.Rewards.BuffMinutes > 0)
             {
                 _buffs[Uid(winner)] = new Buff { Expires = DateTime.UtcNow.AddMinutes(spec.Rewards.BuffMinutes), Mult = spec.Rewards.BuffDamage };
-                SendReply(winner, $"<color=#E8B84B>◆ OctaBoss</color> Бафф победителя: +{(spec.Rewards.BuffDamage - 1f) * 100:0}% урона на {spec.Rewards.BuffMinutes:0} мин");
+                SendReply(winner, $"{Tag} Бафф победителя: +{(spec.Rewards.BuffDamage - 1f) * 100:0}% урона на {spec.Rewards.BuffMinutes:0} мин");
             }
         }
 
@@ -1154,7 +1248,7 @@ namespace Oxide.Plugins
                 if (p.Name == "ServerRewards" && p.IsLoaded)
                 {
                     p.Call("AddPoints", Uid(player), amount);
-                    SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> +{amount} RP {reason}");
+                    SendReply(player, $"{Tag} +{amount} RP {reason}");
                     return;
                 }
             }
@@ -1163,7 +1257,7 @@ namespace Oxide.Plugins
                 if (p.Name == "Economics" && p.IsLoaded)
                 {
                     p.Call("Deposit", player.UserIDString, (double)amount);
-                    SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> +{amount} монет {reason}");
+                    SendReply(player, $"{Tag} +{amount} монет {reason}");
                     return;
                 }
             }
@@ -1173,10 +1267,13 @@ namespace Oxide.Plugins
 
         #region Notify
 
+        // бренд в чате — из конфига, чтобы плагин можно было отдать под чужим именем
+        private string Tag => $"<color=#E8B84B>{_cfg?.Notify?.ChatName ?? "◆ OctaBoss"}</color>";
+
         private void Announce(string msg)
         {
             if (!_cfg.Notify.ChatGlobal) return;
-            Server.Broadcast($"<color=#E8B84B>◆ OctaBoss</color> {msg}");
+            Server.Broadcast($"{Tag} {msg}");
         }
 
         private void NotifyDiscord(string text)
@@ -1208,7 +1305,7 @@ namespace Oxide.Plugins
         {
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octaboss.admin"))
             {
-                SendReply(player, "<color=#E8B84B>◆ OctaBoss</color> Нет прав (octaboss.admin)");
+                SendReply(player, $"{Tag} Нет прав (octaboss.admin)");
                 return;
             }
             DrawAdminUI(player);
@@ -1422,7 +1519,7 @@ namespace Oxide.Plugins
                     break;
                 case "save":
                     SaveConfig();
-                    SendReply(player, "<color=#E8B84B>◆ OctaBoss</color> Конфиг сохранён");
+                    SendReply(player, $"{Tag} Конфиг сохранён");
                     break;
                 case "set":
                     if (args.Length >= 3)
@@ -1491,7 +1588,7 @@ namespace Oxide.Plugins
         private void CmdTimer(BasePlayer player)
         {
             foreach (var st in _bosses.Values)
-                SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> {BossListLine(st)}");
+                SendReply(player, $"{Tag} {BossListLine(st)}");
         }
 
         [ChatCommand("bossinfo")]
@@ -1502,17 +1599,17 @@ namespace Oxide.Plugins
                 if (!st.Alive) continue;
                 var dmg = st.DamageBy.OrderByDescending(k => k.Value).FirstOrDefault();
                 var top = dmg.Key > 0 ? (CleanName(FindPlayer(dmg.Key)?.displayName ?? "?")) + $" ({dmg.Value:0} dmg)" : "—";
-                SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> [{st.Spec.Key}] {st.Spec.DisplayName}: HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
+                SendReply(player, $"{Tag} [{st.Spec.Key}] {st.Spec.DisplayName}: HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
             }
             if (!_bosses.Values.Any(s => s.Alive))
-                SendReply(player, "<color=#E8B84B>◆ OctaBoss</color> Боссов на карте нет. /bosstimer — время до спавна.");
+                SendReply(player, $"{Tag} Боссов на карте нет. /bosstimer — время до спавна.");
         }
 
         [ChatCommand("bosslast")]
         private void CmdLast(BasePlayer player)
         {
             foreach (var spec in _cfg.Bosses)
-                SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> [{spec.Key}] последний килл: {(_lastKillInfo.TryGetValue(spec.Key, out var v) ? v : "ещё никто")}");
+                SendReply(player, $"{Tag} [{spec.Key}] последний килл: {(_lastKillInfo.TryGetValue(spec.Key, out var v) ? v : "ещё никто")}");
         }
 
         private BossState FindState(string key)
