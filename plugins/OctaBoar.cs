@@ -14,7 +14,7 @@ namespace Oxide.Plugins
     // OctaBoar — «Кабан-Босс»: элитный кабан со свитой поросят,
     // спавнится по расписанию недалеко от ранчо, мап-маркер, лут, награды.
     // Клон OctaBull: boar.prefab — кабаны агрессивны сами по себе.
-    [Info("OctaBoar", "Octavian", "1.1.0")]
+    [Info("OctaBoar", "Octavian", "1.1.1")]
     [Description("Элитный босс-кабан у ранчо: расписание спавна, свита поросят, лут, награды")]
     public class OctaBoar : RustPlugin
     {
@@ -141,10 +141,10 @@ namespace Oxide.Plugins
 
         private BaseCombatEntity _boss;
         private readonly List<BaseCombatEntity> _escorts = new List<BaseCombatEntity>();
-        // трупы — отдельные сущности, спавнятся спустя ~минуту после смерти;
-        // матчим по parentEnt + фолбэк по позиции
-        private readonly Dictionary<BaseEntity, float> _corpseByParent = new Dictionary<BaseEntity, float>();
-        private readonly List<Tuple<Vector3, float, DateTime>> _pendingCorpseScale = new List<Tuple<Vector3, float, DateTime>>();
+        // трупы — отдельные сущности; матчим по parentEnt + фолбэк по позиции смерти.
+        // TTL 5 мин в обеих структурах; pending-кортеж хранит сущность для точечного снятия
+        private readonly Dictionary<BaseEntity, Tuple<float, DateTime>> _corpseByParent = new Dictionary<BaseEntity, Tuple<float, DateTime>>();
+        private readonly List<Tuple<BaseEntity, Vector3, float, DateTime>> _pendingCorpseScale = new List<Tuple<BaseEntity, Vector3, float, DateTime>>();
         private MapMarkerGenericRadius _marker;
         private DateTime _nextSpawnAt;
         private DateTime _bossSpawnedAt;
@@ -273,6 +273,16 @@ namespace Oxide.Plugins
 
         private void SpawnBoss(Vector3? at = null)
         {
+            // если старый босс жив — убираем тихо (Kill() не триггерит OnEntityDeath,
+            // значит без лута/наград/перепланировки): иначе получим двух боссов
+            if (BossAlive)
+            {
+                KillEscorts();
+                ClearMarker();
+                _boss.Kill();
+                _boss = null;
+            }
+
             var pos = at ?? FindRanchSpawnPos();
             if (pos == Vector3.zero) pos = FindSpawnPos(); // ранчо нет на карте — обычный спавн
             if (pos == Vector3.zero)
@@ -379,8 +389,14 @@ namespace Oxide.Plugins
 
         private void KillEscorts()
         {
+            // Kill() не дёргает OnEntityDeath — регистрируем масштаб туши вручную,
+            // иначе труп поросёнка «вырастет» до обычного кабана
             foreach (var e in _escorts)
-                if (e != null && !e.IsDestroyed) e.Kill();
+                if (e != null && !e.IsDestroyed)
+                {
+                    RegisterCorpseScale(e, _cfg.Boss.EscortScale);
+                    e.Kill();
+                }
             _escorts.Clear();
         }
 
@@ -505,10 +521,10 @@ namespace Oxide.Plugins
 
             // бафф победителя на исходящий урон игрока
             var bp = info.InitiatorPlayer;
-            if (bp != null && !bp.IsNpc &&
-                _buffUntil.TryGetValue((ulong)bp.userID, out var until) && until > DateTime.UtcNow)
+            if (bp != null && !bp.IsNpc && _buffUntil.TryGetValue((ulong)bp.userID, out var until))
             {
-                info.damageTypes.ScaleAll(_cfg.Rewards.BuffDamage);
+                if (until > DateTime.UtcNow) info.damageTypes.ScaleAll(_cfg.Rewards.BuffDamage);
+                else _buffUntil.Remove((ulong)bp.userID); // протухший бафф — выкидываем
             }
         }
 
@@ -546,8 +562,7 @@ namespace Oxide.Plugins
             if (_escorts.Contains(entity))
             {
                 _escorts.Remove(entity);
-                _corpseByParent[entity] = _cfg.Boss.EscortScale;
-                _pendingCorpseScale.Add(Tuple.Create(entity.transform.position, _cfg.Boss.EscortScale, DateTime.UtcNow.AddMinutes(5)));
+                RegisterCorpseScale(entity, _cfg.Boss.EscortScale);
                 return;
             }
 
@@ -561,8 +576,7 @@ namespace Oxide.Plugins
             if (entity != _boss) return; // дабл-кол хук+вручную не нужен
 
             // туша босса — новая сущность с дефолтным масштабом; масштабируем в OnEntitySpawned по parentEnt
-            _corpseByParent[entity] = _cfg.Boss.Scale;
-            _pendingCorpseScale.Add(Tuple.Create(entity.transform.position, _cfg.Boss.Scale, DateTime.UtcNow.AddMinutes(5)));
+            RegisterCorpseScale(entity, _cfg.Boss.Scale);
 
             var killer = info?.InitiatorPlayer;
             var killerName = killer != null ? killer.displayName.ToString() : "сервер";
@@ -581,6 +595,19 @@ namespace Oxide.Plugins
             ScheduleNext();
         }
 
+        // регистрация «на этой смерти ждём труп с масштабом scale» + ленивая чистка протухшего
+        private void RegisterCorpseScale(BaseEntity dead, float scale)
+        {
+            var expiry = DateTime.UtcNow.AddMinutes(5);
+            _corpseByParent[dead] = Tuple.Create(scale, expiry);
+            _pendingCorpseScale.Add(Tuple.Create(dead, dead.transform.position, scale, expiry));
+
+            var now = DateTime.UtcNow;
+            foreach (var k in _corpseByParent.Where(kv => kv.Value.Item2 < now).Select(kv => kv.Key).ToList())
+                _corpseByParent.Remove(k);
+            _pendingCorpseScale.RemoveAll(p => p.Item4 < now);
+        }
+
         // труп животного — отдельная entity: ставим масштаб до того, как он уйдёт клиентам.
         // труп спавнится внутри Die() РАНЬШЕ OnEntityDeath — матчим по parentEnt, а не по очереди
         private void OnEntitySpawned(BaseNetworkable entity)
@@ -589,10 +616,16 @@ namespace Oxide.Plugins
             if (bc == null) return;
             var src = bc.parentEnt;
             float? scale = null;
-            if (src != null && _corpseByParent.TryGetValue(src, out var sc0))
+            if (src != null && _corpseByParent.TryGetValue(src, out var entry))
             {
-                scale = sc0;
                 _corpseByParent.Remove(src);
+                if (entry.Item2 > DateTime.UtcNow)
+                {
+                    scale = entry.Item1;
+                    // снимаем позиционный фолбэк этой же смерти — туша соседнего поросёнка
+                    // не должна подобрать чужой scale по координатам
+                    _pendingCorpseScale.RemoveAll(p => p.Item1 == src);
+                }
             }
             // фолбэк по очереди (если parentEnt пуст — по позиции из pending)
             if (scale == null && _pendingCorpseScale.Count > 0)
@@ -600,9 +633,11 @@ namespace Oxide.Plugins
                 for (var i = _pendingCorpseScale.Count - 1; i >= 0; i--)
                 {
                     var p = _pendingCorpseScale[i];
-                    if (DateTime.UtcNow > p.Item3) { _pendingCorpseScale.RemoveAt(i); continue; }
-                    if (Vector3.Distance(bc.transform.position, p.Item1) > 8f) continue;
-                    scale = p.Item2; _pendingCorpseScale.RemoveAt(i);
+                    if (DateTime.UtcNow > p.Item4) { _pendingCorpseScale.RemoveAt(i); continue; }
+                    if (Vector3.Distance(bc.transform.position, p.Item2) > 8f) continue;
+                    scale = p.Item3;
+                    if (p.Item1 != null) _corpseByParent.Remove(p.Item1);
+                    _pendingCorpseScale.RemoveAt(i);
                     break;
                 }
             }
