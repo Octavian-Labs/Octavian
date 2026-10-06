@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.4.0")]
+    [Info("OctaBoss", "Octavian", "1.4.1")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -803,10 +803,10 @@ namespace Oxide.Plugins
             catch { return $"{pos.x:0}, {pos.z:0}"; }
         }
 
-        // шаблоны анонсов: {name} = имя босса, {0} = аргумент (квадрат/минуты/добивший)
+        // шаблоны анонсов: {name} = имя босса (золотым), {0} = аргумент (квадрат/минуты/добивший)
         private static string Fmt(string tpl, BossSpec spec, string arg)
         {
-            return (tpl ?? "").Replace("{name}", spec.DisplayName).Replace("{0}", arg ?? "");
+            return (tpl ?? "").Replace("{name}", $"<color=#E8B84B>{spec.DisplayName}</color>").Replace("{0}", arg ?? "");
         }
 
         // ник игрока идёт в rich-text чат — вырезаем теги, иначе ник вида
@@ -1578,10 +1578,11 @@ namespace Oxide.Plugins
 
         private string BossListLine(BossState st)
         {
+            var name = $"<color=#E8B84B>{st.Spec.DisplayName}</color>";
             if (st.Alive)
-                return $"{st.Spec.Key}: ЖИВ HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0} @ {GridOf(st.Entity.transform.position)}{(st.Raging ? " ЯРОСТЬ" : "")}";
+                return $"{name}: ЖИВ HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0} @ {GridOf(st.Entity.transform.position)}{(st.Raging ? " ЯРОСТЬ" : "")}";
             var left = st.NextSpawnAt - DateTime.UtcNow;
-            return $"{st.Spec.Key}: нет, спавн через {(int)left.TotalMinutes}м";
+            return $"{name}: нет, спавн через {(int)left.TotalMinutes}м";
         }
 
         [ChatCommand("bosstimer")]
@@ -1599,7 +1600,7 @@ namespace Oxide.Plugins
                 if (!st.Alive) continue;
                 var dmg = st.DamageBy.OrderByDescending(k => k.Value).FirstOrDefault();
                 var top = dmg.Key > 0 ? (CleanName(FindPlayer(dmg.Key)?.displayName ?? "?")) + $" ({dmg.Value:0} dmg)" : "—";
-                SendReply(player, $"{Tag} [{st.Spec.Key}] {st.Spec.DisplayName}: HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
+                SendReply(player, $"{Tag} <color=#E8B84B>{st.Spec.DisplayName}</color>: HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
             }
             if (!_bosses.Values.Any(s => s.Alive))
                 SendReply(player, $"{Tag} Боссов на карте нет. /bosstimer — время до спавна.");
@@ -1609,7 +1610,7 @@ namespace Oxide.Plugins
         private void CmdLast(BasePlayer player)
         {
             foreach (var spec in _cfg.Bosses)
-                SendReply(player, $"{Tag} [{spec.Key}] последний килл: {(_lastKillInfo.TryGetValue(spec.Key, out var v) ? v : "ещё никто")}");
+                SendReply(player, $"{Tag} <color=#E8B84B>{spec.DisplayName}</color> — последний килл: {(_lastKillInfo.TryGetValue(spec.Key, out var v) ? v : "ещё никто")}");
         }
 
         private BossState FindState(string key)
