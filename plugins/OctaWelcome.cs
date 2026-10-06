@@ -2160,75 +2160,129 @@ namespace Oxide.Plugins
             return f.Replace(".prefab", "");
         }
 
+        // атмосферные описания по ключу вида — без статов, чтобы не убивать интригу
+        private static readonly Dictionary<string, string[]> BossFlavor = new Dictionary<string, string[]>
+        {
+            ["bull"] = new[]
+            {
+                "Он не бешеный. Он просто терпеливый.",
+                "Тонны мышц, рога как копья и копыта, не знающие тормозов.",
+                "Бык-Босс запомнит твоё лицо — и лицо каждого тиммейта.",
+                "Красная тряпка ему не нужна: красная тряпка — это ты.",
+                "Бери друзей, побольше свинца — и не вставай у него на пути."
+            },
+            ["boar"] = new[]
+            {
+                "С ранчо сбежало нечто. Оно вернулось за счётом.",
+                "Клыки, проходящие броню как бумагу, и вес полноценной машины.",
+                "Калидонский вепрь был мифом. Этот ходит по расписанию.",
+                "Охота на него — праздник. Для него.",
+                "Береги ноги: он бьёт низко и без предупреждения."
+            },
+            ["wolf"] = new[]
+            {
+                "Услышал вой? Поздно — это был дуэт: он и твой страх.",
+                "Снег не скроет тебя от его носа. Ночь — от его глаз.",
+                "Волк-Босс охотится не ради еды. Ему просто нравится.",
+                "Не беги — он обожает погоню. Особенно короткую.",
+                "Собери стаю посильнее или стань добычей в одиночку."
+            },
+            ["tiger"] = new[]
+            {
+                "В джунглях ты не охотник. Ты — сезонная еда.",
+                "Шерхан был сказкой. У сказок кончается последняя страница.",
+                "Он прыгнет раньше, чем ты наведёшь прицел.",
+                "Полоски на его шкуре — это счёт побед.",
+                "Иди группой: на один зевак он не разменивается."
+            },
+            ["panther"] = new[]
+            {
+                "Сначала — глаза в темноте. Потом уже ничего.",
+                "Ночь принадлежит ей. День тоже — она просто вежливая.",
+                "Ты её не увидишь. Увидишь тень — считай, повезло.",
+                "Самая тихая смерть на острове носит её имя.",
+                "Убить её — честь. Найти её — уже подвиг."
+            },
+            ["bear"] = new[]
+            {
+                "Гигант лесов. Хладнокровный убийца, от которого не отпускает страх.",
+                "Маша здесь не живёт. Живёт только он — и уже очень давно.",
+                "Одна лапа — и твоя кирка покажется зубочисткой.",
+                "Убить его — слава и топ-лут. Но не думай, что будет просто.",
+                "Возьми друзей. Всех, каких найдёшь."
+            },
+            ["crocodile"] = new[]
+            {
+                "Он видел динозавров. Они вымерли. Он — нет.",
+                "У воды правила пишет он, а не ты.",
+                "Это не Гена. Это тот, кто пришёл за Геной.",
+                "Можешь смеяться над крокодилом. У него есть время и терпение. У тебя — нет.",
+                "Держись от кромки воды подальше. Если сможешь."
+            },
+        };
+
+        private static readonly string[] BossFlavorFallback =
+        {
+            "Остров вырастил нового монстра.",
+            "О нём мало что известно — все рассказчики мертвы.",
+            "Маркер на карте покажет дорогу. Остальное — твоя забота."
+        };
+
+        // биом конфига -> атмосферная локация
+        private static string BiomeRu(string biomes)
+        {
+            if (string.IsNullOrEmpty(biomes) || biomes == "любой") return "где угодно — сам выбирает охотничьи угодья";
+            var map = new Dictionary<string, string>
+            {
+                ["arid"] = "пустыня", ["temperate"] = "леса", ["tundra"] = "тундра",
+                ["arctic"] = "снега", ["jungle"] = "джунгли"
+            };
+            var parts = biomes.Split(',').Select(s => s.Trim().ToLower())
+                .Select(s => map.TryGetValue(s, out var ru) ? ru : s).Distinct().ToList();
+            return "охотничьи угодья: " + string.Join(" и ", parts);
+        }
+
         private List<string> BossPageLines(JObject b)
         {
             var key = JStr(b, "Ключ (латиницей, для команд)", "?");
             var name = JStr(b, "Имя босса", key.ToUpper());
             var enabled = JBool(b, "Включён", true);
-            var hp = JFloat(b, "Здоровье");
-            var scale = JFloat(b, "Масштаб модели (1 = обычный)", 1f);
-            var speed = JFloat(b, "Множитель скорости (1 = обычная)", 1f);
-            var dmg = JFloat(b, "Множитель исходящего урона", 1f);
-            var bullet = JFloat(b, "Множитель входящего урона (пули)", 1f);
-            var expl = JFloat(b, "Множитель входящего урона (взрывы)", 1f);
-            var rageTh = JFloat(b, "Порог ярости (доля HP)", 0.5f) * 100f;
-            var rageDmg = JFloat(b, "Множитель урона в ярости", 1f);
-            var aggro = JFloat(b, "Радиус агро (м)");
 
             var esc = b["Свита"] as JObject;
             var escCount = esc?["Количество"]?.ToObject<int?>() ?? 0;
-            var escScale = JFloat(esc, "Масштаб (1 = обычный)", 1f);
-            var escPrefab = JStr(esc, "Префаб (пусто = как у босса)");
-            if (string.IsNullOrEmpty(escPrefab)) escPrefab = JStr(b, "Префаб босса");
             var escLine = escCount > 0
-                ? $"<size=15><color=#83b8c7>СВИТА:</color> {escCount} × {PrefabName(escPrefab)} <color=#83b8c7>(x{escScale:0.##})</color></size>"
-                : "<size=15><color=#83b8c7>СВИТА:</color> одиночка — бояться некого, кроме него самого</size>";
+                ? $"<size=15><color=#83b8c7>ОН НЕ ОДИН:</color> с ним свора из {escCount} зверей — билет продаётся только пакетом.</size>"
+                : "<size=15><color=#83b8c7>ОН ОДИН:</color> приходит без свиты. Одного достаточно.</size>";
 
             var sp = b["Спавн"] as JObject;
-            var interval = JFloat(sp, "Интервал спавна (мин)");
-            var jitter = JFloat(sp, "Разброс интервала ± (мин)");
             var mons = JStr(sp, "Монументы-якоря (через запятую, частичное совпадение; пусто = любая точка)");
             var biomes = JBool(sp, "Спавн только в родном биоме")
                 ? JStr(sp, "Родные биомы (arid,temperate,tundra,arctic,jungle через запятую)") : "любой";
             var water = JBool(sp, "Требовать воду рядом (водные звери; крокодил иначе умирает сойдя с навмеша)");
+            var where = BiomeRu(biomes)
+                + (mons.Length > 0 ? $", кружит около {mons}" : "")
+                + (water ? ", у воды" : "");
 
             var rw = b["Награды"] as JObject;
             var cur = rw?["Валюта за убийство (ServerRewards/Economics)"]?.ToObject<int?>() ?? 0;
             var part = rw?["Валюта участникам (нанёс >= порога урона)"]?.ToObject<int?>() ?? 0;
-            var buff = JFloat(rw, "Бафф урона победителя (x)", 1f);
-
-            // лут: шортнеймы, чертежи -> «чертёж X», дедуп, до 12 штук
-            var lootNames = new List<string>();
-            foreach (var e in (rw?["Лут-таблица"] as JArray)?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
-            {
-                var bp = JStr(e, "Чертёж: целевой предмет (если задан)");
-                var nm = !string.IsNullOrEmpty(bp) ? $"чертёж {bp}" : JStr(e, "Шортнейм предмета");
-                if (nm.Length > 0 && !lootNames.Contains(nm)) lootNames.Add(nm);
-                if (lootNames.Count >= 12) break;
-            }
 
             var status = enabled
-                ? "<color=#83b8c7>АКТИВЕН</color>"
-                : "<color=#cd412b>СПИТ (выкл. в конфиге)</color>";
+                ? "<color=#83b8c7>ГУЛЯЕТ ПО ОСТРОВУ</color>"
+                : "<color=#cd412b>СПИТ — пока недоступен</color>";
             var lines = new List<string>
             {
-                $"<size=30><color=#E8B84B>{name}</color></size>",
-                $"<size=14>{status} • {hp:0} HP • масштаб <color=#83b8c7>x{scale:0.##}</color> • скорость <color=#83b8c7>x{speed:0.##}</color></size>",
+                $"<size=32><color=#E8B84B>{name}</color></size>",
+                $"<size=13>{status}</size>",
                 "",
-                $"<size=15><color=#83b8c7>БОЙ:</color> урон x{dmg:0.##} • ярость при <{rageTh:0}% HP — урон x{rageDmg:0.##}</size>",
-                $"<size=15><color=#83b8c7>БРОНЯ:</color> пули x{bullet:0.##} • взрывы x{expl:0.##} • агро {aggro:0}м</size>",
-                escLine,
-                "",
-                $"<size=15><color=#83b8c7>СПАВН:</color> каждые ~{interval:0}±{jitter:0} мин • биом: {biomes}" +
-                $"{(mons.Length > 0 ? $" • у {mons}" : "")}{(water ? " • у воды" : "")}</size>",
-                "",
-                $"<size=15><color=#83b8c7>НАГРАДА:</color> {cur} RP топ-дамагеру • {part} RP участникам • бафф x{buff:0.##}</size>",
             };
-            if (lootNames.Count > 0)
-            {
-                lines.Add("");
-                lines.Add($"<size=14><color=#83b8c7>ЛУТ:</color> {string.Join(", ", lootNames)}</size>");
-            }
+            lines.AddRange((BossFlavor.TryGetValue(key, out var fl) ? fl : BossFlavorFallback)
+                .Select(s => $"<size=16>{s}</size>"));
+            lines.Add("");
+            lines.Add(escLine);
+            lines.Add($"<size=15><color=#83b8c7>ГДЕ ИСКАТЬ:</color> {where} — следи за маркером на карте.</size>");
+            lines.Add($"<size=15><color=#83b8c7>НАГРАДА:</color> {cur} RP и топ-лут тому, кто внёс больше всего урона" +
+                      $"{(part > 0 ? $" • {part} RP участникам" : "")}.</size>");
             lines.Add("");
             lines.Add("<size=11>/bosstimer — расписание • /bossinfo — кто жив • /bosslast — киллеры</size>");
             return lines;
