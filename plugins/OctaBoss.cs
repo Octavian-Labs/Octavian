@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.0.0")]
+    [Info("OctaBoss", "Octavian", "1.1.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -60,6 +60,8 @@ namespace Oxide.Plugins
             [JsonProperty("Радиус маркера на карте (0-1, доля карты)")] public float MarkerRadius = 0.03f;
             [JsonProperty("Показывать маркер на карте")] public bool ShowMarker = true;
             [JsonProperty("Держаться от края карты (м)")] public float MapMargin = 400f;
+            [JsonProperty("Спавн только в родном биоме")] public bool NativeBiome = false;
+            [JsonProperty("Родные биомы (arid,temperate,tundra,arctic,jungle через запятую)")] public string NativeBiomes = "temperate";
             [JsonProperty("Монументы-якоря (через запятую, частичное совпадение; пусто = любая точка)")] public string MonumentNames = "";
             [JsonProperty("Дистанция от края монумента мин (м)")] public float MonumentMinDist = 15f;
             [JsonProperty("Дистанция от края монумента макс (м)")] public float MonumentMaxDist = 70f;
@@ -206,7 +208,11 @@ namespace Oxide.Plugins
                             Prefab = "assets/rust.ai/agents/bull/bull.prefab",
                             Male = false, KillOnDespawn = true
                         },
-                        Spawn = new SpecSpawn { MonumentNames = "" },
+                        Spawn = new SpecSpawn
+                        {
+                            MonumentNames = "",
+                            NativeBiome = true, NativeBiomes = "temperate,tundra"
+                        },
                         Rewards = new SpecRewards { Loot = RichLoot() },
                         WarnAnnounce = "{name} появится через {0} мин. Готовьтесь — это не кабанчик с ранчо!",
                         DespawnAnnounce = "{name} ушёл в закат — никто не решился.",
@@ -228,7 +234,8 @@ namespace Oxide.Plugins
                         Spawn = new SpecSpawn
                         {
                             MonumentNames = "ranch,barn",
-                            MonumentMinDist = 15f, MonumentMaxDist = 70f
+                            MonumentMinDist = 15f, MonumentMaxDist = 70f,
+                            NativeBiome = true, NativeBiomes = "temperate,tundra"
                         },
                         Rewards = new SpecRewards { Loot = MidLoot() },
                         WarnAnnounce = "{name} появится через {0} мин возле ранчо. Готовьтесь!",
@@ -244,6 +251,7 @@ namespace Oxide.Plugins
                         Health = 1500f, Scale = 2f, SpeedMultiplier = 1.6f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 4, Radius = 8f, Scale = 0.8f },
+                        Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "arctic,tundra,temperate" },
                         Rewards = new SpecRewards { Loot = MidLoot() },
                         DespawnAnnounce = "{name} ушёл в чащу — стая растворилась в темноте.",
                     },
@@ -255,6 +263,7 @@ namespace Oxide.Plugins
                         Health = 2500f, Scale = 1.8f, SpeedMultiplier = 1.7f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 0 },
+                        Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle" },
                         Rewards = new SpecRewards { Loot = MidLoot() },
                         DespawnAnnounce = "{name} скрылся в джунглях.",
                     },
@@ -266,6 +275,7 @@ namespace Oxide.Plugins
                         Health = 2500f, Scale = 1.8f, SpeedMultiplier = 1.7f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 0 },
+                        Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle" },
                         Rewards = new SpecRewards { Loot = MidLoot() },
                         DespawnAnnounce = "{name} растворилась в тени.",
                     },
@@ -277,6 +287,7 @@ namespace Oxide.Plugins
                         Health = 6000f, Scale = 2.2f, SpeedMultiplier = 1.3f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 2, Scale = 0.6f },
+                        Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "temperate,tundra" },
                         Rewards = new SpecRewards { Loot = RichLoot() },
                         DespawnAnnounce = "{name} ушёл в берлогу.",
                     },
@@ -288,6 +299,7 @@ namespace Oxide.Plugins
                         Health = 4000f, Scale = 2f, SpeedMultiplier = 1.3f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 3, Scale = 0.7f },
+                        Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle" },
                         Rewards = new SpecRewards { Loot = MidLoot() },
                         DespawnAnnounce = "{name} ушёл под воду.",
                     },
@@ -404,19 +416,67 @@ namespace Oxide.Plugins
                   TerrainTopology.Enum.River | TerrainTopology.Enum.Riverside | TerrainTopology.Enum.Beach |
                   TerrainTopology.Enum.Beachside);
 
+        // имя биома (конфиг) -> флаг TerrainBiome.Enum
+        private static bool TryParseBiome(string name, out int flag)
+        {
+            switch (name)
+            {
+                case "arid": flag = (int)TerrainBiome.Enum.Arid; return true;
+                case "temperate": flag = (int)TerrainBiome.Enum.Temperate; return true;
+                case "tundra": flag = (int)TerrainBiome.Enum.Tundra; return true;
+                case "arctic": flag = (int)TerrainBiome.Enum.Arctic; return true;
+                case "jungle": flag = (int)TerrainBiome.Enum.Jungle; return true;
+                default: flag = 0; return false;
+            }
+        }
+
+        // битовая маска разрешённых биомов; 0 = проверка биома выключена
+        private static int NativeBiomeMask(BossSpec spec)
+        {
+            if (!spec.Spawn.NativeBiome || string.IsNullOrEmpty(spec.Spawn.NativeBiomes)) return 0;
+            var mask = 0;
+            foreach (var n in spec.Spawn.NativeBiomes.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                int flag;
+                if (TryParseBiome(n.Trim().ToLowerInvariant(), out flag)) mask |= flag;
+            }
+            return mask;
+        }
+
+        private bool ValidPoint(Vector3 p, int biomeMask)
+        {
+            var h = TerrainMeta.HeightMap.GetHeight(p);
+            if (h < 1.5f) return false; // вода/пляж
+            p.y = h;
+            try { if (TerrainMeta.TopologyMap.GetTopology(p, AvoidTopo)) return false; } catch { }
+            // родной биом: доминирующий биом точки должен входить в маску
+            if (biomeMask != 0)
+            {
+                try { if (((int)TerrainMeta.BiomeMap.GetBiomeMaxType(p) & biomeMask) == 0) return false; }
+                catch { }
+            }
+            return true;
+        }
+
         private Vector3 FindSpawnPos(BossState st)
         {
             var size = ConVar.Server.worldsize;
             var half = size * 0.5f - st.Spec.Spawn.MapMargin;
-            for (var i = 0; i < 60; i++)
+            var mask = NativeBiomeMask(st.Spec);
+
+            for (var pass = 0; pass < 2; pass++)
             {
-                var p = new Vector3(UnityEngine.Random.Range(-half, half), 0, UnityEngine.Random.Range(-half, half));
-                var h = TerrainMeta.HeightMap.GetHeight(p);
-                if (h < 1.5f) continue; // вода/пляж
-                p.y = h;
-                try { if (TerrainMeta.TopologyMap.GetTopology(p, AvoidTopo)) continue; } catch { }
-                p.y += 0.5f;
-                return p;
+                // второй проход — без биома, если родного на карте не нашлось
+                var useMask = pass == 0 ? mask : 0;
+                for (var i = 0; i < 60; i++)
+                {
+                    var p = new Vector3(UnityEngine.Random.Range(-half, half), 0, UnityEngine.Random.Range(-half, half));
+                    if (!ValidPoint(p, useMask)) continue;
+                    p.y = TerrainMeta.HeightMap.GetHeight(p) + 0.5f;
+                    return p;
+                }
+                if (useMask == 0) break;
+                PrintWarning($"OctaBoss[{st.Spec.Key}]: родной биом не найден за 60 попыток — спавн в любом месте");
             }
             return Vector3.zero;
         }
@@ -1080,6 +1140,7 @@ namespace Oxide.Plugins
                 KV("jitter",    "Разброс респауна ± (мин)",() => s.IntervalJitterMinutes.ToString("0"), v => s.IntervalJitterMinutes = F(v, s.IntervalJitterMinutes)),
                 KV("warn",      "Предупреждение за (мин)", () => s.WarnBeforeMinutes.ToString("0"),v => s.WarnBeforeMinutes = F(v, s.WarnBeforeMinutes)),
                 KV("marker",    "Радиус маркера (0-1)",    () => s.MarkerRadius.ToString("0.###"), v => s.MarkerRadius = F(v, s.MarkerRadius)),
+                KV("biome",     "Только родной биом (1/0)",() => s.NativeBiome ? "1" : "0",        v => s.NativeBiome = I(v, s.NativeBiome ? 1 : 0) == 1),
                 KV("currency",  "Награда RP за килл",      () => r.Currency.ToString(),            v => r.Currency = I(v, r.Currency)),
             };
         }
