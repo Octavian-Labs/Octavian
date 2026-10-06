@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -96,15 +96,15 @@ namespace Oxide.Plugins
                 // фрагменты продвинутого чертежа — гарантированно 3 шт
                 new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 3, MaxAmount = 3, Chance = 1f },
                 // чертежи 3-го верстака
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.18f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "metal.chestplate", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
-                new LootEntry { ShortName = "blueprint", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.18f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.chestplate", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
+                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
             };
         }
 
@@ -520,23 +520,34 @@ namespace Oxide.Plugins
             {
                 if (rng.NextDouble() > e.Chance) continue;
                 var amount = rng.Next(e.MinAmount, e.MaxAmount + 1);
-                var item = ItemManager.CreateByName(e.ShortName, amount, e.SkinId);
-                if (item == null)
-                {
-                    PrintWarning($"OctaBoar: неизвестный предмет в луте: {e.ShortName}");
-                    continue;
-                }
+
+                Item item;
                 if (!string.IsNullOrEmpty(e.BlueprintTarget))
                 {
+                    // чертёж: blueprintbase + blueprintTarget=итем
                     var bpTarget = ItemManager.FindItemDefinition(e.BlueprintTarget);
                     if (bpTarget == null)
                     {
                         PrintWarning($"OctaBoar: неизвестная цель чертежа: {e.BlueprintTarget}");
-                        item.Remove();
+                        continue;
+                    }
+                    item = ItemManager.CreateByName("blueprintbase", amount);
+                    if (item == null)
+                    {
+                        PrintWarning("OctaBoar: нет blueprintbase в сборке");
                         continue;
                     }
                     item.blueprintTarget = bpTarget.itemid;
                     item.blueprintAmount = 1;
+                }
+                else
+                {
+                    item = ItemManager.CreateByName(e.ShortName, amount, e.SkinId);
+                    if (item == null)
+                    {
+                        PrintWarning($"OctaBoar: неизвестный предмет в луте: {e.ShortName}");
+                        continue;
+                    }
                 }
                 if (!item.MoveToContainer(bag.inventory))
                     item.Remove();
