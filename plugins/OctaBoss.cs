@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.1.0")]
+    [Info("OctaBoss", "Octavian", "1.2.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -65,6 +65,8 @@ namespace Oxide.Plugins
             [JsonProperty("Монументы-якоря (через запятую, частичное совпадение; пусто = любая точка)")] public string MonumentNames = "";
             [JsonProperty("Дистанция от края монумента мин (м)")] public float MonumentMinDist = 15f;
             [JsonProperty("Дистанция от края монумента макс (м)")] public float MonumentMaxDist = 70f;
+            [JsonProperty("Требовать воду рядом (водные звери; крокодил иначе умирает сойдя с навмеша)")] public bool NeedsWater = false;
+            [JsonProperty("Радиус поиска воды вокруг точки спавна (м)")] public float WaterRadius = 25f;
         }
 
         private class SpecRewards
@@ -299,7 +301,7 @@ namespace Oxide.Plugins
                         Health = 4000f, Scale = 2f, SpeedMultiplier = 1.3f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 3, Scale = 0.7f },
-                        Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle" },
+                        Spawn = new SpecSpawn { NativeBiome = true, NativeBiomes = "jungle", NeedsWater = true, WaterRadius = 30f },
                         Rewards = new SpecRewards { Loot = MidLoot() },
                         DespawnAnnounce = "{name} ушёл под воду.",
                     },
@@ -443,19 +445,45 @@ namespace Oxide.Plugins
             return mask;
         }
 
-        private bool ValidPoint(Vector3 p, int biomeMask)
+        private bool ValidPoint(Vector3 p, int biomeMask, bool needsWater, float waterRadius)
         {
             var h = TerrainMeta.HeightMap.GetHeight(p);
-            if (h < 1.5f) return false; // вода/пляж
+            if (h < 1.5f) return false; // сама точка — вода/пляж, босс спавнится на суше
             p.y = h;
-            try { if (TerrainMeta.TopologyMap.GetTopology(p, AvoidTopo)) return false; } catch { }
+            // для водных зверей пляж/прибрежная топология как раз нужна — не отсекаем её
+            try
+            {
+                var topo = needsWater
+                    ? AvoidTopo & ~(int)(TerrainTopology.Enum.Beach | TerrainTopology.Enum.Beachside | TerrainTopology.Enum.Lake | TerrainTopology.Enum.Riverside)
+                    : AvoidTopo;
+                if (TerrainMeta.TopologyMap.GetTopology(p, topo)) return false;
+            }
+            catch { }
             // родной биом: доминирующий биом точки должен входить в маску
             if (biomeMask != 0)
             {
                 try { if (((int)TerrainMeta.BiomeMap.GetBiomeMaxType(p) & biomeMask) == 0) return false; }
                 catch { }
             }
+            // вода рядом: хотя бы одна проба по кругу должна быть под водой
+            if (needsWater && !WaterNearby(p, waterRadius)) return false;
             return true;
+        }
+
+        private static bool WaterNearby(Vector3 p, float radius)
+        {
+            try
+            {
+                for (var i = 0; i < 8; i++)
+                {
+                    var ang = i * (Mathf.PI * 0.25f);
+                    var q = p + new Vector3(Mathf.Cos(ang) * radius, 0f, Mathf.Sin(ang) * radius);
+                    if (TerrainMeta.WaterMap.GetHeight(q) > TerrainMeta.HeightMap.GetHeight(q) + 0.1f)
+                        return true;
+                }
+            }
+            catch { return true; } // карта воды недоступна — не блокируем спавн
+            return false;
         }
 
         private Vector3 FindSpawnPos(BossState st)
@@ -463,20 +491,25 @@ namespace Oxide.Plugins
             var size = ConVar.Server.worldsize;
             var half = size * 0.5f - st.Spec.Spawn.MapMargin;
             var mask = NativeBiomeMask(st.Spec);
+            var needWater = st.Spec.Spawn.NeedsWater;
+            var waterR = st.Spec.Spawn.WaterRadius;
 
-            for (var pass = 0; pass < 2; pass++)
+            // проход 0: биом + вода; проход 1: вода без биома; проход 2: вообще где угодно
+            for (var pass = 0; pass < 3; pass++)
             {
-                // второй проход — без биома, если родного на карте не нашлось
                 var useMask = pass == 0 ? mask : 0;
+                var useWater = pass < 2 && needWater;
                 for (var i = 0; i < 60; i++)
                 {
                     var p = new Vector3(UnityEngine.Random.Range(-half, half), 0, UnityEngine.Random.Range(-half, half));
-                    if (!ValidPoint(p, useMask)) continue;
+                    if (!ValidPoint(p, useMask, useWater, waterR)) continue;
                     p.y = TerrainMeta.HeightMap.GetHeight(p) + 0.5f;
                     return p;
                 }
-                if (useMask == 0) break;
-                PrintWarning($"OctaBoss[{st.Spec.Key}]: родной биом не найден за 60 попыток — спавн в любом месте");
+                if (pass == 0 && mask != 0)
+                    PrintWarning($"OctaBoss[{st.Spec.Key}]: родной биом не найден за 60 попыток — ослабляю фильтр");
+                if (pass == 1 && needWater)
+                    PrintWarning($"OctaBoss[{st.Spec.Key}]: вода рядом не найдена — спавн где попало");
             }
             return Vector3.zero;
         }
@@ -1141,6 +1174,7 @@ namespace Oxide.Plugins
                 KV("warn",      "Предупреждение за (мин)", () => s.WarnBeforeMinutes.ToString("0"),v => s.WarnBeforeMinutes = F(v, s.WarnBeforeMinutes)),
                 KV("marker",    "Радиус маркера (0-1)",    () => s.MarkerRadius.ToString("0.###"), v => s.MarkerRadius = F(v, s.MarkerRadius)),
                 KV("biome",     "Только родной биом (1/0)",() => s.NativeBiome ? "1" : "0",        v => s.NativeBiome = I(v, s.NativeBiome ? 1 : 0) == 1),
+                KV("water",     "Спавн у воды (1/0)",      () => s.NeedsWater ? "1" : "0",         v => s.NeedsWater = I(v, s.NeedsWater ? 1 : 0) == 1),
                 KV("currency",  "Награда RP за килл",      () => r.Currency.ToString(),            v => r.Currency = I(v, r.Currency)),
             };
         }
