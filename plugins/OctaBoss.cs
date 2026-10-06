@@ -124,69 +124,67 @@ namespace Oxide.Plugins
             [JsonProperty("Уведомления")] public NotifySettings Notify = new NotifySettings();
         }
 
-        private static List<LootEntry> RichLoot()
-        {
-            return new List<LootEntry>
-            {
-                new LootEntry { ShortName = "scrap", MinAmount = 1500, MaxAmount = 3000, Chance = 1f },
-                new LootEntry { ShortName = "metal.refined", MinAmount = 300, MaxAmount = 700, Chance = 0.9f },
-                new LootEntry { ShortName = "sulfur", MinAmount = 6000, MaxAmount = 12000, Chance = 0.9f },
-                new LootEntry { ShortName = "gunpowder", MinAmount = 3000, MaxAmount = 6000, Chance = 0.7f },
-                new LootEntry { ShortName = "techparts", MinAmount = 30, MaxAmount = 60, Chance = 0.6f },
-                new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
-                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "rifle.l96", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "ammo.rifle.explosive", MinAmount = 60, MaxAmount = 128, Chance = 0.4f },
-                new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 2, MaxAmount = 4, Chance = 0.3f },
-                new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 3, MaxAmount = 3, Chance = 1f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.35f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.25f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.18f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.plate.torso", MinAmount = 1, MaxAmount = 1, Chance = 0.3f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.2f },
-            };
-        }
+        // компактная запись строки лута: LE(шортнейм, мин, макс, шанс[, цель чертежа])
+        private static LootEntry LE(string sn, int min, int max, float ch, string bp = "", ulong skin = 0) =>
+            new LootEntry { ShortName = sn, MinAmount = min, MaxAmount = max, Chance = ch, BlueprintTarget = bp, SkinId = skin };
 
-        private static List<LootEntry> MidLoot()
+        private static List<LootEntry> RichLoot() => new List<LootEntry>
         {
-            return new List<LootEntry>
-            {
-                new LootEntry { ShortName = "scrap", MinAmount = 500, MaxAmount = 1000, Chance = 1f },
-                new LootEntry { ShortName = "metal.refined", MinAmount = 100, MaxAmount = 250, Chance = 0.9f },
-                new LootEntry { ShortName = "sulfur", MinAmount = 2000, MaxAmount = 4000, Chance = 0.9f },
-                new LootEntry { ShortName = "gunpowder", MinAmount = 1000, MaxAmount = 2000, Chance = 0.7f },
-                new LootEntry { ShortName = "techparts", MinAmount = 10, MaxAmount = 20, Chance = 0.6f },
-                new LootEntry { ShortName = "keycard_blue", MinAmount = 1, MaxAmount = 1, Chance = 0.15f },
-                new LootEntry { ShortName = "keycard_red", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
-                new LootEntry { ShortName = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
-                new LootEntry { ShortName = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
-                new LootEntry { ShortName = "rifle.l96", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
-                new LootEntry { ShortName = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
-                new LootEntry { ShortName = "multiplegrenadelauncher", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
-                new LootEntry { ShortName = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
-                new LootEntry { ShortName = "ammo.rifle.explosive", MinAmount = 20, MaxAmount = 42, Chance = 0.25f },
-                new LootEntry { ShortName = "ammo.rocket.hv", MinAmount = 1, MaxAmount = 2, Chance = 0.15f },
-                new LootEntry { ShortName = "advancedblueprintfragment", MinAmount = 1, MaxAmount = 1, Chance = 1f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.ak", MinAmount = 1, MaxAmount = 1, Chance = 0.12f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rifle.lr300", MinAmount = 1, MaxAmount = 1, Chance = 0.08f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "lmg.m249", MinAmount = 1, MaxAmount = 1, Chance = 0.03f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "rocket.launcher", MinAmount = 1, MaxAmount = 1, Chance = 0.05f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "ammo.rocket.basic", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "explosive.timed", MinAmount = 1, MaxAmount = 1, Chance = 0.06f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.facemask", MinAmount = 1, MaxAmount = 1, Chance = 0.1f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "metal.plate.torso", MinAmount = 1, MaxAmount = 1, Chance = 0.1f },
-                new LootEntry { ShortName = "blueprintbase", BlueprintTarget = "shotgun.spas12", MinAmount = 1, MaxAmount = 1, Chance = 0.07f },
-            };
-        }
+            LE("scrap", 1500, 3000, 1f),
+            LE("metal.refined", 300, 700, 0.9f),
+            LE("sulfur", 6000, 12000, 0.9f),
+            LE("gunpowder", 3000, 6000, 0.7f),
+            LE("techparts", 30, 60, 0.6f),
+            LE("keycard_blue", 1, 1, 0.35f),
+            LE("keycard_red", 1, 1, 0.2f),
+            LE("lmg.m249", 1, 1, 0.15f),
+            LE("rifle.lr300", 1, 1, 0.25f),
+            LE("rifle.l96", 1, 1, 0.15f),
+            LE("rocket.launcher", 1, 1, 0.2f),
+            LE("multiplegrenadelauncher", 1, 1, 0.2f),
+            LE("shotgun.spas12", 1, 1, 0.25f),
+            LE("ammo.rifle.explosive", 60, 128, 0.4f),
+            LE("ammo.rocket.hv", 2, 4, 0.3f),
+            LE("advancedblueprintfragment", 3, 3, 1f),
+            LE("blueprintbase", 1, 1, 0.35f, "rifle.ak"),
+            LE("blueprintbase", 1, 1, 0.25f, "rifle.lr300"),
+            LE("blueprintbase", 1, 1, 0.08f, "lmg.m249"),
+            LE("blueprintbase", 1, 1, 0.15f, "rocket.launcher"),
+            LE("blueprintbase", 1, 1, 0.2f, "ammo.rocket.basic"),
+            LE("blueprintbase", 1, 1, 0.18f, "explosive.timed"),
+            LE("blueprintbase", 1, 1, 0.3f, "metal.facemask"),
+            LE("blueprintbase", 1, 1, 0.3f, "metal.plate.torso"),
+            LE("blueprintbase", 1, 1, 0.2f, "shotgun.spas12"),
+        };
+
+        private static List<LootEntry> MidLoot() => new List<LootEntry>
+        {
+            LE("scrap", 500, 1000, 1f),
+            LE("metal.refined", 100, 250, 0.9f),
+            LE("sulfur", 2000, 4000, 0.9f),
+            LE("gunpowder", 1000, 2000, 0.7f),
+            LE("techparts", 10, 20, 0.6f),
+            LE("keycard_blue", 1, 1, 0.15f),
+            LE("keycard_red", 1, 1, 0.07f),
+            LE("lmg.m249", 1, 1, 0.05f),
+            LE("rifle.lr300", 1, 1, 0.08f),
+            LE("rifle.l96", 1, 1, 0.05f),
+            LE("rocket.launcher", 1, 1, 0.07f),
+            LE("multiplegrenadelauncher", 1, 1, 0.07f),
+            LE("shotgun.spas12", 1, 1, 0.08f),
+            LE("ammo.rifle.explosive", 20, 42, 0.25f),
+            LE("ammo.rocket.hv", 1, 2, 0.15f),
+            LE("advancedblueprintfragment", 1, 1, 1f),
+            LE("blueprintbase", 1, 1, 0.12f, "rifle.ak"),
+            LE("blueprintbase", 1, 1, 0.08f, "rifle.lr300"),
+            LE("blueprintbase", 1, 1, 0.03f, "lmg.m249"),
+            LE("blueprintbase", 1, 1, 0.05f, "rocket.launcher"),
+            LE("blueprintbase", 1, 1, 0.07f, "ammo.rocket.basic"),
+            LE("blueprintbase", 1, 1, 0.06f, "explosive.timed"),
+            LE("blueprintbase", 1, 1, 0.1f, "metal.facemask"),
+            LE("blueprintbase", 1, 1, 0.1f, "metal.plate.torso"),
+            LE("blueprintbase", 1, 1, 0.07f, "shotgun.spas12"),
+        };
 
         private static ConfigData DefaultBosses()
         {
@@ -350,12 +348,28 @@ namespace Oxide.Plugins
         }
 
         private readonly Dictionary<string, BossState> _bosses = new Dictionary<string, BossState>();
-        // трупы — отдельные сущности; матчим по parentEnt + фолбэк по позиции смерти.
-        // TTL 5 мин в обеих структурах; pending-кортеж хранит сущность для точечного снятия
-        private readonly Dictionary<BaseEntity, Tuple<float, DateTime>> _corpseByParent = new Dictionary<BaseEntity, Tuple<float, DateTime>>();
-        private readonly List<Tuple<BaseEntity, Vector3, float, DateTime>> _pendingCorpseScale = new List<Tuple<BaseEntity, Vector3, float, DateTime>>();
-        // бафф победителя: steamid -> (истекает, множитель урона)
-        private readonly Dictionary<ulong, Tuple<DateTime, float>> _buffs = new Dictionary<ulong, Tuple<DateTime, float>>();
+
+        // «ждём труп этой смерти с таким масштабом»: матч по parentEnt,
+        // фолбэк — по позиции смерти (parentEnt бывает пуст). TTL чистится лениво
+        private class PendingCorpse
+        {
+            public BaseEntity Source;
+            public Vector3 Pos;
+            public float Scale;
+            public DateTime Expiry;
+            public bool Stale => DateTime.UtcNow > Expiry;
+        }
+
+        // бафф победителя: steamid -> запись
+        private class Buff
+        {
+            public DateTime Expires;
+            public float Mult;
+            public bool Stale => DateTime.UtcNow > Expires;
+        }
+
+        private readonly List<PendingCorpse> _corpses = new List<PendingCorpse>();
+        private readonly Dictionary<ulong, Buff> _buffs = new Dictionary<ulong, Buff>();
         private readonly Dictionary<string, string> _lastKillInfo = new Dictionary<string, string>();
         private Timer _timerSpawn, _timerAggro;
 
@@ -737,6 +751,34 @@ namespace Oxide.Plugins
             return sb.ToString();
         }
 
+        // --- мелкие хелперы, чтобы не таскать одно и то же по коду ---
+
+        private static ulong Uid(BasePlayer p) => (ulong)p.userID;
+
+        // arg.Args — StringView[], сравнивать только через .ToString()
+        private static string ArgAt(ConsoleSystem.Arg arg, int i) =>
+            arg.Args != null && arg.Args.Length > i ? arg.Args[i].ToString() : "";
+
+        private static float ParseF(string v, float def) =>
+            float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var r) ? r : def;
+        private static int ParseI(string v, int def) =>
+            int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var r) ? r : def;
+
+        private static void AddDamage(Dictionary<ulong, float> map, ulong id, float dmg) =>
+            map[id] = (map.TryGetValue(id, out var cur) ? cur : 0f) + dmg;
+
+        // админ-килл: Kill() не всегда дёргает OnEntityDeath — догоняем вручную
+        private void AdminKill(BossState st)
+        {
+            if (st == null || !st.Alive) return;
+            var b = st.Entity;
+            b.Kill();
+            if (st.Entity == b) HandleBossDeath(st, null, adminKill: true);
+        }
+
+        private static BasePlayer FindPlayer(ulong id) =>
+            BasePlayer.activePlayerList.FirstOrDefault(p => p != null && Uid(p) == id);
+
         #endregion
 
         #region Aggro & Rage
@@ -810,19 +852,11 @@ namespace Oxide.Plugins
             return closest;
         }
 
-        private BossState StateOf(BaseEntity ent)
-        {
-            foreach (var st in _bosses.Values)
-                if (st.Entity == ent) return st;
-            return null;
-        }
+        private BossState StateOf(BaseEntity ent) =>
+            _bosses.Values.FirstOrDefault(st => st.Entity == ent);
 
-        private BossState EscortOf(BaseEntity ent)
-        {
-            foreach (var st in _bosses.Values)
-                if (st.Escorts.Contains(ent)) return st;
-            return null;
-        }
+        private BossState EscortOf(BaseEntity ent) =>
+            _bosses.Values.FirstOrDefault(st => st.Escorts.Contains(ent));
 
         #endregion
 
@@ -860,9 +894,7 @@ namespace Oxide.Plugins
                 }
                 ApplyBossArmor(st.Spec, info);
                 if (attacker != null && !attacker.IsNpc)
-                    st.DamageBy[(ulong)attacker.userID] = st.DamageBy.TryGetValue((ulong)attacker.userID, out var cur)
-                        ? cur + info.damageTypes.Total()
-                        : info.damageTypes.Total();
+                    AddDamage(st.DamageBy, Uid(attacker), info.damageTypes.Total());
                 return;
             }
 
@@ -881,10 +913,10 @@ namespace Oxide.Plugins
 
             // бафф победителя на исходящий урон игрока — множитель лежит в самой записи
             var bp = info.InitiatorPlayer;
-            if (bp != null && !bp.IsNpc && _buffs.TryGetValue((ulong)bp.userID, out var buff))
+            if (bp != null && !bp.IsNpc && _buffs.TryGetValue(Uid(bp), out var buff))
             {
-                if (buff.Item1 > DateTime.UtcNow) info.damageTypes.ScaleAll(buff.Item2);
-                else _buffs.Remove((ulong)bp.userID); // протухший бафф — выкидываем
+                if (buff.Stale) _buffs.Remove(Uid(bp)); // протухший — выкидываем
+                else info.damageTypes.ScaleAll(buff.Mult);
             }
         }
 
@@ -971,21 +1003,24 @@ namespace Oxide.Plugins
             ScheduleNext(st);
         }
 
-        // регистрация «на этой смерти ждём труп с масштабом scale» + ленивая чистка протухшего
+        // труп животного — отдельная entity: масштаб ставим до ухода снапшота клиентам.
+        // Труп спавнится внутри Die() РАНЬШЕ OnEntityDeath — матчим по parentEnt,
+        // а не по очереди; фолбэк — свежая запись по позиции смерти (parentEnt бывает пуст)
+        private const float CorpseTtlMinutes = 5f;
+        private const float CorpsePosTolerance = 8f;
+
         private void RegisterCorpseScale(BaseEntity dead, float scale)
         {
-            var expiry = DateTime.UtcNow.AddMinutes(5);
-            _corpseByParent[dead] = Tuple.Create(scale, expiry);
-            _pendingCorpseScale.Add(Tuple.Create(dead, dead.transform.position, scale, expiry));
-
-            var now = DateTime.UtcNow;
-            foreach (var k in _corpseByParent.Where(kv => kv.Value.Item2 < now).Select(kv => kv.Key).ToList())
-                _corpseByParent.Remove(k);
-            _pendingCorpseScale.RemoveAll(p => p.Item4 < now);
+            _corpses.RemoveAll(c => c.Stale);
+            _corpses.Add(new PendingCorpse
+            {
+                Source = dead,
+                Pos = dead.transform.position,
+                Scale = scale,
+                Expiry = DateTime.UtcNow.AddMinutes(CorpseTtlMinutes)
+            });
         }
 
-        // труп животного — отдельная entity: ставим масштаб до того, как он уйдёт клиентам.
-        // труп спавнится внутри Die() РАНЬШЕ OnEntityDeath — матчим по parentEnt, а не по очереди
         private void OnEntitySpawned(BaseNetworkable entity)
         {
             var bc = entity as BaseCorpse;
@@ -993,36 +1028,19 @@ namespace Oxide.Plugins
             // трупы игроков/учёных/лошадей — тоже BaseCorpse: не даём им подобрать
             // боссовский масштаб по позиционному фолбэку (умер рядом → труп x2)
             if (bc is PlayerCorpse || bc is NPCPlayerCorpse || bc is LootableCorpse || bc is HorseCorpse) return;
+
+            _corpses.RemoveAll(c => c.Stale);
+            if (_corpses.Count == 0) return;
+
             var src = bc.parentEnt;
-            float? scale = null;
-            if (src != null && _corpseByParent.TryGetValue(src, out var entry))
-            {
-                _corpseByParent.Remove(src);
-                if (entry.Item2 > DateTime.UtcNow)
-                {
-                    scale = entry.Item1;
-                    // снимаем позиционный фолбэк этой же смерти — соседний труп
-                    // не должен подобрать чужой scale по координатам
-                    _pendingCorpseScale.RemoveAll(p => p.Item1 == src);
-                }
-            }
-            // фолбэк по очереди (если parentEnt пуст — по позиции из pending)
-            if (scale == null && _pendingCorpseScale.Count > 0)
-            {
-                for (var i = _pendingCorpseScale.Count - 1; i >= 0; i--)
-                {
-                    var p = _pendingCorpseScale[i];
-                    if (DateTime.UtcNow > p.Item4) { _pendingCorpseScale.RemoveAt(i); continue; }
-                    if (Vector3.Distance(bc.transform.position, p.Item2) > 8f) continue;
-                    scale = p.Item3;
-                    if (p.Item1 != null) _corpseByParent.Remove(p.Item1);
-                    _pendingCorpseScale.RemoveAt(i);
-                    break;
-                }
-            }
-            if (scale == null) return;
+            var hit = src != null ? _corpses.FirstOrDefault(c => c.Source == src) : null;
+            if (hit == null)
+                hit = _corpses.LastOrDefault(c => Vector3.Distance(bc.transform.position, c.Pos) <= CorpsePosTolerance);
+            if (hit == null) return;
+
+            _corpses.Remove(hit);
             bc.networkEntityScale = true;
-            bc.transform.localScale = Vector3.one * scale.Value;
+            bc.transform.localScale = Vector3.one * hit.Scale;
         }
 
         private void SpawnLoot(BossSpec spec, Vector3 pos)
@@ -1050,42 +1068,39 @@ namespace Oxide.Plugins
             foreach (var e in spec.Rewards.Loot)
             {
                 if (rng.NextDouble() > e.Chance) continue;
-                var amount = rng.Next(e.MinAmount, e.MaxAmount + 1);
-
-                Item item;
-                if (!string.IsNullOrEmpty(e.BlueprintTarget))
-                {
-                    // чертёж: blueprintbase + blueprintTarget=итем
-                    var bpTarget = ItemManager.FindItemDefinition(e.BlueprintTarget);
-                    if (bpTarget == null)
-                    {
-                        PrintWarning($"OctaBoss[{spec.Key}]: неизвестная цель чертежа: {e.BlueprintTarget}");
-                        continue;
-                    }
-                    item = ItemManager.CreateByName("blueprintbase", amount);
-                    if (item == null)
-                    {
-                        PrintWarning("OctaBoss: нет blueprintbase в сборке");
-                        continue;
-                    }
-                    item.blueprintTarget = bpTarget.itemid;
-                    item.blueprintAmount = 1;
-                }
-                else
-                {
-                    item = ItemManager.CreateByName(e.ShortName, amount, e.SkinId);
-                    if (item == null)
-                    {
-                        PrintWarning($"OctaBoss[{spec.Key}]: неизвестный предмет в луте: {e.ShortName}");
-                        continue;
-                    }
-                }
-                if (!item.MoveToContainer(bag.inventory))
+                var item = CreateLootItem(spec, e, rng.Next(e.MinAmount, e.MaxAmount + 1));
+                if (item != null && !item.MoveToContainer(bag.inventory))
                     item.Remove();
             }
 
             bag.Spawn();
             bag.ResetRemovalTime(Mathf.Max(spec.Rewards.LootLifetimeSeconds, bag.CalculateRemovalTime()));
+        }
+
+        // предмет по строке лут-таблицы: обычный или чертёж (blueprintbase + цель)
+        private Item CreateLootItem(BossSpec spec, LootEntry e, int amount)
+        {
+            if (string.IsNullOrEmpty(e.BlueprintTarget))
+            {
+                var item = ItemManager.CreateByName(e.ShortName, amount, e.SkinId);
+                if (item == null) PrintWarning($"OctaBoss[{spec.Key}]: неизвестный предмет в луте: {e.ShortName}");
+                return item;
+            }
+            var bpTarget = ItemManager.FindItemDefinition(e.BlueprintTarget);
+            if (bpTarget == null)
+            {
+                PrintWarning($"OctaBoss[{spec.Key}]: неизвестная цель чертежа: {e.BlueprintTarget}");
+                return null;
+            }
+            var bp = ItemManager.CreateByName("blueprintbase", amount);
+            if (bp == null)
+            {
+                PrintWarning("OctaBoss: нет blueprintbase в сборке");
+                return null;
+            }
+            bp.blueprintTarget = bpTarget.itemid;
+            bp.blueprintAmount = 1;
+            return bp;
         }
 
         // сколько дамагеров максимум получат награду за участие — защита от
@@ -1115,7 +1130,7 @@ namespace Oxide.Plugins
                 {
                     if (paid >= MaxParticipationRewards) break;
                     if (kv.Value / total < spec.Rewards.ParticipationPct) break; // отсортировано — дальше порога нет
-                    if (winner != null && kv.Key == (ulong)winner.userID) continue;
+                    if (winner != null && kv.Key == Uid(winner)) continue;
                     var p = FindPlayer(kv.Key);
                     if (p == null) continue;
                     PayCurrency(p, spec.Rewards.CurrencyParticipation, "за участие");
@@ -1126,16 +1141,9 @@ namespace Oxide.Plugins
             // бафф победителя (топ-дамагеру)
             if (winner != null && spec.Rewards.BuffDamage > 1f && spec.Rewards.BuffMinutes > 0)
             {
-                _buffs[(ulong)winner.userID] = Tuple.Create(DateTime.UtcNow.AddMinutes(spec.Rewards.BuffMinutes), spec.Rewards.BuffDamage);
+                _buffs[Uid(winner)] = new Buff { Expires = DateTime.UtcNow.AddMinutes(spec.Rewards.BuffMinutes), Mult = spec.Rewards.BuffDamage };
                 SendReply(winner, $"<color=#E8B84B>◆ OctaBoss</color> Бафф победителя: +{(spec.Rewards.BuffDamage - 1f) * 100:0}% урона на {spec.Rewards.BuffMinutes:0} мин");
             }
-        }
-
-        private static BasePlayer FindPlayer(ulong id)
-        {
-            foreach (var p in BasePlayer.activePlayerList)
-                if ((ulong)p.userID == id) return p;
-            return null;
         }
 
         private void PayCurrency(BasePlayer player, int amount, string reason)
@@ -1145,7 +1153,7 @@ namespace Oxide.Plugins
             {
                 if (p.Name == "ServerRewards" && p.IsLoaded)
                 {
-                    p.Call("AddPoints", (ulong)player.userID, amount);
+                    p.Call("AddPoints", Uid(player), amount);
                     SendReply(player, $"<color=#E8B84B>◆ OctaBoss</color> +{amount} RP {reason}");
                     return;
                 }
@@ -1208,7 +1216,7 @@ namespace Oxide.Plugins
 
         private BossSpec UiSpec(BasePlayer player)
         {
-            if (_uiSel.TryGetValue((ulong)player.userID, out var key))
+            if (_uiSel.TryGetValue(Uid(player), out var key))
             {
                 var s = _cfg.Bosses.FirstOrDefault(b => b.Key == key);
                 if (s != null) return s;
@@ -1222,38 +1230,33 @@ namespace Oxide.Plugins
             var s = b.Spawn; var r = b.Rewards; var e = b.Escort;
             return new List<KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>>
             {
-                KV("enabled",   "Включён (1/0)",           () => b.Enabled ? "1" : "0",            v => b.Enabled = I(v, b.Enabled ? 1 : 0) == 1),
-                KV("health",    "Здоровье",                () => b.Health.ToString("0"),           v => b.Health = F(v, b.Health)),
-                KV("scale",     "Масштаб (x обычного)",    () => b.Scale.ToString("0.##"),         v => b.Scale = F(v, b.Scale)),
-                KV("speed",     "Скорость (x)",            () => b.SpeedMultiplier.ToString("0.##"),v => b.SpeedMultiplier = F(v, b.SpeedMultiplier)),
-                KV("dmg",       "Урон босса (x)",          () => b.DamageMultiplier.ToString("0.##"),v => b.DamageMultiplier = F(v, b.DamageMultiplier)),
-                KV("rage",      "Урон в ярости (x)",       () => b.RageDamageMultiplier.ToString("0.##"), v => b.RageDamageMultiplier = F(v, b.RageDamageMultiplier)),
-                KV("rageth",    "Порог ярости (0-1)",      () => b.RageThreshold.ToString("0.##"), v => b.RageThreshold = F(v, b.RageThreshold)),
-                KV("aggro",     "Радиус агро (м)",         () => b.AggroRadius.ToString("0"),      v => b.AggroRadius = F(v, b.AggroRadius)),
-                KV("hyper",     "Экстра агрессия (1/0)",   () => b.HyperAggro ? "1" : "0",         v => b.HyperAggro = I(v, b.HyperAggro ? 1 : 0) == 1),
-                KV("life",      "Время жизни (мин)",       () => b.MaxLifeMinutes.ToString("0"),   v => b.MaxLifeMinutes = F(v, b.MaxLifeMinutes)),
-                KV("escort",    "Свита (шт)",              () => e.Count.ToString(),               v => e.Count = I(v, e.Count)),
-                KV("escortr",   "Радиус свиты (м)",        () => e.Radius.ToString("0"),           v => e.Radius = F(v, e.Radius)),
-                KV("escorts",   "Масштаб свиты",           () => e.Scale.ToString("0.##"),         v => e.Scale = F(v, e.Scale)),
-                KV("interval",  "Респаун (мин)",           () => s.IntervalMinutes.ToString("0"),  v => s.IntervalMinutes = F(v, s.IntervalMinutes)),
-                KV("jitter",    "Разброс респауна ± (мин)",() => s.IntervalJitterMinutes.ToString("0"), v => s.IntervalJitterMinutes = F(v, s.IntervalJitterMinutes)),
-                KV("warn",      "Предупреждение за (мин)", () => s.WarnBeforeMinutes.ToString("0"),v => s.WarnBeforeMinutes = F(v, s.WarnBeforeMinutes)),
-                KV("marker",    "Радиус маркера (0-1)",    () => s.MarkerRadius.ToString("0.###"), v => s.MarkerRadius = F(v, s.MarkerRadius)),
-                KV("biome",     "Только родной биом (1/0)",() => s.NativeBiome ? "1" : "0",        v => s.NativeBiome = I(v, s.NativeBiome ? 1 : 0) == 1),
-                KV("water",     "Спавн у воды (1/0)",      () => s.NeedsWater ? "1" : "0",         v => s.NeedsWater = I(v, s.NeedsWater ? 1 : 0) == 1),
-                KV("currency",  "Награда RP за килл",      () => r.Currency.ToString(),            v => r.Currency = I(v, r.Currency)),
+                Field("enabled",  "Включён (1/0)",           () => b.Enabled ? "1" : "0",            v => b.Enabled = ParseI(v, b.Enabled ? 1 : 0) == 1),
+                Field("health",   "Здоровье",                () => b.Health.ToString("0"),           v => b.Health = ParseF(v, b.Health)),
+                Field("scale",    "Масштаб (x обычного)",    () => b.Scale.ToString("0.##"),         v => b.Scale = ParseF(v, b.Scale)),
+                Field("speed",    "Скорость (x)",            () => b.SpeedMultiplier.ToString("0.##"),v => b.SpeedMultiplier = ParseF(v, b.SpeedMultiplier)),
+                Field("dmg",      "Урон босса (x)",          () => b.DamageMultiplier.ToString("0.##"),v => b.DamageMultiplier = ParseF(v, b.DamageMultiplier)),
+                Field("rage",     "Урон в ярости (x)",       () => b.RageDamageMultiplier.ToString("0.##"), v => b.RageDamageMultiplier = ParseF(v, b.RageDamageMultiplier)),
+                Field("rageth",   "Порог ярости (0-1)",      () => b.RageThreshold.ToString("0.##"), v => b.RageThreshold = ParseF(v, b.RageThreshold)),
+                Field("aggro",    "Радиус агро (м)",         () => b.AggroRadius.ToString("0"),      v => b.AggroRadius = ParseF(v, b.AggroRadius)),
+                Field("hyper",    "Экстра агрессия (1/0)",   () => b.HyperAggro ? "1" : "0",         v => b.HyperAggro = ParseI(v, b.HyperAggro ? 1 : 0) == 1),
+                Field("life",     "Время жизни (мин)",       () => b.MaxLifeMinutes.ToString("0"),   v => b.MaxLifeMinutes = ParseF(v, b.MaxLifeMinutes)),
+                Field("escort",   "Свита (шт)",              () => e.Count.ToString(),               v => e.Count = ParseI(v, e.Count)),
+                Field("escortr",  "Радиус свиты (м)",        () => e.Radius.ToString("0"),           v => e.Radius = ParseF(v, e.Radius)),
+                Field("escorts",  "Масштаб свиты",           () => e.Scale.ToString("0.##"),         v => e.Scale = ParseF(v, e.Scale)),
+                Field("interval", "Респаун (мин)",           () => s.IntervalMinutes.ToString("0"),  v => s.IntervalMinutes = ParseF(v, s.IntervalMinutes)),
+                Field("jitter",   "Разброс респауна ± (мин)",() => s.IntervalJitterMinutes.ToString("0"), v => s.IntervalJitterMinutes = ParseF(v, s.IntervalJitterMinutes)),
+                Field("warn",     "Предупреждение за (мин)", () => s.WarnBeforeMinutes.ToString("0"),v => s.WarnBeforeMinutes = ParseF(v, s.WarnBeforeMinutes)),
+                Field("marker",   "Радиус маркера (0-1)",    () => s.MarkerRadius.ToString("0.###"), v => s.MarkerRadius = ParseF(v, s.MarkerRadius)),
+                Field("biome",    "Только родной биом (1/0)",() => s.NativeBiome ? "1" : "0",        v => s.NativeBiome = ParseI(v, s.NativeBiome ? 1 : 0) == 1),
+                Field("water",    "Спавн у воды (1/0)",      () => s.NeedsWater ? "1" : "0",         v => s.NeedsWater = ParseI(v, s.NeedsWater ? 1 : 0) == 1),
+                Field("currency", "Награда RP за килл",      () => r.Currency.ToString(),            v => r.Currency = ParseI(v, r.Currency)),
             };
         }
 
-        private static KeyValuePair<string, Tuple<string, Func<string>, Action<string>>> KV(
+        private static KeyValuePair<string, Tuple<string, Func<string>, Action<string>>> Field(
             string key, string label, Func<string> get, Action<string> set) =>
             new KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>(
                 key, Tuple.Create(label, get, set));
-
-        private static float F(string v, float def) =>
-            float.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var r) ? r : def;
-        private static int I(string v, int def) =>
-            int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var r) ? r : def;
 
         private void DrawAdminUI(BasePlayer player)
         {
@@ -1406,7 +1409,7 @@ namespace Oxide.Plugins
                     redraw = false;
                     break;
                 case "tab":
-                    if (args.Length >= 2) _uiSel[(ulong)player.userID] = args[1].ToString();
+                    if (args.Length >= 2) _uiSel[Uid(player)] = args[1].ToString();
                     break;
                 case "spawn":
                 {
@@ -1415,16 +1418,8 @@ namespace Oxide.Plugins
                     break;
                 }
                 case "kill":
-                {
-                    var st = SelectedState(player);
-                    if (st != null && st.Alive)
-                    {
-                        var b = st.Entity;
-                        b.Kill();
-                        if (st.Entity == b) HandleBossDeath(st, null, adminKill: true);
-                    }
+                    AdminKill(SelectedState(player));
                     break;
-                }
                 case "save":
                     SaveConfig();
                     SendReply(player, "<color=#E8B84B>◆ OctaBoss</color> Конфиг сохранён");
@@ -1435,6 +1430,7 @@ namespace Oxide.Plugins
                         var key = args[1].ToString();
                         var value = string.Join(" ", args.Skip(2).Select(a => a.ToString()));
                         var spec = UiSpec(player);
+                        if (spec == null) break;
                         foreach (var kv in AdminFields(spec))
                             if (kv.Key == key) { kv.Value.Item3(value); break; }
                         // если вид выключили/включили — обновляем рантайм-список
@@ -1525,45 +1521,48 @@ namespace Oxide.Plugins
             return _bosses.TryGetValue(key ?? "", out st) ? st : null;
         }
 
+        // вид из аргумента команды + ворнинг в консоль при промахе
+        private BossState FindStateOrWarn(ConsoleSystem.Arg arg)
+        {
+            var key = ArgAt(arg, 0);
+            var st = FindState(key);
+            if (st == null)
+                Puts($"OctaBoss: вид '{key}' не найден. Доступно: {string.Join(", ", _bosses.Keys)}");
+            return st;
+        }
+
         [ConsoleCommand("octaboss.spawn")]
         private void CmdSpawn(ConsoleSystem.Arg arg)
         {
             if (!arg.IsAdmin) return;
-            var key = arg.Args != null && arg.Args.Length > 0 ? arg.Args[0].ToString() : "";
-            var st = FindState(key);
-            if (st == null) { Puts($"OctaBoss: вид '{key}' не найден. Доступно: {string.Join(", ", _bosses.Keys)}"); return; }
+            var st = FindStateOrWarn(arg);
+            if (st == null) return;
             var p = arg.Connection?.player as BasePlayer;
             SpawnBoss(st, p != null ? (Vector3?)(p.transform.position + p.transform.forward * 15f) : null);
-            Puts($"OctaBoss: принудительный спавн [{key}]");
+            Puts($"OctaBoss: принудительный спавн [{st.Spec.Key}]");
         }
 
         [ConsoleCommand("octaboss.kill")]
         private void CmdKill(ConsoleSystem.Arg arg)
         {
             if (!arg.IsAdmin) return;
-            var key = arg.Args != null && arg.Args.Length > 0 ? arg.Args[0].ToString() : "";
-            var st = FindState(key);
-            if (st == null) { Puts($"OctaBoss: вид '{key}' не найден"); return; }
-            if (!st.Alive) { Puts($"OctaBoss[{key}]: босса нет"); return; }
-            var b = st.Entity;
-            b.Kill();
-            if (st.Entity == b) HandleBossDeath(st, null, adminKill: true); // Kill() не всегда дёргает OnEntityDeath
-            Puts($"OctaBoss[{key}]: убит администратором");
+            var st = FindStateOrWarn(arg);
+            if (st == null) return;
+            if (!st.Alive) { Puts($"OctaBoss[{st.Spec.Key}]: босса нет"); return; }
+            AdminKill(st);
+            Puts($"OctaBoss[{st.Spec.Key}]: убит администратором");
         }
 
         [ConsoleCommand("octaboss.next")]
         private void CmdNext(ConsoleSystem.Arg arg)
         {
             if (!arg.IsAdmin) return;
-            var key = arg.Args != null && arg.Args.Length > 0 ? arg.Args[0].ToString() : "";
-            var mins = 30f;
-            if (arg.Args != null && arg.Args.Length > 1)
-                float.TryParse(arg.Args[1].ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out mins);
-            var st = FindState(key);
-            if (st == null) { Puts($"OctaBoss: вид '{key}' не найден"); return; }
+            var st = FindStateOrWarn(arg);
+            if (st == null) return;
+            var mins = ParseF(ArgAt(arg, 1), 30f);
             st.NextSpawnAt = DateTime.UtcNow.AddMinutes(Math.Max(0.1f, mins));
             st.Warned = true;
-            Puts($"OctaBoss[{key}]: следующий спавн через {mins:0.#} мин");
+            Puts($"OctaBoss[{st.Spec.Key}]: следующий спавн через {mins:0.#} мин");
         }
 
         [ConsoleCommand("octaboss.list")]
