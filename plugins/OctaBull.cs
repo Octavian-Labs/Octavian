@@ -37,7 +37,7 @@ namespace Oxide.Plugins
         {
             [JsonProperty("Префаб босса")] public string Prefab = "assets/rust.ai/agents/bull/bull.prefab";
             [JsonProperty("Имя босса")] public string DisplayName = "БЫК-БОСС";
-            [JsonProperty("Здоровье")] public float Health = 2000f;
+            [JsonProperty("Здоровье")] public float Health = 4000f;
             [JsonProperty("Множитель входящего урона (пули)")] public float BulletScale = 0.7f;
             [JsonProperty("Множитель входящего урона (взрывы)")] public float ExplosionScale = 0.9f;
             [JsonProperty("Множитель входящего урона (миляшник/прочее)")] public float OtherScale = 0.9f;
