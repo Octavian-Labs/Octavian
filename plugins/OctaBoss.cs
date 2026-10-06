@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.4.1")]
+    [Info("OctaBoss", "Octavian", "1.4.2")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -249,7 +249,7 @@ namespace Oxide.Plugins
                         // зоне и не кемпится на точке, но всегда где-то рядом с жильём
                         Spawn = new SpecSpawn
                         {
-                            MonumentNames = "ranch,barn",
+                            MonumentNames = "ranch,barn,stables",
                             MonumentMinDist = 300f, MonumentMaxDist = 900f,
                             NativeBiome = true, NativeBiomes = "temperate,tundra"
                         },
@@ -621,13 +621,15 @@ namespace Oxide.Plugins
                 if (mons == null || mons.Count == 0) return Vector3.zero;
 
                 var mon = mons[UnityEngine.Random.Range(0, mons.Count)];
-                var center = mon.Bounds.center;
+                // ВАЖНО: m.Bounds — локальный бокс (center ~ 0,0)! Мировой центр — transform.position
+                var center = mon.transform.position;
                 var edge = Mathf.Max(mon.Bounds.extents.x, mon.Bounds.extents.z);
                 var mask = NativeBiomeMask(st.Spec);
                 var needWater = st.Spec.Spawn.NeedsWater;
                 var waterR = st.Spec.Spawn.WaterRadius;
                 // все монументы — для отсека точек внутри чужих (там же сейф-зоны:
-                // аутпост/бандитка). Точку ВНУТРИ любого монумента не берём вообще
+                // аутпост/бандитка). Точку ВНУТРИ любого монумента не берём вообще.
+                // Сравнение — по горизонтали кругом радиуса max-extent (запас на поворот).
                 var allMons = TerrainMeta.Path?.Monuments?.Where(m => m != null).ToList()
                               ?? new List<MonumentInfo>();
 
@@ -636,7 +638,8 @@ namespace Oxide.Plugins
                     var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
                     var dist = edge + UnityEngine.Random.Range(st.Spec.Spawn.MonumentMinDist, st.Spec.Spawn.MonumentMaxDist);
                     var p = center + new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
-                    if (allMons.Any(m => m.Bounds.Contains(p))) continue;
+                    if (allMons.Any(m => Mathf.Max(m.Bounds.extents.x, m.Bounds.extents.z)
+                        > Vector2.Distance(new Vector2(p.x, p.z), new Vector2(m.transform.position.x, m.transform.position.z)))) continue;
                     if (!ValidPoint(p, mask, needWater, waterR)) continue;
                     p.y = TerrainMeta.HeightMap.GetHeight(p) + 0.5f;
                     return p;
