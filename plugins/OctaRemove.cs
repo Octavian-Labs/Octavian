@@ -3789,7 +3789,7 @@ namespace Oxide.Plugins
             public float rightDistance = 0.05f;
 
             [JsonProperty(PropertyName = "Price Enabled")]
-            public bool priceEnabled = true;
+            public bool priceEnabled = false;
 
             [JsonProperty(PropertyName = "Price - Box - Min Anchor (in Main Box)")]
             public string priceAnchorMin = "0 0.3";
@@ -3825,7 +3825,7 @@ namespace Oxide.Plugins
             public int price2TextSize = 16;
 
             [JsonProperty(PropertyName = "Refund Enabled")]
-            public bool refundEnabled = true;
+            public bool refundEnabled = false;
 
             [JsonProperty(PropertyName = "Refund - Box - Min Anchor (in Main Box)")]
             public string refundAnchorMin = "0 0";
@@ -3888,7 +3888,7 @@ namespace Oxide.Plugins
         public class RemoveSettings
         {
             [JsonProperty(PropertyName = "Price Enabled")]
-            public bool priceEnabled = true;
+            public bool priceEnabled = false;
 
             [JsonProperty(PropertyName = "Refund Enabled")]
             public bool refundEnabled = true;
