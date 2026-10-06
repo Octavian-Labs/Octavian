@@ -453,16 +453,20 @@ namespace Oxide.Plugins
             var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
             var dropPos = pos + new Vector3(Mathf.Cos(ang) * 2f, 0.6f, Mathf.Sin(ang) * 2f);
 
-            var bag = GameManager.server.CreateEntity("assets/prefabs/misc/item drop/item_drop_backpack.prefab", dropPos) as DroppedItemContainer;
+            var bag = GameManager.server.CreateEntity("assets/prefabs/misc/item drop/item_drop_backpack.prefab", dropPos, Quaternion.Euler(0f, 90f, 0f)) as DroppedItemContainer;
             if (bag == null) return;
-            bag.playerSteamID = 0;
-            bag._playerName = _cfg.Boss.DisplayName;
             bag.lootPanelName = "generic_resizable";
+            bag.playerName = _cfg.Boss.DisplayName;
+            bag.playerSteamID = 0;
             bag.onlyOwnerLoot = false;
             bag.buryLeftoverItems = false;
-            bag.Spawn();
-            bag.inventory.capacity = 30;
-            bag.inventory.itemList = new List<Item>();
+
+            // свой контейнер до Spawn() — как в Backpacks: ServerInit иначе делает свой
+            bag.inventory = new ItemContainer();
+            bag.inventory.ServerInitialize(null, 30);
+            bag.inventory.GiveUID();
+            bag.inventory.entityOwner = bag;
+            bag.inventory.SetFlag(ItemContainer.Flag.NoItemInput, true);
 
             var rng = new System.Random();
             foreach (var e in _cfg.Rewards.Loot)
@@ -478,8 +482,9 @@ namespace Oxide.Plugins
                 if (!item.MoveToContainer(bag.inventory))
                     item.Remove();
             }
-            bag.ResetRemovalTime(_cfg.Rewards.LootLifetimeSeconds);
-            bag.SendNetworkUpdate();
+
+            bag.Spawn();
+            bag.ResetRemovalTime(Mathf.Max(_cfg.Rewards.LootLifetimeSeconds, bag.CalculateRemovalTime()));
         }
 
         private void GiveRewards(BasePlayer killer)
