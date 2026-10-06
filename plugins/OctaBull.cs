@@ -46,7 +46,7 @@ namespace Oxide.Plugins
             [JsonProperty("Множитель урона в ярости")] public float RageDamageMultiplier = 1.5f;
             [JsonProperty("Радиус агро (м)")] public float AggroRadius = 90f;
             [JsonProperty("Макс. время жизни (мин)")] public float MaxLifeMinutes = 60f;
-            [JsonProperty("Масштаб модели (1 = обычный)")] public float Scale = 1.35f;
+            [JsonProperty("Масштаб модели (1 = обычный)")] public float Scale = 2f;
         }
 
         private class SpawnSettings
@@ -66,6 +66,7 @@ namespace Oxide.Plugins
             [JsonProperty("Порог участия (доля урона)")] public float ParticipationPct = 0.05f;
             [JsonProperty("Бафф урона победителя (x)")] public float BuffDamage = 1.2f;
             [JsonProperty("Длительность баффа (мин)")] public float BuffMinutes = 15f;
+            [JsonProperty("Время жизни мешка с лутом (сек)")] public float LootLifetimeSeconds = 3600f;
             [JsonProperty("Лут-таблица")] public List<LootEntry> Loot = new List<LootEntry>
             {
                 new LootEntry { ShortName = "scrap", MinAmount = 400, MaxAmount = 800, Chance = 1f },
@@ -215,6 +216,7 @@ namespace Oxide.Plugins
             }
 
             ent.enableSaving = false;
+            ent.networkEntityScale = true;
             ent.Spawn();
 
             _boss = ent;
@@ -227,7 +229,12 @@ namespace Oxide.Plugins
             _boss.InitializeHealth(_cfg.Boss.Health, _cfg.Boss.Health);
             _boss.startHealth = _cfg.Boss.Health;
             _boss.maxHealthOverride = _cfg.Boss.Health;
-            try { _boss.transform.localScale = Vector3.one * _cfg.Boss.Scale; } catch { }
+            try
+            {
+                _boss.transform.localScale = Vector3.one * _cfg.Boss.Scale;
+                _boss.SendNetworkUpdateImmediate();
+            }
+            catch { }
 
             if (_bossAi != null)
             {
@@ -412,9 +419,10 @@ namespace Oxide.Plugins
             if (bag == null) return;
             bag.playerSteamID = 0;
             bag._playerName = _cfg.Boss.DisplayName;
-            bag.lootPanelName = "octabull_loot";
+            bag.lootPanelName = "generic_resizable";
             bag.Spawn();
             bag.inventory.capacity = 30;
+            bag.inventory.itemList = new List<Item>();
 
             var rng = new System.Random();
             foreach (var e in _cfg.Rewards.Loot)
@@ -430,6 +438,8 @@ namespace Oxide.Plugins
                 if (!item.MoveToContainer(bag.inventory))
                     item.Remove();
             }
+            bag.ResetRemovalTime(_cfg.Rewards.LootLifetimeSeconds);
+            bag.SendNetworkUpdate();
         }
 
         private void GiveRewards(BasePlayer killer)
