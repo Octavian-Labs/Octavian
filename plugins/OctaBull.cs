@@ -15,7 +15,7 @@ namespace Oxide.Plugins
     // мап-маркером, трекингом урона, лутом и наградами.
     // Модель: живой Gen2-булл (Rust.Ai.Gen2.Cow, префаб bull) —
     // родной FSM умеет бодаться, агрессия форсируется через Provoke.
-    [Info("OctaBull", "Octavian", "1.0.0")]
+    [Info("OctaBull", "Octavian", "1.1.0")]
     [Description("Элитный босс-бык: расписание спавна, маркер на карте, лут, награды")]
     public class OctaBull : RustPlugin
     {
@@ -47,6 +47,8 @@ namespace Oxide.Plugins
             [JsonProperty("Радиус агро (м)")] public float AggroRadius = 90f;
             [JsonProperty("Макс. время жизни (мин)")] public float MaxLifeMinutes = 60f;
             [JsonProperty("Масштаб модели (1 = обычный)")] public float Scale = 2f;
+            [JsonProperty("Свита: коров вокруг босса (шт)")] public int EscortCount = 5;
+            [JsonProperty("Свита: радиус спавна (м)")] public float EscortRadius = 10f;
         }
 
         private class SpawnSettings
@@ -111,6 +113,7 @@ namespace Oxide.Plugins
 
         private BaseCombatEntity _boss;
         private Rust.Ai.Gen2.LivestockAnimal _bossAi;
+        private readonly List<BaseCombatEntity> _escorts = new List<BaseCombatEntity>();
         private MapMarkerGenericRadius _marker;
         private DateTime _nextSpawnAt;
         private DateTime _bossSpawnedAt;
@@ -243,6 +246,7 @@ namespace Oxide.Plugins
             }
 
             SpawnMarker(pos);
+            SpawnEscorts(pos);
             StartAggroLoop();
 
             var grid = GridOf(pos);
@@ -265,6 +269,34 @@ namespace Oxide.Plugins
             marker.SendUpdate();
             marker.SendNetworkUpdate();
             _marker = marker;
+        }
+
+        private void SpawnEscorts(Vector3 center)
+        {
+            _escorts.Clear();
+            for (var i = 0; i < _cfg.Boss.EscortCount; i++)
+            {
+                var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+                var dist = UnityEngine.Random.Range(4f, _cfg.Boss.EscortRadius);
+                var p = center + new Vector3(Mathf.Cos(ang) * dist, 0f, Mathf.Sin(ang) * dist);
+                try { p.y = TerrainMeta.HeightMap.GetHeight(p) + 0.3f; } catch { p.y = center.y; }
+
+                var cow = GameManager.server.CreateEntity(_cfg.Boss.Prefab, p, Quaternion.identity) as BaseCombatEntity;
+                if (cow == null) continue;
+                cow.enableSaving = false;
+                cow.Spawn();
+                // самка — корова, не бык
+                var ai = cow as Rust.Ai.Gen2.LivestockAnimal;
+                if (ai != null) { try { ai.IsMale = false; } catch { } }
+                _escorts.Add(cow);
+            }
+        }
+
+        private void KillEscorts()
+        {
+            foreach (var e in _escorts)
+                if (e != null && !e.IsDestroyed) e.Kill();
+            _escorts.Clear();
         }
 
         private void ClearMarker()
@@ -298,6 +330,7 @@ namespace Oxide.Plugins
             {
                 Announce("Бык-Босс ушёл в закат — никто не решился.");
                 ClearMarker();
+                KillEscorts();
                 _boss.Kill();
                 _boss = null;
                 ScheduleNext();
@@ -410,16 +443,23 @@ namespace Oxide.Plugins
 
             _boss = null;
             _bossAi = null;
+            _escorts.Clear(); // свита остаётся пастись — обычные коровы
             ScheduleNext();
         }
 
         private void SpawnLoot(Vector3 pos)
         {
-            var bag = GameManager.server.CreateEntity("assets/prefabs/misc/item drop/item_drop_backpack.prefab", pos) as DroppedItemContainer;
+            // мешок чуть в стороне от туши — коллизия x2-босса перекрывает взаимодействие
+            var ang = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+            var dropPos = pos + new Vector3(Mathf.Cos(ang) * 2f, 0.6f, Mathf.Sin(ang) * 2f);
+
+            var bag = GameManager.server.CreateEntity("assets/prefabs/misc/item drop/item_drop_backpack.prefab", dropPos) as DroppedItemContainer;
             if (bag == null) return;
             bag.playerSteamID = 0;
             bag._playerName = _cfg.Boss.DisplayName;
             bag.lootPanelName = "generic_resizable";
+            bag.onlyOwnerLoot = false;
+            bag.buryLeftoverItems = false;
             bag.Spawn();
             bag.inventory.capacity = 30;
             bag.inventory.itemList = new List<Item>();
