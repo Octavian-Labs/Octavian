@@ -166,6 +166,8 @@ namespace Oxide.Plugins
             _timerSpawn?.Destroy();
             _timerAggro?.Destroy();
             ClearMarker();
+            foreach (var p in BasePlayer.activePlayerList)
+                CuiHelper.DestroyUi(p, AdminUIName);
             // босса не трогаем — пусть доживает как обычный бык
         }
 
@@ -693,11 +695,12 @@ namespace Oxide.Plugins
             var c = new CuiElementContainer();
 
             var fields = AdminFields();
-            var rowH = 0.045f;
-            var topPad = 0.075f;
-            var height = topPad + fields.Count * rowH + 0.115f;
+            // панель вписываем в экран: высота фикс, высоту строки считаем под число полей
             var midX = 0.5f; var w = 0.17f;
-            var top = 0.62f; var bot = top - height;
+            var top = 0.94f; var bot = 0.06f;
+            var rowsTop = 0.90f;   // внутри панели: низ статус-строки
+            var rowsBot = 0.065f;  // внутри панели: верх кнопок
+            var rowH = (rowsTop - rowsBot) / fields.Count;
 
             var root = c.Add(new CuiPanel
             {
@@ -740,7 +743,7 @@ namespace Oxide.Plugins
             foreach (var kv in fields)
             {
                 var t = kv.Value;
-                var yTop = 0.90f - i * rowH;
+                var yTop = rowsTop - i * rowH;
                 var yBot = yTop - rowH + 0.008f;
                 var stripe = i % 2 == 0;
                 c.Add(new CuiPanel
@@ -798,13 +801,17 @@ namespace Oxide.Plugins
             }, parent);
         }
 
-        private void OnPlayerCommand(BasePlayer player, string command, string[] args)
+        [ConsoleCommand("octabullui")]
+        private void CmdBullUI(ConsoleSystem.Arg arg)
         {
-            if (command != "octabullui" || args == null || args.Length == 0) return;
+            var player = arg.Player();
+            if (player == null) return;
             if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octabull.admin")) return;
+            var args = arg.Args;
+            if (args == null || args.Length == 0) return;
 
             var redraw = true;
-            switch (args[0])
+            switch (args[0].ToString())
             {
                 case "close":
                     CuiHelper.DestroyUi(player, AdminUIName);
@@ -823,8 +830,8 @@ namespace Oxide.Plugins
                 case "set":
                     if (args.Length >= 3)
                     {
-                        var key = args[1];
-                        var value = string.Join(" ", args, 2, args.Length - 2);
+                        var key = args[1].ToString();
+                        var value = string.Join(" ", args.Skip(2).Select(a => a.ToString()));
                         foreach (var kv in AdminFields())
                             if (kv.Key == key) { kv.Value.Item3(value); break; }
                         SaveConfig();
