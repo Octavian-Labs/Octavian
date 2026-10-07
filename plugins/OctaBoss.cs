@@ -2562,6 +2562,8 @@ namespace Oxide.Plugins
                 }
                 case AdminTab.Combat:
                 {
+                    // баланс колонок: обе ≈0.96 высоты — иначе левая уезжает
+                    // под нижнюю панель и кнопки наезжают на последний тоггл
                     sec("ЖИВОТНОЕ", 0); sec("БОЙ", 1);
                     num(nf("health"), 0);
                     num(nf("scale"), 0);
@@ -2577,14 +2579,14 @@ namespace Oxide.Plugins
                     num(nf("aggro"), 1);
                     num(nf("regend"), 1);
                     num(nf("regen"), 1);
-                    sec("ПОВЕДЕНИЕ", 0);
-                    tgl(bf("hyper"), 0);
-                    tgl(bf("provoke"), 0);
-                    tgl(bf("immune"), 0);
                     // итоговые множители исходящего урона — по черновику
                     var dm = d.DamageMultiplier;
-                    info($"Итог урона: ф1 ×{dm:0.##} · ф2 ×{dm * d.P2DamageMult:0.##} · ф3 ×{dm * d.P3DamageMult:0.##}", 1);
-                    info($"Ярость при HP ≤ {d.RageThreshold * 100:0}%: ещё ×{d.RageDamageMultiplier:0.##}", 1);
+                    info($"Итог урона: ф1 ×{dm:0.##} · ф2 ×{dm * d.P2DamageMult:0.##} · ф3 ×{dm * d.P3DamageMult:0.##}", 0);
+                    info($"Ярость при HP ≤ {d.RageThreshold * 100:0}%: ещё ×{d.RageDamageMultiplier:0.##}", 0);
+                    sec("ПОВЕДЕНИЕ", 1);
+                    tgl(bf("hyper"), 1);
+                    tgl(bf("provoke"), 1);
+                    tgl(bf("immune"), 1);
                     break;
                 }
                 case AdminTab.Phases:
@@ -2642,6 +2644,7 @@ namespace Oxide.Plugins
                     num(nf("monmax"), 0);
                     txt(tf("mons"), 0);
                     DrawMonumentPick(c, cnt, player, colX[0], yL - 0.06f, colW);
+                    yL -= 0.075f; // кнопка занимает строку — иначе prefab ляжет поверх
                     txt(tf("prefab"), 0);
                     break;
                 }
@@ -2924,13 +2927,15 @@ namespace Oxide.Plugins
             for (var i = 0; i < MsgDefs.Length; i++)
             {
                 var sel = MsgDefs[i][0] == st.MsgId;
-                var y1 = 0.985f - i * 0.108f;
+                // 9 пунктов в панели 0.30..0.99: шаг 0.075, иначе хвост
+                // списка вылезает за нижний край и рисуется поверх другого UI
+                var y1 = 0.98f - i * 0.075f;
                 c.Add(new CuiButton
                 {
                     Button = { Command = $"octabossui msg {MsgDefs[i][0]}", Color = sel ? GoldGlass : "0 0 0 0" },
                     Text = { Text = MsgDefs[i][1], FontSize = 10, Align = TextAnchor.MiddleLeft,
                              Color = sel ? GoldBright : TMuted },
-                    RectTransform = { AnchorMin = $"0.04 {y1 - 0.095f}", AnchorMax = $"0.96 {y1 - 0.012f}" }
+                    RectTransform = { AnchorMin = $"0.04 {y1 - 0.066f}", AnchorMax = $"0.96 {y1 - 0.004f}" }
                 }, parent + "_mlist");
             }
 
