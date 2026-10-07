@@ -23,13 +23,16 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.5.0")]
+    [Info("OctaBoss", "Octavian", "1.6.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
         #region Config
 
         private ConfigData _cfg;
+
+        // картинки зверей в админ-панели — мягкая зависимость
+        [PluginReference] private Plugin ImageLibrary;
 
         private class LootEntry
         {
@@ -124,6 +127,8 @@ namespace Oxide.Plugins
             [JsonProperty("Фаза 3: щит после рывка (сек, -25% входящего)")] public float LeapShieldSeconds = 3f;
             [JsonProperty("Анонс фазы 2")] public string Phase2Announce = "{name} РАЗЪЯРЁН — ищет, кто больше всех его обидел!";
             [JsonProperty("Анонс фазы 3")] public string Phase3Announce = "{name} ОТЧАЯЛСЯ — финальный рывок! Держитесь вместе!";
+            [JsonProperty("Картинка для админ-панели (URL или путь, через ImageLibrary)")] public string UiImageUrl = "";
+            [JsonProperty("Акцент панели \"r g b a\" (пусто = по виду зверя)")] public string UiAccent = "";
             [JsonProperty("Свита")] public EscortSettings Escort = new EscortSettings();
             [JsonProperty("Спавн")] public SpecSpawn Spawn = new SpecSpawn();
             [JsonProperty("Награды")] public SpecRewards Rewards = new SpecRewards();
@@ -481,6 +486,7 @@ namespace Oxide.Plugins
         private void Init()
         {
             permission.RegisterPermission("octaboss.admin", this);
+            foreach (var p in UiPerms) permission.RegisterPermission(p, this);
             // дубли Key в конфиге = тихая потеря вида (state перезаписывается) — орём в лог
             foreach (var g in _cfg.Bosses.GroupBy(b => b.Key).Where(g => g.Count() > 1))
                 PrintError($"OctaBoss: дублирующийся ключ вида '{g.Key}' — в спавне участвует только последний!");
@@ -501,7 +507,11 @@ namespace Oxide.Plugins
             _timerAggro?.Destroy();
             foreach (var st in _bosses.Values) ClearMarker(st);
             foreach (var p in BasePlayer.activePlayerList)
+            {
+                foreach (var part in UiParts) CuiHelper.DestroyUi(p, UiN(part));
                 CuiHelper.DestroyUi(p, AdminUIName);
+            }
+            _ui.Clear();
             // живых боссов не трогаем — доживают как обычные животные
         }
 
@@ -1697,255 +1707,1602 @@ namespace Oxide.Plugins
 
         #region Admin UI
 
-        private const string AdminUIName = "OctaBoss_AdminUI";
-        private const string ColGold = "0.91 0.72 0.29 1";
-        private const string ColGoldDim = "0.75 0.6 0.25 1";
-        private const string ColBg = "0.06 0.06 0.06 0.97";
-        private const string ColRow = "0.10 0.10 0.10 1";
-        private const string ColInput = "0.16 0.16 0.16 1";
-        private const string ColText = "0.9 0.85 0.7 1";
-        private const string ColWhite = "1 1 1 1";
+        // ------------------------------------------------------------------
+        //  Командная панель босса: тёмное стекло + золото.
+        //  Все правки сначала идут в черновик (Draft) выбранного вида и ложатся
+        //  в конфиг только по кнопке СОХРАНИТЬ — иначе каждый клик степпера
+        //  дёргал бы диск.
+        // ------------------------------------------------------------------
 
-        // выбранный вид в панели каждого админа
-        private readonly Dictionary<ulong, string> _uiSel = new Dictionary<ulong, string>();
+        private const string AdminUIName = "OctaBoss_AdminUI";
+
+        private const string GoldBright = "0.95 0.75 0.30 1";
+        private const string Gold = "0.82 0.61 0.20 1";
+        private const string GoldDark = "0.48 0.32 0.10 1";
+        private const string GoldGlass = "0.82 0.61 0.20 0.18";
+        private const string GlassBg = "0.015 0.012 0.010 0.94";
+        private const string GlassLt = "0.05 0.045 0.035 0.92";
+        private const string GlassRow = "0.08 0.07 0.05 0.82";
+        private const string GlassHov = "0.13 0.105 0.06 0.95";
+        private const string TMain = "0.93 0.88 0.75 1";
+        private const string TMuted = "0.58 0.53 0.43 1";
+        private const string TWhite = "1 0.98 0.90 1";
+        private const string CGreen = "0.20 0.52 0.27 0.90";
+        private const string CRed = "0.58 0.13 0.10 0.92";
+        private const string CBlue = "0.18 0.35 0.55 0.90";
+        private const string CHpBg = "0.10 0.05 0.04 0.95";
+
+        private static readonly string[] UiPerms =
+        {
+            "octaboss.admin.view", "octaboss.admin.edit", "octaboss.admin.spawn",
+            "octaboss.admin.kill", "octaboss.admin.rewards",
+            "octaboss.admin.messages", "octaboss.admin.presets"
+        };
+
+        private bool Perm(BasePlayer p, string suffix) =>
+            p.IsAdmin
+            || permission.UserHasPermission(p.UserIDString, "octaboss.admin")
+            || permission.UserHasPermission(p.UserIDString, "octaboss.admin." + suffix);
+
+        private enum AdminTab { Overview, Combat, Phases, Escort, Spawn, Rewards, Messages, Danger }
+
+        private class AdminUiState
+        {
+            public string BossKey;
+            public AdminTab Tab = AdminTab.Overview;
+            public BossSpec Draft;      // рабочая копия настроек — живая до СОХРАНИТЬ
+            public bool Dirty;
+            public string Pending;      // ожидает подтверждения: kill/respawn/despawn/reload/preset:x/boss:x
+            public string MsgId = "m_spawn";
+            public int WarnIdx;
+            public string Toast;
+            public string ToastColor = CGreen;
+            public int ToastSeq;
+        }
+
+        private readonly Dictionary<ulong, AdminUiState> _ui = new Dictionary<ulong, AdminUiState>();
+
+        // ---------- дескрипторы полей: id -> геттер/сеттер на BossSpec ----------
+
+        private class UiNum
+        {
+            public string Id, Label, Warn, Perm = "edit", Fmt = "0.##";
+            public float Min, Max, Step;
+            public Func<BossSpec, float> Get;
+            public Action<BossSpec, float> Set;
+            public Func<float, bool> WarnIf;
+        }
+
+        private class UiBool
+        {
+            public string Id, Label, Perm = "edit";
+            public Func<BossSpec, bool> Get;
+            public Action<BossSpec, bool> Set;
+        }
+
+        private class UiTxt
+        {
+            public string Id, Label, Perm = "edit";
+            public int Chars = 120;
+            public Func<BossSpec, string> Get;
+            public Action<BossSpec, string> Set;
+        }
+
+        private static UiNum N(string id, string label, float min, float max, float step,
+            Func<BossSpec, float> g, Action<BossSpec, float> s,
+            string fmt = "0.##", string warn = null, Func<float, bool> warnIf = null, string perm = "edit") =>
+            new UiNum { Id = id, Label = label, Min = min, Max = max, Step = step, Get = g, Set = s,
+                Fmt = fmt, Warn = warn, WarnIf = warnIf, Perm = perm };
+
+        private static UiBool TB(string id, string label, Func<BossSpec, bool> g,
+            Action<BossSpec, bool> s, string perm = "edit") =>
+            new UiBool { Id = id, Label = label, Get = g, Set = s, Perm = perm };
+
+        private static UiTxt TX(string id, string label, Func<BossSpec, string> g,
+            Action<BossSpec, string> s, string perm = "edit", int chars = 120) =>
+            new UiTxt { Id = id, Label = label, Get = g, Set = s, Perm = perm, Chars = chars };
+
+        private static readonly List<UiNum> Nums = new List<UiNum>
+        {
+            N("health",   "Здоровье",            100, 50000, 100,   b => b.Health, (b, v) => b.Health = v,
+              fmt: "0", warn: "Значение может сделать босса почти неубиваемым", warnIf: v => v > 30000),
+            N("scale",    "Масштаб модели",      0.2f, 5, 0.05f,    b => b.Scale, (b, v) => b.Scale = v),
+            N("speed",    "Скорость (x)",        0.1f, 5, 0.05f,    b => b.SpeedMultiplier, (b, v) => b.SpeedMultiplier = v),
+            N("dmg",      "Урон босса (x)",      0.1f, 10, 0.1f,    b => b.DamageMultiplier, (b, v) => b.DamageMultiplier = v,
+              warn: "Урон выше x5 убивает плейтест за один укус", warnIf: v => v > 5),
+            N("rage",     "Урон в ярости (x)",   1, 5, 0.05f,       b => b.RageDamageMultiplier, (b, v) => b.RageDamageMultiplier = v),
+            N("rageth",   "Порог ярости (HP)",   0.05f, 0.95f, 0.05f, b => b.RageThreshold, (b, v) => b.RageThreshold = v, "0.00"),
+            N("bullet",   "Входящий: пули (x)",  0, 2, 0.05f,       b => b.BulletScale, (b, v) => b.BulletScale = v, "0.00",
+              warn: "Пули почти не бьют — фарм превратится в расстрел ресурсов", warnIf: v => v < 0.25f),
+            N("expl",     "Входящий: взрывы (x)",0, 2, 0.05f,       b => b.ExplosionScale, (b, v) => b.ExplosionScale = v, "0.00"),
+            N("other",    "Входящий: прочее (x)",0, 2, 0.05f,       b => b.OtherScale, (b, v) => b.OtherScale = v, "0.00"),
+            N("aggro",    "Радиус агро (м)",     10, 300, 5,        b => b.AggroRadius, (b, v) => b.AggroRadius = v, "0"),
+            N("life",     "Время жизни (мин)",   5, 240, 5,         b => b.MaxLifeMinutes, (b, v) => b.MaxLifeMinutes = v, "0"),
+            N("regend",   "Задержка регена (сек)",0, 600, 5,        b => b.RegenDelaySeconds, (b, v) => b.RegenDelaySeconds = v, "0"),
+            N("regen",    "Реген % HP/сек",      0, 10, 0.1f,       b => b.RegenPercentPerSec, (b, v) => b.RegenPercentPerSec = v,
+              warn: "Отступление на минуту не будет стоить команде боя", warnIf: v => v > 5),
+            N("p2th",     "Порог входа (HP)",    0.5f, 0.95f, 0.05f, b => b.Phase2Threshold, (b, v) => b.Phase2Threshold = v, "0.00"),
+            N("p3th",     "Порог входа (HP)",    0.05f, 0.5f, 0.05f, b => b.Phase3Threshold, (b, v) => b.Phase3Threshold = v, "0.00"),
+            N("p2dmg",    "Урон (x)",            1, 3, 0.05f,       b => b.P2DamageMult, (b, v) => b.P2DamageMult = v, "0.00"),
+            N("p3dmg",    "Урон (x)",            1, 5, 0.05f,       b => b.P3DamageMult, (b, v) => b.P3DamageMult = v, "0.00"),
+            N("p2aggro",  "Радиус агро (м)",     30, 300, 5,        b => b.P2AggroRadius, (b, v) => b.P2AggroRadius = v, "0"),
+            N("p3aggro",  "Радиус агро (м)",     30, 300, 5,        b => b.P3AggroRadius, (b, v) => b.P3AggroRadius = v, "0"),
+            N("p2spd",    "Скорость (x)",        1, 3, 0.05f,       b => b.P2SpeedMult, (b, v) => b.P2SpeedMult = v, "0.00"),
+            N("p3spd",    "Скорость (x)",        1, 3, 0.05f,       b => b.P3SpeedMult, (b, v) => b.P3SpeedMult = v, "0.00"),
+            N("flee",     "Паника свиты (0-1)",  0, 1, 0.05f,       b => b.P3EscortFleeChance, (b, v) => b.P3EscortFleeChance = v, "0.00"),
+            N("retarget", "Пересмотр цели (сек)",0, 120, 1,         b => b.RetargetSeconds, (b, v) => b.RetargetSeconds = v, "0"),
+            N("hyst",     "Гистерезис цели (x)", 1, 3, 0.05f,       b => b.ThreatHysteresis, (b, v) => b.ThreatHysteresis = v, "0.00"),
+            N("leapsec",  "Рывок каждые (сек)",  0, 120, 5,         b => b.LeapSeconds, (b, v) => b.LeapSeconds = v, "0"),
+            N("leapdmg",  "Урон рывка AoE",      0, 500, 5,         b => b.LeapDamage, (b, v) => b.LeapDamage = v, "0"),
+            N("leapsh",   "Щит после рывка (сек)",0, 30, 1,         b => b.LeapShieldSeconds, (b, v) => b.LeapShieldSeconds = v, "0"),
+            N("escn",     "Количество",          0, 20, 1,          b => b.Escort.Count, (b, v) => b.Escort.Count = (int)v, "0"),
+            N("escr",     "Радиус появления (м)",2, 100, 1,         b => b.Escort.Radius, (b, v) => b.Escort.Radius = v, "0"),
+            N("escs",     "Масштаб",             0.2f, 3, 0.05f,    b => b.Escort.Scale, (b, v) => b.Escort.Scale = v, "0.00"),
+            N("interval", "Интервал спавна (мин)",1, 1440, 5,       b => b.Spawn.IntervalMinutes, (b, v) => b.Spawn.IntervalMinutes = v, "0"),
+            N("jitter",   "Разброс ± (мин)",     0, 120, 5,         b => b.Spawn.IntervalJitterMinutes, (b, v) => b.Spawn.IntervalJitterMinutes = v, "0"),
+            N("warnmin",  "Предупреждение за (мин)",0, 60, 1,       b => b.Spawn.WarnBeforeMinutes, (b, v) => b.Spawn.WarnBeforeMinutes = v, "0"),
+            N("marker",   "Радиус маркера",      0, 0.25f, 0.005f,  b => b.Spawn.MarkerRadius, (b, v) => b.Spawn.MarkerRadius = v, "0.000"),
+            N("margin",   "От края карты (м)",   0, 1500, 50,       b => b.Spawn.MapMargin, (b, v) => b.Spawn.MapMargin = v, "0"),
+            N("monmin",   "От монумента мин (м)",0, 2000, 10,       b => b.Spawn.MonumentMinDist, (b, v) => b.Spawn.MonumentMinDist = v, "0"),
+            N("monmax",   "От монумента макс (м)",0, 3000, 10,      b => b.Spawn.MonumentMaxDist, (b, v) => b.Spawn.MonumentMaxDist = v, "0"),
+            N("waterr",   "Радиус воды (м)",     5, 200, 5,         b => b.Spawn.WaterRadius, (b, v) => b.Spawn.WaterRadius = v, "0"),
+            N("currency", "Награда команде (RP)",0, 100000, 50,     b => b.Rewards.Currency, (b, v) => b.Rewards.Currency = (int)v, "0", perm: "rewards"),
+            N("currpart", "Награда участникам",  0, 10000, 25,      b => b.Rewards.CurrencyParticipation, (b, v) => b.Rewards.CurrencyParticipation = (int)v, "0", perm: "rewards"),
+            N("partpct",  "Порог участия (доля)",0, 0.5f, 0.01f,    b => b.Rewards.ParticipationPct, (b, v) => b.Rewards.ParticipationPct = v, "0.00", perm: "rewards"),
+            N("buffdmg",  "Бафф урона (x)",      1, 2, 0.05f,       b => b.Rewards.BuffDamage, (b, v) => b.Rewards.BuffDamage = v, "0.00",
+              warn: "Сильный бафф победителя может нарушить PvP-баланс", warnIf: v => v > 1.25f, perm: "rewards"),
+            N("buffmin",  "Длительность баффа (мин)",0, 120, 5,     b => b.Rewards.BuffMinutes, (b, v) => b.Rewards.BuffMinutes = v, "0", perm: "rewards"),
+            N("lootlock", "Лут закрыт (сек)",    0, 120, 5,         b => b.Rewards.LootLockSeconds, (b, v) => b.Rewards.LootLockSeconds = v, "0",
+              warn: "Игроки почти не получат времени на финальный конфликт", warnIf: v => v < 5, perm: "rewards"),
+            N("lootlife", "Жизнь мешка (сек)",   60, 86400, 60,     b => b.Rewards.LootLifetimeSeconds, (b, v) => b.Rewards.LootLifetimeSeconds = v, "0", perm: "rewards"),
+        };
+
+        private static readonly List<UiBool> Bools = new List<UiBool>
+        {
+            TB("enabled",  "Включён",                b => b.Enabled, (b, v) => b.Enabled = v),
+            TB("phases",   "Фазы боя",               b => b.PhasesEnabled, (b, v) => b.PhasesEnabled = v),
+            TB("hyper",    "Гиперагрессия",          b => b.HyperAggro, (b, v) => b.HyperAggro = v),
+            TB("provoke",  "Force Provoke",          b => b.ForceProvoke, (b, v) => b.ForceProvoke = v),
+            TB("immune",   "Элем. неуязвимость",     b => b.ElementalImmune, (b, v) => b.ElementalImmune = v),
+            TB("esckill",  "Убивать свиту при деспавне", b => b.Escort.KillOnDespawn, (b, v) => b.Escort.KillOnDespawn = v),
+            TB("showmark", "Маркер на карте",        b => b.Spawn.ShowMarker, (b, v) => b.Spawn.ShowMarker = v),
+            TB("biome",    "Только родной биом",     b => b.Spawn.NativeBiome, (b, v) => b.Spawn.NativeBiome = v),
+            TB("water",    "Спавн у воды",           b => b.Spawn.NeedsWater, (b, v) => b.Spawn.NeedsWater = v),
+        };
+
+        private static readonly List<UiTxt> Txts = new List<UiTxt>
+        {
+            TX("name",     "Имя босса",        b => b.DisplayName, (b, v) => b.DisplayName = v, chars: 40),
+            TX("prefab",   "Префаб босса",     b => b.Prefab, (b, v) => b.Prefab = v, chars: 150),
+            TX("biomes",   "Родные биомы",     b => b.Spawn.NativeBiomes, (b, v) => b.Spawn.NativeBiomes = v, chars: 80),
+            TX("mons",     "Монументы-якоря",  b => b.Spawn.MonumentNames, (b, v) => b.Spawn.MonumentNames = v, chars: 100),
+            TX("escpre",   "Префаб свиты",     b => b.Escort.Prefab, (b, v) => b.Escort.Prefab = v, chars: 150),
+            TX("img",      "Картинка панели",  b => b.UiImageUrl, (b, v) => b.UiImageUrl = v, chars: 200),
+            TX("accent",   "Акцент \"r g b a\"",b => b.UiAccent, (b, v) => b.UiAccent = v, chars: 30),
+        };
+
+        // события вкладки «Сообщения» -> строковые поля вида
+        private static readonly string[][] MsgDefs =
+        {
+            new[] { "m_spawn",   "СПАВН" },
+            new[] { "m_warn",    "ПРЕДУПРЕЖДЕНИЕ" },
+            new[] { "m_phase2",  "ФАЗА 2" },
+            new[] { "m_phase3",  "ФАЗА 3" },
+            new[] { "m_rage",    "ЯРОСТЬ" },
+            new[] { "m_reset",   "СБРОС БОЯ" },
+            new[] { "m_despawn", "ДЕСПАВН" },
+            new[] { "m_death",   "СМЕРТЬ" },
+            new[] { "m_quiet",   "СМЕРТЬ БЕЗ БОЯ" },
+        };
+
+        private static string MsgGet(BossSpec b, string id)
+        {
+            switch (id)
+            {
+                case "m_spawn": return b.SpawnAnnounce;
+                case "m_warn": return b.WarnAnnounce;
+                case "m_phase2": return b.Phase2Announce;
+                case "m_phase3": return b.Phase3Announce;
+                case "m_rage": return b.RageAnnounce;
+                case "m_reset": return b.ResetAnnounce;
+                case "m_despawn": return b.DespawnAnnounce;
+                case "m_death": return b.DeathAnnounce;
+                case "m_quiet": return b.QuietDeathAnnounce;
+            }
+            return "";
+        }
+
+        private static void MsgSet(BossSpec b, string id, string v)
+        {
+            switch (id)
+            {
+                case "m_spawn": b.SpawnAnnounce = v; break;
+                case "m_warn": b.WarnAnnounce = v; break;
+                case "m_phase2": b.Phase2Announce = v; break;
+                case "m_phase3": b.Phase3Announce = v; break;
+                case "m_rage": b.RageAnnounce = v; break;
+                case "m_reset": b.ResetAnnounce = v; break;
+                case "m_despawn": b.DespawnAnnounce = v; break;
+                case "m_death": b.DeathAnnounce = v; break;
+                case "m_quiet": b.QuietDeathAnnounce = v; break;
+            }
+        }
+
+        // вторичный акцент под зверя (базовая тема — золото)
+        private static readonly Dictionary<string, string> AccentMap = new Dictionary<string, string>
+        {
+            ["bull"] = "0.75 0.35 0.15 1", ["boar"] = "0.55 0.20 0.12 1",
+            ["wolf"] = "0.35 0.45 0.60 1", ["tiger"] = "0.85 0.50 0.15 1",
+            ["panther"] = "0.45 0.30 0.60 1", ["bear"] = "0.45 0.32 0.20 1",
+            ["crocodile"] = "0.35 0.50 0.25 1",
+        };
+
+        // ---------- состояние ----------
+
+        private BossSpec UiSpec(BasePlayer player)
+        {
+            var st = UiStateOf(player);
+            var s = _cfg.Bosses.FirstOrDefault(b => b.Key == st.BossKey);
+            return s ?? _cfg.Bosses.FirstOrDefault();
+        }
+
+        private AdminUiState UiStateOf(BasePlayer player)
+        {
+            var id = Uid(player);
+            AdminUiState st;
+            if (!_ui.TryGetValue(id, out st))
+            {
+                st = new AdminUiState { BossKey = _cfg.Bosses.FirstOrDefault()?.Key };
+                _ui[id] = st;
+            }
+            var live = _cfg.Bosses.FirstOrDefault(b => b.Key == st.BossKey) ?? _cfg.Bosses.FirstOrDefault();
+            if (live != null && st.BossKey != live.Key) st.BossKey = live.Key;
+            if (live != null && st.Draft == null)
+                st.Draft = JsonConvert.DeserializeObject<BossSpec>(JsonConvert.SerializeObject(live));
+            return st;
+        }
+
+        // свежая копия живого вида вместо черновика
+        private void ResetDraft(AdminUiState st)
+        {
+            var live = _cfg.Bosses.FirstOrDefault(b => b.Key == st.BossKey);
+            if (live != null)
+                st.Draft = JsonConvert.DeserializeObject<BossSpec>(JsonConvert.SerializeObject(live));
+            st.Dirty = false;
+        }
+
+        private static string ShortName(BossSpec b) =>
+            (b.DisplayName ?? b.Key).Replace("-БОСС", "").Replace("-босс", "").ToUpper();
+
+        private static string AccentOf(BossSpec b) =>
+            !string.IsNullOrEmpty(b.UiAccent) ? b.UiAccent
+            : (AccentMap.TryGetValue(b.Key ?? "", out var a) ? a : Gold);
+
+        private string BossImagePng(BossSpec spec)
+        {
+            if (ImageLibrary == null || !ImageLibrary.IsLoaded || string.IsNullOrEmpty(spec.UiImageUrl))
+                return null;
+            var shortName = "octaboss_" + spec.Key;
+            var png = ImageLibrary.Call("GetImage", shortName) as string;
+            if (string.IsNullOrEmpty(png)) png = ImageLibrary.Call("GetImage", shortName, 0UL) as string;
+            if (!string.IsNullOrEmpty(png)) return png;
+            var url = spec.UiImageUrl;
+            if (!url.StartsWith("http")) url = "file:///" + url.Replace('\\', '/');
+            ImageLibrary.Call("AddImage", url, shortName);
+            return null; // докачается — при следующей отрисовке подхватится
+        }
+
+        // ---------- вход ----------
 
         [ChatCommand("boss_admin")]
         private void CmdAdminUI(BasePlayer player)
         {
-            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octaboss.admin"))
+            if (!Perm(player, "view"))
             {
-                SendReply(player, $"{Tag} Нет прав (octaboss.admin)");
+                SendReply(player, $"{Tag} Нет прав (octaboss.admin.view)");
                 return;
             }
-            DrawAdminUI(player);
+            UiStateOf(player); // гарантирует состояние+черновик
+            UiDrawAll(player);
         }
 
-        private BossSpec UiSpec(BasePlayer player)
-        {
-            if (_uiSel.TryGetValue(Uid(player), out var key))
-            {
-                var s = _cfg.Bosses.FirstOrDefault(b => b.Key == key);
-                if (s != null) return s;
-            }
-            return _cfg.Bosses.FirstOrDefault();
-        }
+        // ---------- отрисовка: корень + части ----------
 
-        // ключ -> (название, getter, setter) для выбранного вида
-        private List<KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>> AdminFields(BossSpec b)
-        {
-            var s = b.Spawn; var r = b.Rewards; var e = b.Escort;
-            return new List<KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>>
-            {
-                Field("enabled",  "Включён (1/0)",           () => b.Enabled ? "1" : "0",            v => b.Enabled = ParseI(v, b.Enabled ? 1 : 0) == 1),
-                Field("health",   "Здоровье",                () => b.Health.ToString("0"),           v => b.Health = ParseF(v, b.Health)),
-                Field("scale",    "Масштаб (x обычного)",    () => b.Scale.ToString("0.##"),         v => b.Scale = ParseF(v, b.Scale)),
-                Field("speed",    "Скорость (x)",            () => b.SpeedMultiplier.ToString("0.##"),v => b.SpeedMultiplier = ParseF(v, b.SpeedMultiplier)),
-                Field("dmg",      "Урон босса (x)",          () => b.DamageMultiplier.ToString("0.##"),v => b.DamageMultiplier = ParseF(v, b.DamageMultiplier)),
-                Field("rage",     "Урон в ярости (x)",       () => b.RageDamageMultiplier.ToString("0.##"), v => b.RageDamageMultiplier = ParseF(v, b.RageDamageMultiplier)),
-                Field("rageth",   "Порог ярости (0-1)",      () => b.RageThreshold.ToString("0.##"), v => b.RageThreshold = ParseF(v, b.RageThreshold)),
-                Field("aggro",    "Радиус агро (м)",         () => b.AggroRadius.ToString("0"),      v => b.AggroRadius = ParseF(v, b.AggroRadius)),
-                Field("hyper",    "Экстра агрессия (1/0)",   () => b.HyperAggro ? "1" : "0",         v => b.HyperAggro = ParseI(v, b.HyperAggro ? 1 : 0) == 1),
-                Field("life",     "Время жизни (мин)",       () => b.MaxLifeMinutes.ToString("0"),   v => b.MaxLifeMinutes = ParseF(v, b.MaxLifeMinutes)),
-                Field("escort",   "Свита (шт)",              () => e.Count.ToString(),               v => e.Count = ParseI(v, e.Count)),
-                Field("escortr",  "Радиус свиты (м)",        () => e.Radius.ToString("0"),           v => e.Radius = ParseF(v, e.Radius)),
-                Field("escorts",  "Масштаб свиты",           () => e.Scale.ToString("0.##"),         v => e.Scale = ParseF(v, e.Scale)),
-                Field("interval", "Респаун (мин)",           () => s.IntervalMinutes.ToString("0"),  v => s.IntervalMinutes = ParseF(v, s.IntervalMinutes)),
-                Field("jitter",   "Разброс респауна ± (мин)",() => s.IntervalJitterMinutes.ToString("0"), v => s.IntervalJitterMinutes = ParseF(v, s.IntervalJitterMinutes)),
-                Field("warn",     "Предупреждение за (мин)", () => s.WarnBeforeMinutes.ToString("0"),v => s.WarnBeforeMinutes = ParseF(v, s.WarnBeforeMinutes)),
-                Field("marker",   "Радиус маркера (0-1)",    () => s.MarkerRadius.ToString("0.###"), v => s.MarkerRadius = ParseF(v, s.MarkerRadius)),
-                Field("biome",    "Только родной биом (1/0)",() => s.NativeBiome ? "1" : "0",        v => s.NativeBiome = ParseI(v, s.NativeBiome ? 1 : 0) == 1),
-                Field("water",    "Спавн у воды (1/0)",      () => s.NeedsWater ? "1" : "0",         v => s.NeedsWater = ParseI(v, s.NeedsWater ? 1 : 0) == 1),
-                Field("currency", "Награда RP за килл",      () => r.Currency.ToString(),            v => r.Currency = ParseI(v, r.Currency)),
-            };
-        }
+        private static string UiN(string part) => AdminUIName + "_" + part;
+        private static readonly string[] UiParts = { "HDR", "LST", "STS", "TAB", "CNT", "BOT", "TST", "CFM" };
 
-        private static KeyValuePair<string, Tuple<string, Func<string>, Action<string>>> Field(
-            string key, string label, Func<string> get, Action<string> set) =>
-            new KeyValuePair<string, Tuple<string, Func<string>, Action<string>>>(
-                key, Tuple.Create(label, get, set));
-
-        private void DrawAdminUI(BasePlayer player)
+        private void UiDrawAll(BasePlayer player)
         {
+            foreach (var p in UiParts) CuiHelper.DestroyUi(player, UiN(p));
             CuiHelper.DestroyUi(player, AdminUIName);
-            var c = new CuiElementContainer();
+
+            var st = UiStateOf(player);
             var spec = UiSpec(player);
             if (spec == null) return;
-            _bosses.TryGetValue(spec.Key, out var st);
 
-            var fields = AdminFields(spec);
-            // панель вписываем в экран: высота фикс, высоту строки считаем под число полей
-            var midX = 0.5f; var w = 0.19f;
-            var top = 0.94f; var bot = 0.06f;
-            var rowsTop = 0.855f;  // внутри панели: низ вкладок видов
-            var rowsBot = 0.065f;  // внутри панели: верх кнопок
-            var rowH = (rowsTop - rowsBot) / fields.Count;
-
+            var c = new CuiElementContainer();
             var root = c.Add(new CuiPanel
             {
-                Image = { Color = ColBg },
-                RectTransform = { AnchorMin = $"{midX - w} {bot}", AnchorMax = $"{midX + w} {top}" },
+                Image = { Color = GlassBg },
+                RectTransform = { AnchorMin = "0.17 0.08", AnchorMax = "0.83 0.92" },
                 CursorEnabled = true
             }, "Overlay", AdminUIName);
             c.Add(new CuiElement { Components = { new CuiNeedsCursorComponent() }, Parent = root });
 
-            // шапка — золото на чёрном
-            c.Add(new CuiPanel
-            {
-                Image = { Color = ColGold },
-                RectTransform = { AnchorMin = "0 0.955", AnchorMax = "1 1" }
-            }, root);
-            c.Add(new CuiLabel
-            {
-                Text = { Text = $"OCTABOSS — {spec.DisplayName}", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
-                RectTransform = { AnchorMin = "0 0.955", AnchorMax = "0.9 1" }
-            }, root);
-            c.Add(new CuiButton
-            {
-                Button = { Command = "octabossui close", Color = "0 0 0 0" },
-                Text = { Text = "X", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
-                RectTransform = { AnchorMin = "0.93 0.955", AnchorMax = "0.99 1" }
-            }, root);
+            UiDrawHeader(c, player, st, spec);
+            UiDrawBossList(c, player, st);
+            UiDrawTabs(c, player, st);
+            UiDrawStatus(c, player, st, spec);
+            UiDrawContent(c, player, st);
+            UiDrawBottom(c, player, st, spec);
+            UiDrawToast(c, st);
+            UiDrawConfirm(c, player, st, spec);
+            CuiHelper.AddUi(player, c);
+        }
 
-            // статус
-            var status = st != null && st.Alive
-                ? $"ЖИВ  |  HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}  |  {GridOf(st.Entity.transform.position)}{(st.Raging ? "  |  ЯРОСТЬ" : "")}"
-                : $"нет на карте  |  респаун через {(st != null ? Math.Max(0, (int)(st.NextSpawnAt - DateTime.UtcNow).TotalMinutes) : 0)} мин";
-            c.Add(new CuiLabel
+        // частичная перерисовка — только перечисленные панели
+        private void UiRefresh(BasePlayer player, params string[] parts)
+        {
+            if (!_ui.ContainsKey(Uid(player))) return;
+            var st = UiStateOf(player);
+            var spec = UiSpec(player);
+            if (spec == null) return;
+            var c = new CuiElementContainer();
+            foreach (var p in parts)
             {
-                Text = { Text = status, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = ColGold },
-                RectTransform = { AnchorMin = "0.03 0.905", AnchorMax = "0.97 0.95" }
-            }, root);
-
-            // вкладки видов — все боссы из конфига, выбранный подсвечен
-            var n = _cfg.Bosses.Count;
-            if (n > 0)
-            {
-                var tabW = 0.96f / n;
-                for (var ti = 0; ti < n; ti++)
+                CuiHelper.DestroyUi(player, UiN(p));
+                switch (p)
                 {
-                    var b = _cfg.Bosses[ti];
-                    var x0 = 0.02f + ti * tabW;
-                    var sel = b.Key == spec.Key;
-                    c.Add(new CuiButton
-                    {
-                        Button = { Command = $"octabossui tab {b.Key}", Color = sel ? ColGoldDim : ColInput },
-                        Text = { Text = b.Key, FontSize = 10, Align = TextAnchor.MiddleCenter, Color = sel ? "0.05 0.05 0.05 1" : ColText },
-                        RectTransform = { AnchorMin = $"{x0} 0.862", AnchorMax = $"{x0 + tabW - 0.005f} 0.898" }
-                    }, root);
+                    case "HDR": UiDrawHeader(c, player, st, spec); break;
+                    case "LST": UiDrawBossList(c, player, st); break;
+                    case "TAB": UiDrawTabs(c, player, st); break;
+                    case "STS": UiDrawStatus(c, player, st, spec); break;
+                    case "CNT": UiDrawContent(c, player, st); break;
+                    case "BOT": UiDrawBottom(c, player, st, spec); break;
+                    case "TST": UiDrawToast(c, st); break;
+                    case "CFM": UiDrawConfirm(c, player, st, spec); break;
                 }
             }
+            CuiHelper.AddUi(player, c);
+        }
 
-            // строки полей
-            var i = 0;
-            foreach (var kv in fields)
+        // ---------- шапка: зверь + имя + статус + [X] ----------
+
+        private void UiDrawHeader(CuiElementContainer c, BasePlayer player, AdminUiState st, BossSpec spec)
+        {
+            var hdr = c.Add(new CuiPanel
             {
-                var t = kv.Value;
-                var yTop = rowsTop - i * rowH;
-                var yBot = yTop - rowH + 0.008f;
-                var stripe = i % 2 == 0;
-                c.Add(new CuiPanel
-                {
-                    Image = { Color = stripe ? ColRow : "0.08 0.08 0.08 1" },
-                    RectTransform = { AnchorMin = $"0.02 {yBot}", AnchorMax = $"0.98 {yTop}" }
-                }, root);
-                c.Add(new CuiLabel
-                {
-                    Text = { Text = t.Item1, FontSize = 11, Align = TextAnchor.MiddleLeft, Color = ColText },
-                    RectTransform = { AnchorMin = $"0.04 {yBot}", AnchorMax = $"0.62 {yTop}" }
-                }, root);
-                c.Add(new CuiPanel
-                {
-                    Image = { Color = ColInput },
-                    RectTransform = { AnchorMin = $"0.64 {yBot + 0.003f}", AnchorMax = $"0.96 {yTop - 0.003f}" }
-                }, root, $"{AdminUIName}_in{i}");
+                Image = { Color = GlassLt },
+                RectTransform = { AnchorMin = "0 0.925", AnchorMax = "1 1" }
+            }, AdminUIName, UiN("HDR"));
+
+            // золотая линия снизу шапки
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GoldDark },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.03" }
+            }, hdr);
+
+            // картинка зверя в золотой рамке (или буква-фолбэк)
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GoldDark },
+                RectTransform = { AnchorMin = "0.008 0.10", AnchorMax = "0.065 0.94" }
+            }, hdr, UiN("HDR_imgf"));
+            var png = BossImagePng(spec);
+            if (png != null)
+            {
                 c.Add(new CuiElement
                 {
-                    Parent = $"{AdminUIName}_in{i}",
+                    Parent = UiN("HDR_imgf"),
+                    Components =
+                    {
+                        new CuiRawImageComponent { Png = png, Color = "1 1 1 0.85" },
+                        new CuiRectTransformComponent { AnchorMin = "0.03 0.03", AnchorMax = "0.97 0.97" }
+                    }
+                });
+            }
+            else
+            {
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = AccentOf(spec) },
+                    RectTransform = { AnchorMin = "0.03 0.03", AnchorMax = "0.97 0.97" }
+                }, UiN("HDR_imgf"));
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = ShortName(spec).Substring(0, 1), FontSize = 26, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                    RectTransform = { AnchorMin = "0.03 0.03", AnchorMax = "0.97 0.97" }
+                }, UiN("HDR_imgf"));
+            }
+
+            c.Add(new CuiLabel
+            {
+                Text = { Text = $"◆ OCTABOSS — {spec.DisplayName}", FontSize = 15, Align = TextAnchor.MiddleLeft, Color = GoldBright },
+                RectTransform = { AnchorMin = "0.075 0.55", AnchorMax = "0.75 0.95" }
+            }, hdr);
+
+            var dirty = st.Dirty ? "   ● ЕСТЬ НЕСОХРАНЁННЫЕ ИЗМЕНЕНИЯ" : "";
+            c.Add(new CuiLabel
+            {
+                Text = { Text = (st.Dirty ? "<color=#E8B84B>" : "") + dirty + (st.Dirty ? "</color>" : ""),
+                    FontSize = 10, Align = TextAnchor.MiddleLeft, Color = GoldBright },
+                RectTransform = { AnchorMin = "0.075 0.10", AnchorMax = "0.75 0.55" }
+            }, hdr);
+
+            c.Add(new CuiButton
+            {
+                Button = { Command = "octabossui close", Color = CRed },
+                Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = "0.965 0.15", AnchorMax = "0.995 0.90" }
+            }, hdr);
+        }
+
+        // ---------- левая колонка: карточки видов ----------
+
+        private void UiDrawBossList(CuiElementContainer c, BasePlayer player, AdminUiState st)
+        {
+            var lst = c.Add(new CuiPanel
+            {
+                Image = { Color = GlassLt },
+                RectTransform = { AnchorMin = "0.008 0.30", AnchorMax = "0.205 0.918" }
+            }, AdminUIName, UiN("LST"));
+
+            c.Add(new CuiLabel
+            {
+                Text = { Text = "ВИДЫ БОССОВ", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = TMuted },
+                RectTransform = { AnchorMin = "0 0.955", AnchorMax = "1 1" }
+            }, lst);
+
+            var n = _cfg.Bosses.Count;
+            var cardH = 0.088f; var gap = 0.008f;
+            for (var i = 0; i < n; i++)
+            {
+                var b = _cfg.Bosses[i];
+                var yTop = 0.948f - i * (cardH + gap);
+                var yBot = yTop - cardH;
+                var sel = b.Key == st.BossKey;
+                _bosses.TryGetValue(b.Key, out var bs);
+                var alive = bs != null && bs.Alive;
+
+                // карточка
+                var cardColor = sel ? GoldGlass : alive ? GlassHov : GlassBg;
+                c.Add(new CuiButton
+                {
+                    Button = { Command = $"octabossui boss {b.Key}", Color = cardColor },
+                    Text = { Text = "", Color = "0 0 0 0" },
+                    RectTransform = { AnchorMin = $"0.02 {yBot}", AnchorMax = $"0.98 {yTop}" }
+                }, lst, UiN($"LST_c{i}"));
+
+                // левая полоса состояния
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = !b.Enabled ? TMuted : alive ? CGreen : Gold },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = "0.025 1" }
+                }, UiN($"LST_c{i}"));
+
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = ShortName(b), FontSize = 12, Align = TextAnchor.MiddleLeft,
+                             Color = sel ? GoldBright : b.Enabled ? TMain : TMuted },
+                    RectTransform = { AnchorMin = "0.07 0.50", AnchorMax = "0.98 0.98" }
+                }, UiN($"LST_c{i}"));
+
+                string status;
+                if (!b.Enabled) status = "OFF";
+                else if (alive) status = "ЖИВ";
+                else if (bs != null) status = $"{Math.Max(0, (int)(bs.NextSpawnAt - DateTime.UtcNow).TotalMinutes)} мин";
+                else status = "—";
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = status, FontSize = 9, Align = TextAnchor.MiddleLeft,
+                             Color = alive ? "0.35 0.75 0.40 1" : TMuted },
+                    RectTransform = { AnchorMin = "0.07 0.05", AnchorMax = "0.98 0.52" }
+                }, UiN($"LST_c{i}"));
+
+                if (sel) // золотая рамка выбранного
+                {
+                    c.Add(new CuiPanel { Image = { Color = GoldBright }, RectTransform = { AnchorMin = "0 0.97", AnchorMax = "1 1" } }, UiN($"LST_c{i}"));
+                    c.Add(new CuiPanel { Image = { Color = GoldBright }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.03" } }, UiN($"LST_c{i}"));
+                }
+            }
+        }
+
+        // ---------- левая колонка: вкладки ----------
+
+        private void UiDrawTabs(CuiElementContainer c, BasePlayer player, AdminUiState st)
+        {
+            var tab = c.Add(new CuiPanel
+            {
+                Image = { Color = GlassLt },
+                RectTransform = { AnchorMin = "0.008 0.072", AnchorMax = "0.205 0.295" }
+            }, AdminUIName, UiN("TAB"));
+
+            var names = new[]
+            {
+                "ОБЗОР", "БОЕЦ", "ФАЗЫ", "СВИТА",
+                "СПАВН", "НАГРАДЫ", "СООБЩЕНИЯ", "ОПАСНАЯ"
+            };
+            var h = 0.115f;
+            for (var i = 0; i < names.Length; i++)
+            {
+                var sel = (int)st.Tab == i;
+                var y1 = 0.99f - i * h;
+                c.Add(new CuiButton
+                {
+                    Button = { Command = $"octabossui tab {i}", Color = sel ? GoldGlass : "0 0 0 0" },
+                    Text = { Text = (sel ? "▸ " : "   ") + names[i], FontSize = 10,
+                             Align = TextAnchor.MiddleLeft, Color = sel ? GoldBright : TMuted },
+                    RectTransform = { AnchorMin = $"0.03 {y1 - h + 0.008f}", AnchorMax = $"0.97 {y1 - 0.008f}" }
+                }, tab);
+            }
+        }
+
+        // ---------- карточка статуса: HP-полоса + фаза + квадрат ----------
+
+        private void UiDrawStatus(CuiElementContainer c, BasePlayer player, AdminUiState st, BossSpec spec)
+        {
+            var s = c.Add(new CuiPanel
+            {
+                Image = { Color = GlassLt },
+                RectTransform = { AnchorMin = "0.212 0.845", AnchorMax = "0.992 0.918" }
+            }, AdminUIName, UiN("STS"));
+
+            _bosses.TryGetValue(spec.Key, out var bs);
+            var alive = bs != null && bs.Alive;
+
+            c.Add(new CuiLabel
+            {
+                Text = { Text = spec.DisplayName, FontSize = 14, Align = TextAnchor.MiddleLeft, Color = TWhite },
+                RectTransform = { AnchorMin = "0.015 0.50", AnchorMax = "0.45 0.98" }
+            }, s);
+
+            var phaseTxt = !spec.PhasesEnabled ? "ФАЗЫ OFF" : alive ? $"ФАЗА {bs.Phase}" : "—";
+            c.Add(new CuiLabel
+            {
+                Text = { Text = phaseTxt, FontSize = 10, Align = TextAnchor.MiddleCenter,
+                         Color = !spec.PhasesEnabled ? TMuted : alive && bs.Phase >= 3 ? "1 0.3 0.25 1" : alive && bs.Phase == 2 ? GoldBright : "0.4 0.8 0.45 1" },
+                RectTransform = { AnchorMin = "0.45 0.15", AnchorMax = "0.56 0.85" }
+            }, s);
+
+            if (alive)
+            {
+                var hp = bs.Entity.Health();
+                var max = bs.Entity.MaxHealth();
+                var frac = Mathf.Clamp01(max > 0 ? hp / max : 0f);
+                // полоса HP
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = CHpBg },
+                    RectTransform = { AnchorMin = "0.015 0.10", AnchorMax = "0.42 0.45" }
+                }, s, UiN("STS_hp"));
+                var hpCol = bs.Phase >= 3 ? "0.75 0.12 0.08 0.95" : bs.Phase == 2 ? "0.80 0.45 0.10 0.95" : "0.55 0.60 0.25 0.95";
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = hpCol },
+                    RectTransform = { AnchorMin = "0 0", AnchorMax = $"{frac:0.###} 1" }
+                }, UiN("STS_hp"));
+
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = $"HP {hp:0} / {max:0}  •  {frac * 100f:0}%", FontSize = 9,
+                             Align = TextAnchor.MiddleLeft, Color = TMuted },
+                    RectTransform = { AnchorMin = "0.015 0.52", AnchorMax = "0.45 0.85" },
+                }, s);
+
+                var t = DateTime.UtcNow - bs.SpawnedAt;
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = $"Квадрат {GridOf(bs.Entity.transform.position)}  •  на карте {t.Hours:00}:{t.Minutes:00}",
+                             FontSize = 10, Align = TextAnchor.MiddleRight, Color = TMuted },
+                    RectTransform = { AnchorMin = "0.58 0", AnchorMax = "0.985 1" }
+                }, s);
+            }
+            else
+            {
+                var left = bs != null ? Math.Max(0, (int)(bs.NextSpawnAt - DateTime.UtcNow).TotalMinutes) : 0;
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = spec.Enabled ? $"НЕТ НА КАРТЕ  •  спавн через ~{left} мин" : "ВИД ВЫКЛЮЧЕН",
+                             FontSize = 10, Align = TextAnchor.MiddleRight, Color = TMuted },
+                    RectTransform = { AnchorMin = "0.58 0", AnchorMax = "0.985 1" }
+                }, s);
+            }
+        }
+
+        // ---------- контент вкладки (правая зона) ----------
+
+        private void UiDrawContent(CuiElementContainer c, BasePlayer player, AdminUiState st)
+        {
+            var cnt = c.Add(new CuiPanel
+            {
+                Image = { Color = "0 0 0 0" },
+                RectTransform = { AnchorMin = "0.212 0.075", AnchorMax = "0.992 0.838" }
+            }, AdminUIName, UiN("CNT"));
+
+            var d = st.Draft;
+            if (d == null) return;
+            var canEdit = Perm(player, "edit");
+            var colX = new[] { 0.008f, 0.505f };
+            var colW = 0.487f;
+            var yL = 0.985f; var yR = 0.985f;
+
+            // локальные помощники укладки в две колонки
+            Action<UiNum, int> num = (f, col) =>
+            {
+                var x = colX[col]; var y = col == 0 ? yL : yR;
+                DrawStepper(c, cnt, player, f, d, Perm(player, f.Perm), x, y - 0.088f, colW);
+                if (col == 0) yL = y - 0.098f; else yR = y - 0.098f;
+            };
+            Action<UiBool, int> tgl = (f, col) =>
+            {
+                var x = colX[col]; var y = col == 0 ? yL : yR;
+                DrawToggle(c, cnt, player, f, d, Perm(player, f.Perm), x, y - 0.058f, colW);
+                if (col == 0) yL = y - 0.068f; else yR = y - 0.068f;
+            };
+            Action<UiTxt, int> txt = (f, col) =>
+            {
+                var x = colX[col]; var y = col == 0 ? yL : yR;
+                DrawTextRow(c, cnt, player, f, d, Perm(player, f.Perm), x, y - 0.082f, colW);
+                if (col == 0) yL = y - 0.092f; else yR = y - 0.092f;
+            };
+            Action<string, int> sec = (t, col) =>
+            {
+                var x = colX[col]; var y = col == 0 ? yL : yR;
+                DrawSection(c, cnt, t, x, y - 0.045f, colW);
+                if (col == 0) yL = y - 0.055f; else yR = y - 0.055f;
+            };
+            Func<string, UiNum> nf = id => Nums.First(n => n.Id == id);
+            Func<string, UiBool> bf = id => Bools.First(n => n.Id == id);
+            Func<string, UiTxt> tf = id => Txts.First(n => n.Id == id);
+
+            switch (st.Tab)
+            {
+                case AdminTab.Overview:
+                {
+                    // пресеты — полоса сверху на всю ширину
+                    DrawPresetBar(c, cnt, player, st);
+                    yL -= 0.085f; yR -= 0.085f;
+                    sec("ОСНОВНОЕ", 0); sec("ПАРАМЕТРЫ", 1);
+                    tgl(bf("enabled"), 0);
+                    num(nf("health"), 0);
+                    num(nf("dmg"), 0);
+                    num(nf("speed"), 0);
+                    num(nf("scale"), 1);
+                    num(nf("escn"), 1);
+                    num(nf("interval"), 1);
+                    num(nf("currency"), 1);
+                    break;
+                }
+                case AdminTab.Combat:
+                {
+                    sec("ЖИВОТНОЕ", 0); sec("БОЙ", 1);
+                    num(nf("health"), 0);
+                    num(nf("scale"), 0);
+                    num(nf("speed"), 0);
+                    num(nf("life"), 0);
+                    num(nf("dmg"), 1);
+                    num(nf("rage"), 1);
+                    num(nf("rageth"), 1);
+                    sec("ВХОДЯЩИЙ УРОН", 0); sec("АГРО / РЕГЕН", 1);
+                    num(nf("bullet"), 0);
+                    num(nf("expl"), 0);
+                    num(nf("other"), 0);
+                    num(nf("aggro"), 1);
+                    num(nf("regend"), 1);
+                    num(nf("regen"), 1);
+                    sec("ПОВЕДЕНИЕ", 0);
+                    tgl(bf("hyper"), 0);
+                    tgl(bf("provoke"), 0);
+                    tgl(bf("immune"), 0);
+                    break;
+                }
+                case AdminTab.Phases:
+                {
+                    tgl(bf("phases"), 0);
+                    sec("ФАЗА 2 — РАЗЪЯРЁННЫЙ", 0); sec("ФАЗА 3 — ПОСЛЕДНИЙ РЫВОК", 1);
+                    num(nf("p2th"), 0);
+                    num(nf("p2dmg"), 0);
+                    num(nf("p2aggro"), 0);
+                    num(nf("p2spd"), 0);
+                    num(nf("p3th"), 1);
+                    num(nf("p3dmg"), 1);
+                    num(nf("p3aggro"), 1);
+                    num(nf("p3spd"), 1);
+                    sec("РЫВОК / УГРОЗА", 0);
+                    num(nf("leapsec"), 0);
+                    num(nf("leapdmg"), 0);
+                    num(nf("leapsh"), 0);
+                    num(nf("flee"), 1);
+                    num(nf("retarget"), 1);
+                    num(nf("hyst"), 1);
+                    break;
+                }
+                case AdminTab.Escort:
+                {
+                    sec("СВИТА", 0); sec("РОЛИ", 1);
+                    num(nf("escn"), 0);
+                    num(nf("escr"), 0);
+                    num(nf("escs"), 0);
+                    tgl(bf("esckill"), 0);
+                    txt(tf("escpre"), 0);
+                    // визуальный блок ролей
+                    DrawEscortRoles(c, cnt, d, colX[1], yR - 0.14f, colW);
+                    break;
+                }
+                case AdminTab.Spawn:
+                {
+                    sec("РАСПИСАНИЕ", 0); sec("МЕСТО", 1);
+                    num(nf("interval"), 0);
+                    num(nf("jitter"), 0);
+                    num(nf("warnmin"), 0);
+                    num(nf("margin"), 0);
+                    tgl(bf("showmark"), 1);
+                    num(nf("marker"), 1);
+                    tgl(bf("biome"), 1);
+                    txt(tf("biomes"), 1);
+                    tgl(bf("water"), 1);
+                    num(nf("waterr"), 1);
+                    sec("МОНУМЕНТЫ-ЯКОРЯ", 0);
+                    num(nf("monmin"), 0);
+                    num(nf("monmax"), 0);
+                    txt(tf("mons"), 0);
+                    DrawMonumentPick(c, cnt, player, colX[0], yL - 0.06f, colW);
+                    txt(tf("prefab"), 0);
+                    break;
+                }
+                case AdminTab.Rewards:
+                {
+                    sec("ВАЛЮТА", 0); sec("БАФФ / ЛУТ", 1);
+                    num(nf("currency"), 0);
+                    num(nf("currpart"), 0);
+                    num(nf("partpct"), 0);
+                    num(nf("buffdmg"), 1);
+                    num(nf("buffmin"), 1);
+                    num(nf("lootlock"), 1);
+                    num(nf("lootlife"), 1);
+                    break;
+                }
+                case AdminTab.Messages:
+                {
+                    DrawMessagesTab(c, cnt, player, st, d, Perm(player, "messages"));
+                    break;
+                }
+                case AdminTab.Danger:
+                {
+                    DrawDangerTab(c, cnt, player, st);
+                    break;
+                }
+            }
+        }
+
+        // ---------- элементы ----------
+
+        private static void DrawSection(CuiElementContainer c, string parent, string text, float x, float y, float w)
+        {
+            c.Add(new CuiLabel
+            {
+                Text = { Text = text, FontSize = 10, Align = TextAnchor.MiddleLeft, Color = Gold },
+                RectTransform = { AnchorMin = $"{x} {y}", AnchorMax = $"{x + w} {y + 0.038f}" }
+            }, parent);
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GoldDark },
+                RectTransform = { AnchorMin = $"{x} {y}", AnchorMax = $"{x + w} {y + 0.004f}" }
+            }, parent);
+        }
+
+        // степпер: подпись | [-] [поле] [+] + тонкая золотая шкала
+        private void DrawStepper(CuiElementContainer c, string parent, BasePlayer player,
+            UiNum f, BossSpec d, bool edit, float x, float y, float w)
+        {
+            var v = f.Get(d);
+            var warn = f.WarnIf != null && f.WarnIf(v);
+            var rowBg = warn ? "0.25 0.12 0.03 0.85" : GlassRow;
+            c.Add(new CuiPanel
+            {
+                Image = { Color = rowBg },
+                RectTransform = { AnchorMin = $"{x} {y}", AnchorMax = $"{x + w} {y + 0.088f}" }
+            }, parent, parent + "_r" + f.Id);
+
+            c.Add(new CuiLabel
+            {
+                Text = { Text = f.Label, FontSize = 11, Align = TextAnchor.MiddleLeft,
+                         Color = warn ? GoldBright : TMain },
+                RectTransform = { AnchorMin = "0.02 0.45", AnchorMax = "0.52 0.97" }
+            }, parent + "_r" + f.Id);
+            if (warn && !string.IsNullOrEmpty(f.Warn))
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = "⚠ " + f.Warn, FontSize = 8, Align = TextAnchor.MiddleLeft, Color = GoldBright },
+                    RectTransform = { AnchorMin = "0.02 0.04", AnchorMax = "0.60 0.42" }
+                }, parent + "_r" + f.Id);
+
+            var cmdBase = $"octabossui set {f.Id}";
+            var minus = $"octabossui adj {f.Id} {(-f.Step).ToString("0.#####", CultureInfo.InvariantCulture)}";
+            var plus = $"octabossui adj {f.Id} {f.Step.ToString("0.#####", CultureInfo.InvariantCulture)}";
+
+            var btnC = edit ? GlassHov : GlassLt;
+            var txtC = edit ? TWhite : TMuted;
+            c.Add(new CuiButton
+            {
+                Button = { Command = edit ? minus : "", Color = btnC },
+                Text = { Text = "−", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = txtC },
+                RectTransform = { AnchorMin = "0.60 0.15", AnchorMax = "0.70 0.90" }
+            }, parent + "_r" + f.Id);
+            c.Add(new CuiButton
+            {
+                Button = { Command = edit ? plus : "", Color = btnC },
+                Text = { Text = "+", FontSize = 13, Align = TextAnchor.MiddleCenter, Color = txtC },
+                RectTransform = { AnchorMin = "0.88 0.15", AnchorMax = "0.98 0.90" }
+            }, parent + "_r" + f.Id);
+
+            // значение — поле ручного ввода
+            c.Add(new CuiElement
+            {
+                Parent = parent + "_r" + f.Id,
+                Name = parent + "_v" + f.Id,
+                Components =
+                {
+                    new CuiImageComponent { Color = edit ? GlassBg : "0.03 0.03 0.03 0.6" },
+                    new CuiRectTransformComponent { AnchorMin = "0.715 0.15", AnchorMax = "0.865 0.90" }
+                }
+            });
+            if (edit)
+                c.Add(new CuiElement
+                {
+                    Parent = parent + "_v" + f.Id,
                     Components =
                     {
                         new CuiInputFieldComponent
                         {
-                            Text = t.Item2(),
-                            Command = $"octabossui set {kv.Key}",
-                            FontSize = 11,
-                            Align = TextAnchor.MiddleCenter,
-                            Color = ColWhite,
-                            CharsLimit = 12,
-                            NeedsKeyboard = true
+                            Text = v.ToString(f.Fmt, CultureInfo.InvariantCulture),
+                            Command = cmdBase, FontSize = 12, Align = TextAnchor.MiddleCenter,
+                            Color = warn ? GoldBright : TWhite, CharsLimit = 12, NeedsKeyboard = true
                         },
                         new CuiNeedsCursorComponent()
                     }
                 });
-                i++;
-            }
+            else
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = v.ToString(f.Fmt, CultureInfo.InvariantCulture) + " 🔒", FontSize = 10,
+                             Align = TextAnchor.MiddleCenter, Color = TMuted },
+                    RectTransform = { AnchorMin = "0.715 0.15", AnchorMax = "0.865 0.90" }
+                }, parent + "_r" + f.Id);
 
-            // кнопки снизу
-            var btnY = 0.012f;
-            AddAdminButton(c, root, $"octabossui spawn {spec.Key}", "СПАВНИТЬ", $"0.03 {btnY}", $"0.33 {btnY + 0.045f}", ColGold);
-            AddAdminButton(c, root, $"octabossui kill {spec.Key}", "УБИТЬ", $"0.36 {btnY}", $"0.66 {btnY + 0.045f}", "0.6 0.15 0.1 1");
-            AddAdminButton(c, root, "octabossui save", "СОХРАНИТЬ", $"0.69 {btnY}", $"0.97 {btnY + 0.045f}", "0.25 0.45 0.2 1");
-
-            CuiHelper.AddUi(player, c);
+            // шкала
+            var t = Mathf.Clamp01((v - f.Min) / (f.Max - f.Min));
+            c.Add(new CuiPanel
+            {
+                Image = { Color = "0.02 0.02 0.015 0.9" },
+                RectTransform = { AnchorMin = "0.60 0.04", AnchorMax = "0.98 0.09" }
+            }, parent + "_r" + f.Id, parent + "_t" + f.Id);
+            c.Add(new CuiPanel
+            {
+                Image = { Color = Gold },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = $"{t.ToString("0.###", CultureInfo.InvariantCulture)} 1" }
+            }, parent + "_t" + f.Id);
         }
 
-        private void AddAdminButton(CuiElementContainer c, string parent, string cmd, string text, string min, string max, string color)
+        private void DrawToggle(CuiElementContainer c, string parent, BasePlayer player,
+            UiBool f, BossSpec d, bool edit, float x, float y, float w)
+        {
+            var on = f.Get(d);
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassRow },
+                RectTransform = { AnchorMin = $"{x} {y}", AnchorMax = $"{x + w} {y + 0.058f}" }
+            }, parent, parent + "_r" + f.Id);
+            c.Add(new CuiLabel
+            {
+                Text = { Text = f.Label, FontSize = 11, Align = TextAnchor.MiddleLeft, Color = TMain },
+                RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.70 1" }
+            }, parent + "_r" + f.Id);
+            c.Add(new CuiButton
+            {
+                Button = { Command = edit ? $"octabossui toggle {f.Id}" : "", Color = on ? CGreen : GlassLt },
+                Text = { Text = on ? "ВКЛ" : "OFF", FontSize = 10, Align = TextAnchor.MiddleCenter,
+                         Color = on ? TWhite : TMuted },
+                RectTransform = { AnchorMin = "0.74 0.16", AnchorMax = "0.97 0.84" }
+            }, parent + "_r" + f.Id);
+            if (on)
+                c.Add(new CuiPanel
+                {
+                    Image = { Color = GoldBright },
+                    RectTransform = { AnchorMin = "0.74 0.05", AnchorMax = "0.97 0.14" }
+                }, parent + "_r" + f.Id);
+        }
+
+        private void DrawTextRow(CuiElementContainer c, string parent, BasePlayer player,
+            UiTxt f, BossSpec d, bool edit, float x, float y, float w)
+        {
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassRow },
+                RectTransform = { AnchorMin = $"{x} {y}", AnchorMax = $"{x + w} {y + 0.082f}" }
+            }, parent, parent + "_r" + f.Id);
+            c.Add(new CuiLabel
+            {
+                Text = { Text = f.Label, FontSize = 10, Align = TextAnchor.MiddleLeft, Color = TMuted },
+                RectTransform = { AnchorMin = "0.02 0.55", AnchorMax = "0.98 0.98" }
+            }, parent + "_r" + f.Id);
+            c.Add(new CuiElement
+            {
+                Parent = parent + "_r" + f.Id,
+                Name = parent + "_v" + f.Id,
+                Components =
+                {
+                    new CuiImageComponent { Color = edit ? GlassBg : "0.03 0.03 0.03 0.6" },
+                    new CuiRectTransformComponent { AnchorMin = "0.02 0.06", AnchorMax = "0.98 0.50" }
+                }
+            });
+            var val = f.Get(d) ?? "";
+            if (edit)
+                c.Add(new CuiElement
+                {
+                    Parent = parent + "_v" + f.Id,
+                    Components =
+                    {
+                        new CuiInputFieldComponent
+                        {
+                            Text = val, Command = $"octabossui set {f.Id}", FontSize = 10,
+                            Align = TextAnchor.MiddleLeft, Color = TWhite,
+                            CharsLimit = f.Chars, NeedsKeyboard = true
+                        },
+                        new CuiNeedsCursorComponent()
+                    }
+                });
+            else
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = (val.Length > 60 ? val.Substring(0, 60) + "…" : val) + " 🔒", FontSize = 9,
+                             Align = TextAnchor.MiddleLeft, Color = TMuted },
+                    RectTransform = { AnchorMin = "0.02 0.06", AnchorMax = "0.98 0.50" }
+                }, parent + "_r" + f.Id);
+        }
+
+        private void DrawPresetBar(CuiElementContainer c, string parent, BasePlayer player, AdminUiState st)
+        {
+            var canP = Perm(player, "presets");
+            var labels = new[] { "PVP-ЛЁГКИЙ", "PVP-СТАНДАРТ", "PVP-ХАРДКОР", "PVE-ТЕСТ" };
+            var ids = new[] { "light", "std", "hard", "pve" };
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassRow },
+                RectTransform = { AnchorMin = "0.008 0.915", AnchorMax = "0.992 0.99" }
+            }, parent, parent + "_presets");
+            c.Add(new CuiLabel
+            {
+                Text = { Text = "ПРЕСЕТ", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = Gold },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "0.10 1" }
+            }, parent + "_presets");
+            for (var i = 0; i < labels.Length; i++)
+            {
+                var x0 = 0.105f + i * 0.16f;
+                c.Add(new CuiButton
+                {
+                    Button = { Command = canP ? $"octabossui preset {ids[i]}" : "", Color = canP ? GoldDark : GlassLt },
+                    Text = { Text = labels[i], FontSize = 9, Align = TextAnchor.MiddleCenter,
+                             Color = canP ? TWhite : TMuted },
+                    RectTransform = { AnchorMin = $"{x0} 0.15", AnchorMax = $"{x0 + 0.145f} 0.85" }
+                }, parent + "_presets");
+            }
+        }
+
+        private void DrawEscortRoles(CuiElementContainer c, string parent, BossSpec d, float x, float y, float w)
+        {
+            var guards = Mathf.CeilToInt(d.Escort.Count * 0.6f);
+            var decoys = Mathf.Max(0, d.Escort.Count - guards);
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassRow },
+                RectTransform = { AnchorMin = $"{x} {y}", AnchorMax = $"{x + w} {y + 0.14f}" }
+            }, parent, parent + "_roles");
+            c.Add(new CuiLabel
+            {
+                Text = { Text = $"ОХРАНА  {guards} шт  •  держится у босса\nПРИМАНКИ  {decoys} шт  •  бегут на игрока\nНа фазе 3 часть разбегается, часть входит в ярость.",
+                         FontSize = 10, Align = TextAnchor.MiddleLeft, Color = TMain },
+                RectTransform = { AnchorMin = "0.03 0", AnchorMax = "0.97 1" }
+            }, parent + "_roles");
+        }
+
+        private void DrawMonumentPick(CuiElementContainer c, string parent, BasePlayer player, float x, float y, float w)
         {
             c.Add(new CuiButton
             {
-                Button = { Command = cmd, Color = color },
-                Text = { Text = text, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = "0.05 0.05 0.05 1" },
-                RectTransform = { AnchorMin = min, AnchorMax = max }
+                Button = { Command = "octabossui mon", Color = CBlue },
+                Text = { Text = "⊕ МОНУМЕНТ РЯДОМ СО МНОЙ", FontSize = 10, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = $"{x} {y}", AnchorMax = $"{x + w} {y + 0.05f}" }
             }, parent);
         }
+
+        private void DrawMessagesTab(CuiElementContainer c, string parent, BasePlayer player,
+            AdminUiState st, BossSpec d, bool canMsg)
+        {
+            // список событий слева
+            var lw = 0.26f;
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassRow },
+                RectTransform = { AnchorMin = "0.008 0.30", AnchorMax = $"{0.008f + lw} 0.99" }
+            }, parent, parent + "_mlist");
+            for (var i = 0; i < MsgDefs.Length; i++)
+            {
+                var sel = MsgDefs[i][0] == st.MsgId;
+                var y1 = 0.985f - i * 0.108f;
+                c.Add(new CuiButton
+                {
+                    Button = { Command = $"octabossui msg {MsgDefs[i][0]}", Color = sel ? GoldGlass : "0 0 0 0" },
+                    Text = { Text = MsgDefs[i][1], FontSize = 10, Align = TextAnchor.MiddleLeft,
+                             Color = sel ? GoldBright : TMuted },
+                    RectTransform = { AnchorMin = $"0.04 {y1 - 0.095f}", AnchorMax = $"0.96 {y1 - 0.012f}" }
+                }, parent + "_mlist");
+            }
+
+            // большое поле справа
+            var cur = MsgGet(d, st.MsgId);
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassRow },
+                RectTransform = { AnchorMin = "0.285 0.80", AnchorMax = "0.992 0.99" }
+            }, parent, parent + "_medit");
+            c.Add(new CuiLabel
+            {
+                Text = { Text = "{name} — имя босса   •   {0} — квадрат / минуты / игрок", FontSize = 9,
+                         Align = TextAnchor.MiddleLeft, Color = TMuted },
+                RectTransform = { AnchorMin = "0.02 0.78", AnchorMax = "0.98 1" }
+            }, parent + "_medit");
+            c.Add(new CuiElement
+            {
+                Parent = parent + "_medit", Name = parent + "_mv",
+                Components =
+                {
+                    new CuiImageComponent { Color = canMsg ? GlassBg : "0.03 0.03 0.03 0.6" },
+                    new CuiRectTransformComponent { AnchorMin = "0.02 0.06", AnchorMax = "0.98 0.72" }
+                }
+            });
+            if (canMsg)
+                c.Add(new CuiElement
+                {
+                    Parent = parent + "_mv",
+                    Components =
+                    {
+                        new CuiInputFieldComponent
+                        {
+                            Text = cur, Command = $"octabossui set {st.MsgId}", FontSize = 11,
+                            Align = TextAnchor.MiddleLeft, Color = TWhite, CharsLimit = 220, NeedsKeyboard = true
+                        },
+                        new CuiNeedsCursorComponent()
+                    }
+                });
+            else
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = cur + " 🔒", FontSize = 10, Align = TextAnchor.MiddleLeft, Color = TMuted },
+                    RectTransform = { AnchorMin = "0.02 0.06", AnchorMax = "0.98 0.72" }
+                }, parent + "_medit");
+
+            // варианты предупреждения — навигатор
+            var list = d.WarnAnnounceVariants;
+            var idx = Mathf.Clamp(st.WarnIdx, 0, Math.Max(0, list.Count - 1));
+            st.WarnIdx = idx;
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassRow },
+                RectTransform = { AnchorMin = "0.285 0.42", AnchorMax = "0.992 0.78" }
+            }, parent, parent + "_wvar");
+            c.Add(new CuiLabel
+            {
+                Text = { Text = $"ВАРИАНТЫ ПРЕДУПРЕЖДЕНИЯ  {list.Count} шт", FontSize = 10,
+                         Align = TextAnchor.MiddleLeft, Color = Gold },
+                RectTransform = { AnchorMin = "0.02 0.82", AnchorMax = "0.98 1" }
+            }, parent + "_wvar");
+            c.Add(new CuiButton
+            {
+                Button = { Command = "octabossui warn -1", Color = GlassHov },
+                Text = { Text = "◄", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = "0.02 0.05", AnchorMax = "0.08 0.75" }
+            }, parent + "_wvar");
+            c.Add(new CuiButton
+            {
+                Button = { Command = "octabossui warn 1", Color = GlassHov },
+                Text = { Text = "►", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = "0.84 0.05", AnchorMax = "0.90 0.75" }
+            }, parent + "_wvar");
+            var wv = list.Count > 0 ? list[idx] : "(пусто — используется основной текст)";
+            c.Add(new CuiElement
+            {
+                Parent = parent + "_wvar", Name = parent + "_wv",
+                Components =
+                {
+                    new CuiImageComponent { Color = canMsg ? GlassBg : "0.03 0.03 0.03 0.6" },
+                    new CuiRectTransformComponent { AnchorMin = "0.10 0.05", AnchorMax = "0.82 0.75" }
+                }
+            });
+            if (canMsg && list.Count > 0)
+                c.Add(new CuiElement
+                {
+                    Parent = parent + "_wv",
+                    Components =
+                    {
+                        new CuiInputFieldComponent
+                        {
+                            Text = wv, Command = "octabossui warnset", FontSize = 10,
+                            Align = TextAnchor.MiddleLeft, Color = TWhite, CharsLimit = 220, NeedsKeyboard = true
+                        },
+                        new CuiNeedsCursorComponent()
+                    }
+                });
+            else
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = wv, FontSize = 10, Align = TextAnchor.MiddleLeft, Color = TMuted },
+                    RectTransform = { AnchorMin = "0.10 0.05", AnchorMax = "0.82 0.75" }
+                }, parent + "_wvar");
+            c.Add(new CuiButton
+            {
+                Button = { Command = canMsg ? "octabossui warnadd" : "", Color = canMsg ? CGreen : GlassLt },
+                Text = { Text = "+", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = "0.915 0.42", AnchorMax = "0.98 0.75" }
+            }, parent + "_wvar");
+            c.Add(new CuiButton
+            {
+                Button = { Command = canMsg && list.Count > 0 ? "octabossui warndel" : "", Color = canMsg ? CRed : GlassLt },
+                Text = { Text = "−", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = "0.915 0.05", AnchorMax = "0.98 0.38" }
+            }, parent + "_wvar");
+        }
+
+        private void DrawDangerTab(CuiElementContainer c, string parent, BasePlayer player, AdminUiState st)
+        {
+            var spec = UiSpec(player);
+            var items = new[]
+            {
+                new { T = "ТИХИЙ ДЕСПАВН — без лута и наград", Cmd = "octabossui ask despawn", Col = GoldDark, Prm = "kill" },
+                new { T = "СЛЕДУЮЩИЙ СПАВН ЧЕРЕЗ 1 МИН", Cmd = "octabossui next1", Col = CBlue, Prm = "spawn" },
+                new { T = "СБРОСИТЬ ТРЕКЕР УРОНА/УГРОЗЫ", Cmd = "octabossui resetdmg", Col = GlassHov, Prm = "edit" },
+                new { T = "ПЕРЕЧИТАТЬ КОНФИГ С ДИСКА", Cmd = "octabossui ask reloadcfg", Col = CRed, Prm = "edit" },
+            };
+            var y = 0.90f;
+            c.Add(new CuiLabel
+            {
+                Text = { Text = "Действия выполняются сразу и необратимо.", FontSize = 10,
+                         Align = TextAnchor.MiddleLeft, Color = TMuted },
+                RectTransform = { AnchorMin = "0.008 0.95", AnchorMax = "0.99 0.995" }
+            }, parent);
+            foreach (var it in items)
+            {
+                var ok = Perm(player, it.Prm);
+                c.Add(new CuiButton
+                {
+                    Button = { Command = ok ? it.Cmd : "", Color = ok ? it.Col : GlassLt },
+                    Text = { Text = it.T, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = ok ? TWhite : TMuted },
+                    RectTransform = { AnchorMin = $"0.008 {y - 0.085f}", AnchorMax = $"0.60 {y - 0.005f}" }
+                }, parent);
+                y -= 0.10f;
+            }
+        }
+
+        // ---------- нижняя панель быстрых действий ----------
+
+        private void UiDrawBottom(CuiElementContainer c, BasePlayer player, AdminUiState st, BossSpec spec)
+        {
+            var bar = c.Add(new CuiPanel
+            {
+                Image = { Color = GlassLt },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.068" }
+            }, AdminUIName, UiN("BOT"));
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GoldDark },
+                RectTransform = { AnchorMin = "0 0.97", AnchorMax = "1 1" }
+            }, bar);
+
+            var btns = new[]
+            {
+                new { T = "СПАВНИТЬ",   Cmd = "octabossui ask spawn",   Col = Gold,    Prm = "spawn" },
+                new { T = "УБИТЬ",      Cmd = "octabossui ask kill",    Col = CRed,    Prm = "kill" },
+                new { T = "КО МНЕ",     Cmd = "octabossui tome",        Col = CBlue,   Prm = "spawn" },
+                new { T = "СОХРАНИТЬ",  Cmd = "octabossui save",        Col = CGreen,  Prm = "edit" },
+                new { T = "ОБНОВИТЬ",   Cmd = "octabossui ask reload",  Col = GlassHov,Prm = "view" },
+                new { T = "ЗАКРЫТЬ",    Cmd = "octabossui close",       Col = GoldDark,Prm = "view" },
+            };
+            var bw = 0.155f; var gap = 0.008f; var x = 0.012f;
+            foreach (var b in btns)
+            {
+                var ok = Perm(player, b.Prm);
+                c.Add(new CuiButton
+                {
+                    Button = { Command = ok ? b.Cmd : "", Color = ok ? b.Col : GlassBg },
+                    Text = { Text = b.T, FontSize = 11, Align = TextAnchor.MiddleCenter,
+                             Color = ok ? TWhite : TMuted },
+                    RectTransform = { AnchorMin = $"{x} 0.18", AnchorMax = $"{x + bw} 0.82" }
+                }, bar);
+                x += bw + gap;
+            }
+        }
+
+        // ---------- toast + confirm ----------
+
+        private void UiDrawToast(CuiElementContainer c, AdminUiState st)
+        {
+            if (string.IsNullOrEmpty(st.Toast)) return;
+            c.Add(new CuiPanel
+            {
+                Image = { Color = st.ToastColor, FadeIn = 0.15f },
+                RectTransform = { AnchorMin = "0.30 0.075", AnchorMax = "0.78 0.115" }
+            }, AdminUIName, UiN("TST"));
+            c.Add(new CuiLabel
+            {
+                Text = { Text = st.Toast, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = TWhite, FadeIn = 0.15f },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, UiN("TST"));
+        }
+
+        private void UiToast(BasePlayer player, string text, string color)
+        {
+            var st = UiStateOf(player);
+            st.Toast = text; st.ToastColor = color; st.ToastSeq++;
+            var seq = st.ToastSeq;
+            UiRefresh(player, "TST");
+            timer.Once(2.5f, () =>
+            {
+                if (!_ui.TryGetValue(Uid(player), out var s2) || s2.ToastSeq != seq) return;
+                s2.Toast = null;
+                CuiHelper.DestroyUi(player, UiN("TST"));
+            });
+        }
+
+        private void UiDrawConfirm(CuiElementContainer c, BasePlayer player, AdminUiState st, BossSpec spec)
+        {
+            if (string.IsNullOrEmpty(st.Pending)) return;
+            // затемнение всей панели
+            c.Add(new CuiPanel
+            {
+                Image = { Color = "0 0 0 0.75" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, AdminUIName, UiN("CFM"));
+            string title, yes = "ПОДТВЕРДИТЬ", col = CRed;
+            switch (st.Pending.Split(':')[0])
+            {
+                case "kill": title = $"УБИТЬ {spec.DisplayName}?"; yes = "УБИТЬ"; break;
+                case "spawn": title = "Босс уже на карте.\nЗаменить текущего?"; yes = "ЗАМЕНИТЬ"; col = Gold; break;
+                case "despawn": title = $"ТИХИЙ ДЕСПАВН {spec.DisplayName}?\nЛута и наград не будет."; yes = "ДЕСПАВН"; break;
+                case "reload": title = "Отбросить несохранённые\nизменения черновика?"; yes = "ОТБРОСИТЬ"; col = Gold; break;
+                case "reloadcfg": title = "Перечитать конфиг с диска?\nВсе черновики будут потеряны."; yes = "ПЕРЕЧИТАТЬ"; break;
+                case "preset": title = $"Применить пресет {st.Pending.Split(':')[1].ToUpper()}?\nТекущий черновик будет заменён."; yes = "ПРИМЕНИТЬ"; col = Gold; break;
+                case "boss": title = "Несохранённые изменения\nбудут потеряны. Продолжить?"; yes = "ПЕРЕЙТИ"; col = Gold; break;
+                default: title = "Подтвердить действие?"; break;
+            }
+            c.Add(new CuiPanel
+            {
+                Image = { Color = GlassBg },
+                RectTransform = { AnchorMin = "0.32 0.40", AnchorMax = "0.68 0.62" }
+            }, UiN("CFM"), UiN("CFM_box"));
+            c.Add(new CuiPanel
+            {
+                Image = { Color = col },
+                RectTransform = { AnchorMin = "0 0.92", AnchorMax = "1 1" }
+            }, UiN("CFM_box"));
+            c.Add(new CuiLabel
+            {
+                Text = { Text = title, FontSize = 13, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = "0.05 0.35", AnchorMax = "0.95 0.90" }
+            }, UiN("CFM_box"));
+            c.Add(new CuiButton
+            {
+                Button = { Command = "octabossui cancel", Color = GlassHov },
+                Text = { Text = "ОТМЕНА", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = TMain },
+                RectTransform = { AnchorMin = "0.08 0.10", AnchorMax = "0.46 0.30" }
+            }, UiN("CFM_box"));
+            c.Add(new CuiButton
+            {
+                Button = { Command = "octabossui confirm", Color = col },
+                Text = { Text = yes, FontSize = 11, Align = TextAnchor.MiddleCenter, Color = TWhite },
+                RectTransform = { AnchorMin = "0.54 0.10", AnchorMax = "0.92 0.30" }
+            }, UiN("CFM_box"));
+        }
+
+        // ---------- команды ----------
 
         [ConsoleCommand("octabossui")]
         private void CmdBossUI(ConsoleSystem.Arg arg)
         {
             var player = arg.Player();
-            if (player == null) return;
-            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, "octaboss.admin")) return;
+            if (player == null || !Perm(player, "view")) return;
             var args = arg.Args;
             if (args == null || args.Length == 0) return;
+            var st = UiStateOf(player);
+            var spec = UiSpec(player);
+            if (spec == null) return;
+            var a0 = args[0].ToString();
+            var a1 = args.Length > 1 ? args[1].ToString() : "";
 
-            var redraw = true;
-            switch (args[0].ToString())
+            switch (a0)
             {
                 case "close":
+                    _ui.Remove(Uid(player));
+                    foreach (var p in UiParts) CuiHelper.DestroyUi(player, UiN(p));
                     CuiHelper.DestroyUi(player, AdminUIName);
-                    redraw = false;
-                    break;
-                case "tab":
-                    if (args.Length >= 2) _uiSel[Uid(player)] = args[1].ToString();
-                    break;
-                case "spawn":
-                {
-                    var st = SelectedState(player);
-                    if (st != null) SpawnBoss(st, player.transform.position + player.transform.forward * 15f);
-                    break;
-                }
-                case "kill":
-                    AdminKill(SelectedState(player));
-                    break;
-                case "save":
-                    SaveConfig();
-                    SendReply(player, $"{Tag} Конфиг сохранён");
-                    break;
-                case "set":
-                    if (args.Length >= 3)
+                    return;
+
+                case "boss":
+                    if (a1 == st.BossKey) break;
+                    if (st.Dirty)
                     {
-                        var key = args[1].ToString();
-                        var value = string.Join(" ", args.Skip(2).Select(a => a.ToString()));
-                        var spec = UiSpec(player);
-                        if (spec == null) break;
-                        foreach (var kv in AdminFields(spec))
-                            if (kv.Key == key) { kv.Value.Item3(value); break; }
-                        // если вид выключили/включили — обновляем рантайм-список
-                        SyncRuntime();
-                        SaveConfig();
+                        st.Pending = "boss:" + a1;
+                        UiRefresh(player, "CFM");
+                        return;
                     }
-                    break;
+                    st.BossKey = a1;
+                    ResetDraft(st);
+                    UiDrawAll(player);
+                    return;
+
+                case "tab":
+                    st.Tab = (AdminTab)Mathf.Clamp(ParseI(a1, 0), 0, 7);
+                    UiRefresh(player, "CNT", "TAB");
+                    return;
+
+                case "toggle":
+                {
+                    if (!Perm(player, "edit")) { UiToast(player, "✕ Нет права edit", CRed); return; }
+                    var f = Bools.FirstOrDefault(b => b.Id == a1);
+                    if (f != null && Perm(player, f.Perm)) { f.Set(st.Draft, !f.Get(st.Draft)); st.Dirty = true; }
+                    UiRefresh(player, "CNT", "HDR");
+                    return;
+                }
+
+                case "adj":
+                {
+                    var f = Nums.FirstOrDefault(n => n.Id == a1);
+                    if (f == null) return;
+                    if (!Perm(player, f.Perm)) { UiToast(player, "✕ Нет права " + f.Perm, CRed); return; }
+                    var v = Mathf.Clamp(f.Get(st.Draft) + ParseF(ArgAt(arg, 2), 0f), f.Min, f.Max);
+                    v = Mathf.Round(v / f.Step) * f.Step;
+                    f.Set(st.Draft, v); st.Dirty = true;
+                    UiRefresh(player, "CNT", "HDR");
+                    return;
+                }
+
+                case "set":
+                {
+                    var value = string.Join(" ", args.Skip(2).Select(x => x.ToString()));
+                    var nf = Nums.FirstOrDefault(n => n.Id == a1);
+                    if (nf != null)
+                    {
+                        if (!Perm(player, nf.Perm)) { UiToast(player, "✕ Нет права " + nf.Perm, CRed); return; }
+                        var v = ParseF(value, nf.Get(st.Draft));
+                        v = Mathf.Clamp(v, nf.Min, nf.Max);
+                        v = Mathf.Round(v / nf.Step) * nf.Step;
+                        nf.Set(st.Draft, v); st.Dirty = true;
+                        UiRefresh(player, "CNT", "HDR");
+                        return;
+                    }
+                    if (a1.StartsWith("m_"))
+                    {
+                        if (!Perm(player, "messages")) { UiToast(player, "✕ Нет права messages", CRed); return; }
+                        MsgSet(st.Draft, a1, value); st.Dirty = true;
+                        return;
+                    }
+                    var tf = Txts.FirstOrDefault(t => t.Id == a1);
+                    if (tf != null)
+                    {
+                        if (!Perm(player, tf.Perm)) { UiToast(player, "✕ Нет права " + tf.Perm, CRed); return; }
+                        tf.Set(st.Draft, value); st.Dirty = true;
+                        UiRefresh(player, "CNT", "HDR");
+                    }
+                    return;
+                }
+
+                case "msg":
+                    st.MsgId = a1;
+                    UiRefresh(player, "CNT");
+                    return;
+
+                case "warn":
+                    st.WarnIdx += ParseI(a1, 0);
+                    var wl = st.Draft.WarnAnnounceVariants;
+                    st.WarnIdx = wl.Count == 0 ? 0 : ((st.WarnIdx % wl.Count) + wl.Count) % wl.Count;
+                    UiRefresh(player, "CNT");
+                    return;
+
+                case "warnset":
+                {
+                    if (!Perm(player, "messages")) { UiToast(player, "✕ Нет права messages", CRed); return; }
+                    var wl2 = st.Draft.WarnAnnounceVariants;
+                    if (wl2.Count > 0)
+                    {
+                        st.WarnIdx = Mathf.Clamp(st.WarnIdx, 0, wl2.Count - 1);
+                        wl2[st.WarnIdx] = string.Join(" ", args.Skip(1).Select(x => x.ToString()));
+                        st.Dirty = true;
+                    }
+                    return;
+                }
+
+                case "warnadd":
+                    if (!Perm(player, "messages")) { UiToast(player, "✕ Нет права messages", CRed); return; }
+                    st.Draft.WarnAnnounceVariants.Add("{name} появится через {0} мин. Готовьтесь!");
+                    st.WarnIdx = st.Draft.WarnAnnounceVariants.Count - 1;
+                    st.Dirty = true;
+                    UiRefresh(player, "CNT", "HDR");
+                    return;
+
+                case "warndel":
+                    if (!Perm(player, "messages")) { UiToast(player, "✕ Нет права messages", CRed); return; }
+                    var wl3 = st.Draft.WarnAnnounceVariants;
+                    if (wl3.Count > 0)
+                    {
+                        wl3.RemoveAt(Mathf.Clamp(st.WarnIdx, 0, wl3.Count - 1));
+                        st.WarnIdx = Mathf.Clamp(st.WarnIdx, 0, wl3.Count - 1);
+                        st.Dirty = true;
+                    }
+                    UiRefresh(player, "CNT", "HDR");
+                    return;
+
+                case "ask": // действие требует подтверждения
+                {
+                    _bosses.TryGetValue(spec.Key, out var bs);
+                    if (a1 == "spawn" && (bs == null || !bs.Alive)) { DoSpawn(player, spec); return; }
+                    if (a1 == "kill" && (bs == null || !bs.Alive)) { UiToast(player, "⚠ Босса нет на карте", Gold); return; }
+                    if (a1 == "reload" && !st.Dirty) { ResetDraft(st); UiDrawAll(player); UiToast(player, "✓ Черновик обновлён", CGreen); return; }
+                    st.Pending = a1;
+                    UiRefresh(player, "CFM");
+                    return;
+                }
+
+                case "preset":
+                    if (!Perm(player, "presets")) { UiToast(player, "✕ Нет права presets", CRed); return; }
+                    st.Pending = "preset:" + a1;
+                    UiRefresh(player, "CFM");
+                    return;
+
+                case "cancel":
+                    st.Pending = null;
+                    UiRefresh(player, "CFM");
+                    return;
+
+                case "confirm":
+                {
+                    var pending = st.Pending;
+                    st.Pending = null;
+                    if (string.IsNullOrEmpty(pending)) { UiRefresh(player, "CFM"); return; }
+                    var parts = pending.Split(':');
+                    switch (parts[0])
+                    {
+                        case "kill":
+                            AdminKill(FindState(spec.Key));
+                            UiToast(player, "✓ Босс убит", CGreen);
+                            break;
+                        case "spawn":
+                        {
+                            var bs2 = FindState(spec.Key);
+                            if (bs2 != null && bs2.Alive) DespawnBoss(bs2);
+                            DoSpawn(player, spec);
+                            break;
+                        }
+                        case "despawn":
+                        {
+                            var bsd = FindState(spec.Key);
+                            if (bsd != null) DespawnBoss(bsd);
+                            UiToast(player, "✓ Тихий деспавн", CGreen);
+                            break;
+                        }
+                        case "reload":
+                            ResetDraft(st);
+                            UiToast(player, "✓ Черновик обновлён", CGreen);
+                            break;
+                        case "reloadcfg":
+                            LoadConfig();
+                            _ui.Clear();
+                            UiStateOf(player);
+                            UiDrawAll(player);
+                            UiToast(player, "✓ Конфиг перечитан", CGreen);
+                            return;
+                        case "preset":
+                            ApplyPreset(st.Draft, parts[1]);
+                            st.Dirty = true;
+                            UiToast(player, "✓ Пресет применён к черновику", CGreen);
+                            break;
+                        case "boss":
+                            st.BossKey = parts[1];
+                            ResetDraft(st);
+                            UiDrawAll(player);
+                            return;
+                    }
+                    UiDrawAll(player);
+                    return;
+                }
+
+                case "tome":
+                {
+                    var bs3 = FindState(spec.Key);
+                    if (bs3 == null || !bs3.Alive) { UiToast(player, "⚠ Босса нет на карте", Gold); return; }
+                    var pos = player.transform.position + player.transform.forward * 12f;
+                    pos.y = TerrainMeta.HeightMap.GetHeight(pos) + 0.3f;
+                    try { bs3.Entity.transform.position = pos; bs3.Entity.SendNetworkUpdateImmediate(); }
+                    catch { }
+                    UiToast(player, "✓ Босс перенесён к вам", CGreen);
+                    UiRefresh(player, "STS");
+                    return;
+                }
+
+                case "next1":
+                {
+                    var bs4 = SelectedState(player);
+                    if (bs4 != null)
+                    {
+                        bs4.NextSpawnAt = DateTime.UtcNow.AddMinutes(1);
+                        bs4.Warned = true;
+                        UiToast(player, "✓ Спавн через 1 мин", CGreen);
+                    }
+                    UiRefresh(player, "STS", "LST");
+                    return;
+                }
+
+                case "resetdmg":
+                {
+                    var bs5 = FindState(spec.Key);
+                    if (bs5 != null)
+                    {
+                        bs5.DamageBy.Clear(); bs5.ThreatBy.Clear(); bs5.RecentHits.Clear();
+                        UiToast(player, "✓ Трекер урона очищен", CGreen);
+                    }
+                    return;
+                }
+
+                case "mon":
+                {
+                    var mon = NearestMonument(player.transform.position, 400f);
+                    if (mon == null) { UiToast(player, "✕ Рядом нет монумента", CRed); return; }
+                    var name = System.IO.Path.GetFileNameWithoutExtension(mon.name ?? "");
+                    if (string.IsNullOrEmpty(name)) { UiToast(player, "✕ Не распознан монумент", CRed); return; }
+                    var list = st.Draft.Spawn.MonumentNames.Split(',')
+                        .Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+                    if (list.Contains(name))
+                    {
+                        list.Remove(name);
+                        UiToast(player, $"✓ «{name}» убран из якорей", CGreen);
+                    }
+                    else
+                    {
+                        list.Add(name);
+                        UiToast(player, $"✓ «{name}» добавлен в якоря", CGreen);
+                    }
+                    st.Draft.Spawn.MonumentNames = string.Join(",", list);
+                    st.Dirty = true;
+                    UiRefresh(player, "CNT", "HDR");
+                    return;
+                }
+
+                case "save":
+                {
+                    if (!Perm(player, "edit")) { UiToast(player, "✕ Нет права edit", CRed); return; }
+                    string warnMsg;
+                    ValidateDraft(st.Draft, out warnMsg);
+                    var live = _cfg.Bosses.FirstOrDefault(b => b.Key == st.BossKey);
+                    if (live != null)
+                        JsonConvert.PopulateObject(JsonConvert.SerializeObject(st.Draft), live);
+                    st.Dirty = false;
+                    SyncRuntime();
+                    SaveConfig();
+                    UiDrawAll(player);
+                    UiToast(player, warnMsg != null ? "⚠ " + warnMsg : "✓ Конфигурация сохранена",
+                            warnMsg != null ? Gold : CGreen);
+                    return;
+                }
             }
-            if (redraw) DrawAdminUI(player);
+        }
+
+        private void DoSpawn(BasePlayer player, BossSpec spec)
+        {
+            var st = SelectedState(player);
+            if (st == null) return;
+            SpawnBoss(st, player.transform.position + player.transform.forward * 15f);
+            UiToast(player, st.Alive ? "✓ Босс заспавнен" : "✕ Не удалось найти точку спавна",
+                    st.Alive ? CGreen : CRed);
+            UiDrawAll(player);
         }
 
         private BossState SelectedState(BasePlayer player)
@@ -1960,6 +3317,69 @@ namespace Oxide.Plugins
                 _bosses[spec.Key] = st;
             }
             return st;
+        }
+
+        private static MonumentInfo NearestMonument(Vector3 pos, float maxDist)
+        {
+            MonumentInfo best = null; var bestD = maxDist;
+            var mons = TerrainMeta.Path?.Monuments;
+            if (mons == null) return null;
+            foreach (var m in mons)
+            {
+                var d = Vector3.Distance(pos, m.transform.position);
+                if (d < bestD) { bestD = d; best = m; }
+            }
+            return best;
+        }
+
+        // ---------- валидация черновика ----------
+
+        private string ValidateDraft(BossSpec d, out string warnMsg)
+        {
+            warnMsg = null;
+            d.Health = Mathf.Max(100f, d.Health);
+            d.Scale = Mathf.Max(0.2f, d.Scale);
+            d.SpeedMultiplier = Mathf.Max(0f, d.SpeedMultiplier);
+            d.DamageMultiplier = Mathf.Max(0f, d.DamageMultiplier);
+            d.Phase2Threshold = Mathf.Clamp01(d.Phase2Threshold);
+            d.Phase3Threshold = Mathf.Clamp01(d.Phase3Threshold);
+            if (d.Phase3Threshold >= d.Phase2Threshold)
+            {
+                d.Phase3Threshold = Mathf.Max(0.05f, d.Phase2Threshold - 0.1f);
+                warnMsg = "Фаза 3 должна начинаться ниже порога фазы 2 — исправлено";
+            }
+            d.Escort.Count = Mathf.Max(0, d.Escort.Count);
+            d.Escort.Radius = Mathf.Max(1f, d.Escort.Radius);
+            d.Spawn.IntervalMinutes = Mathf.Max(1f, d.Spawn.IntervalMinutes);
+            d.Spawn.MarkerRadius = Mathf.Clamp01(d.Spawn.MarkerRadius);
+            d.Rewards.Currency = Mathf.Max(0, d.Rewards.Currency);
+            d.Rewards.BuffDamage = Mathf.Max(1f, d.Rewards.BuffDamage);
+            d.Rewards.LootLockSeconds = Mathf.Max(0f, d.Rewards.LootLockSeconds);
+            return warnMsg;
+        }
+
+        private static void ApplyPreset(BossSpec d, string name)
+        {
+            switch (name)
+            {
+                case "light":
+                    d.Health = 3000; d.DamageMultiplier = 2f; d.Escort.Count = 2;
+                    d.RegenPercentPerSec = 1.5f; d.Rewards.LootLockSeconds = 10f; d.Rewards.BuffDamage = 1.05f;
+                    break;
+                case "std":
+                    d.Health = 9000; d.DamageMultiplier = 3f; d.Escort.Count = 5;
+                    d.RegenPercentPerSec = 2.5f; d.Rewards.LootLockSeconds = 10f; d.Rewards.BuffDamage = 1.10f;
+                    break;
+                case "hard":
+                    d.Health = 15000; d.DamageMultiplier = 4f; d.Escort.Count = 8;
+                    d.RegenPercentPerSec = 3f; d.Rewards.LootLockSeconds = 20f; d.Rewards.BuffDamage = 1.15f;
+                    break;
+                case "pve":
+                    d.Health = 1500; d.DamageMultiplier = 1f; d.Escort.Count = 0;
+                    d.RegenPercentPerSec = 5f; d.Rewards.LootLockSeconds = 0f; d.Rewards.BuffDamage = 1f;
+                    d.LeapSeconds = 0f;
+                    break;
+            }
         }
 
         // подхватывает виды, включённые/выключенные через панель или конфиг на лету
