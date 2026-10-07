@@ -7242,13 +7242,17 @@ namespace Oxide.Plugins
             var player = user.Object as BasePlayer;
             if (player == null || !player.IsAlive()) return;
 
-            if (permission.UserHasPermission(player.UserIDString, "octatp.blocktpmarker"))
+            bool isAdmin = player.IsAdmin || permission.UserHasPermission(player.UserIDString, PermAdmin);
+            bool hasBlock = permission.UserHasPermission(player.UserIDString, "octatp.blocktpmarker");
+            bool hasPerm = permission.UserHasPermission(player.UserIDString, PermTpMarker);
+
+            if (!isAdmin && hasBlock && !hasPerm)
             {
                 PrintMsgL(player, "BlockedMarkerTeleport");
                 return;
             }
 
-            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin) && !permission.UserHasPermission(player.UserIDString, PermTpMarker))
+            if (!isAdmin && !hasPerm)
             {
                 PrintMsgL(player, "BlockedMarkerTeleport");
                 return;
@@ -7302,13 +7306,17 @@ namespace Oxide.Plugins
 
             if (!force && blockMapMarker.Contains(player.UserIDString)) return;
 
-            if (permission.UserHasPermission(player.UserIDString, "octatp.blocktpmarker"))
+            bool isAdmin = player.IsAdmin || permission.UserHasPermission(player.UserIDString, PermAdmin);
+            bool hasBlock = permission.UserHasPermission(player.UserIDString, "octatp.blocktpmarker");
+            bool hasPerm = permission.UserHasPermission(player.UserIDString, PermTpMarker);
+
+            if (!isAdmin && hasBlock && !hasPerm)
             {
                 PrintMsgL(player, "BlockedMarkerTeleport");
                 return;
             }
 
-            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin) && !permission.UserHasPermission(player.UserIDString, PermTpMarker))
+            if (!isAdmin && !hasPerm)
             {
                 return;
             }
