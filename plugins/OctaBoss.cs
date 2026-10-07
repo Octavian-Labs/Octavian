@@ -1358,31 +1358,12 @@ namespace Oxide.Plugins
         // наследники: FleeToHide у кошек, FleeFire, HerdFlee у скотины), а не
         // ключи blackboard: чистка "flee"/"threatened" переход не отменяет.
         // Поэтому правим граф НА ЭКЗЕМПЛЯРЕ босса (списки transitions/
-        // endTransitions у FSMStateBase публичные): каждый переход, ведущий
-        // в flee-состояние, перенаправляем — боевые («ударил-убежал», паника
-        // от урона/взгляда) обратно в бой, легитимные отступления (сейф-зона,
-        // вода, огонь, недосягаемая цель, сдача энкаунтера) — в roam, т.е.
-        // спокойный уход без панического бега. Обычных животных не трогаем.
-        // Крокодила пропускаем целиком: его «бегство» — GoBackToWater, это
-        // штатный засадный цикл (нырнул → выпрыгнул), а не паника.
-
-        // условия «уважительного отхода» — им даём roam вместо паники
-        private static readonly HashSet<string> FleeLegitConds = new HashSet<string>
-        {
-            "Trans_TargetIsInSafeZone", "Trans_IsInWater_Slow", "Trans_IsTargetInWater",
-            "Trans_IsTargetTooFarFromWater", "Trans_TooFarFromWater",
-            "Trans_IsTargetProtectedByMount", "Trans_IsSwimming", "Trans_TargetIsNearFire",
-            "Trans_HasBlackboardBool", "Trans_TargetInRange", "Trans_CanReachTarget_Slow"
-        };
-
-        // условия страха/боевого отхода — из них босс должен драться
-        private static readonly HashSet<string> FleeCombatConds = new HashSet<string>
-        {
-            "Trans_IsAfraidOfTarget", "Trans_IsWatchedByTarget", "Trans_IsHealthBelowPercentage",
-            "Trans_IsProtective", "Trans_InitialAlliesNotFighting", "Trans_RecentlyHurt",
-            "Trans_AggressorNearby", "Trans_LoudNoiseNearby", "Trans_WouldRunFromAHit",
-            "Trans_HerdMateHurt", "Trans_InitialAlliesHurt"
-        };
+        // endTransitions у FSMStateBase публичные): tick-переходы в flee/food
+        // УДАЛЯЕМ (условие страха просто теряет силу — редирект в roam давал
+        // пинг-понг roam↔combat и зверь замирал), end-переходы перенаправляем
+        // (их удалять нельзя — узел останется без выхода): flee→бой,
+        // food→roam. Обычных животных не трогаем. Крокодила пропускаем
+        // целиком: его «бегство» — GoBackToWater, засадный цикл, не паника.
 
         // имена полей боевого «резюме»-состояния в порядке предпочтения:
         // волк→fastApproach, тигр→approach, скотина→warnApproach, зверь→chase
@@ -1408,19 +1389,6 @@ namespace Oxide.Plugins
         private static bool IsFoodState(Rust.Ai.Gen2.FSMStateBase s) =>
             s != null && FoodStateNames.Contains(s.GetType().Name);
 
-        // боевой лист графа: бегство ОТСЮДА — «ударил-убежал» или паника
-        // от урона, возвращаем в бой (в отличие от структурных State_Nothing-
-        // узлов и утилитных MoveToLastReachablePoint — там flee = сдача)
-        private static bool IsCombatSrcState(Rust.Ai.Gen2.FSMStateBase s)
-        {
-            var n = s.GetType().Name;
-            return n.Contains("Hurt") || n.Contains("Attack") || n.Contains("Charge") ||
-                n.Contains("Kick") || n.Contains("Stomp") || n.Contains("Bite") ||
-                n.Contains("Circle") || n.Contains("Leap") || n.Contains("Intimidat") ||
-                n.Contains("Shoving") || n.Contains("GetUp") || n.Contains("RaiseHead") ||
-                n.Contains("TurnAndRun") || n.Contains("Deadly");
-        }
-
         private static Rust.Ai.Gen2.FSMStateBase FsmStateByField(
             Rust.Ai.Gen2.FSMComponent fsm, string[] names)
         {
@@ -1438,34 +1406,6 @@ namespace Oxide.Plugins
                 }
             }
             return null;
-        }
-
-        // есть ли в дереве условия перехода (композиты/инверторы — дети в полях)
-        // условие с именем из набора; обход рефлексией — API детей у
-        // Trans_And/Trans_Or/инвертора не единый, а поля достать можно
-        private static bool TransTreeHas(Rust.Ai.Gen2.FSMTransitionBase t, HashSet<string> names)
-        {
-            var seen = new HashSet<object>();
-            var stack = new Stack<Rust.Ai.Gen2.FSMTransitionBase>();
-            if (t != null) stack.Push(t);
-            while (stack.Count > 0)
-            {
-                var o = stack.Pop();
-                if (o == null || !seen.Add(o)) continue;
-                if (names.Contains(o.GetType().Name)) return true;
-                const System.Reflection.BindingFlags fl =
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Instance;
-                foreach (var f in o.GetType().GetFields(fl))
-                {
-                    var v = f.GetValue(o);
-                    if (v is Rust.Ai.Gen2.FSMTransitionBase sub) stack.Push(sub);
-                    else if (v is System.Collections.IEnumerable en && !(v is string))
-                        foreach (var item in en)
-                            if (item is Rust.Ai.Gen2.FSMTransitionBase it) stack.Push(it);
-                }
-            }
-            return false;
         }
 
         // точка входа для босса: правит граф и запоминает боевое состояние
@@ -1527,14 +1467,16 @@ namespace Oxide.Plugins
             {
                 if (IsFleeState(s) || IsFoodState(s)) continue;
                 if (s.transitions != null)
-                for (var i = 0; i < s.transitions.Count; i++)
+                for (var i = s.transitions.Count - 1; i >= 0; i--)
                 {
                     var e = s.transitions[i];
                     if (e.dstState == null || (!IsFleeState(e.dstState) && !IsFoodState(e.dstState))) continue;
-                    var dst = IsFoodState(e.dstState) ? roam
-                        : TransTreeHas(e.transition, FleeLegitConds) ? roam
-                        : (IsCombatSrcState(s) || TransTreeHas(e.transition, FleeCombatConds)) ? combat : roam;
-                    s.transitions[i] = (e.transition, dst);
+                    // tick-переходы просто УДАЛЯЕМ: условие (страх, взгляд,
+                    // сейф-зона, вода, еда) теряет силу, а состояние не
+                    // перескакивает. Редирект в roam здесь опасен — при
+                    // постоянно истинном условии и живом таргете получался
+                    // пинг-понг roam↔combat, и зверь замирал.
+                    s.transitions.RemoveAt(i);
                     rewired++;
                 }
                 if (s.endTransitions != null)
@@ -1542,9 +1484,10 @@ namespace Oxide.Plugins
                 {
                     var e = s.endTransitions[i];
                     if (e.dstState == null || (!IsFleeState(e.dstState) && !IsFoodState(e.dstState))) continue;
-                    var dst = IsFoodState(e.dstState) ? roam
-                        : TransTreeHas(e.transition, FleeLegitConds) ? roam
-                        : (IsCombatSrcState(s) || TransTreeHas(e.transition, FleeCombatConds)) ? combat : roam;
+                    // end-переход удалять нельзя — узел может остаться без
+                    // выхода. flee → бой («ударил-убежал» → дожимает),
+                    // food → roam (доедает и спокойно уходит)
+                    var dst = IsFoodState(e.dstState) ? roam : combat;
                     s.endTransitions[i] = (e.transition, dst, e.status);
                     rewired++;
                 }
@@ -1570,7 +1513,7 @@ namespace Oxide.Plugins
             catch { }
 
             if (rewired > 0)
-                Puts($"OctaBoss: {fsm.GetType().Name} — {rewired} flee-переход(ов) перенаправлено " +
+                Puts($"OctaBoss: {fsm.GetType().Name} — {rewired} flee/food-переход(ов) вырезано " +
                      $"(бой→{combat?.Name}, отход→{roam?.Name})");
             return combat;
         }
