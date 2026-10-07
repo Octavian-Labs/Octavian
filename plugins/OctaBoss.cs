@@ -23,8 +23,10 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2 — реальные состояния графа FSM, не ключи blackboard:
-    //    переходы в flee перенаправляем на экземпляре босса (TameFlee).
-    [Info("OctaBoss", "Octavian", "1.7.0")]
+    //    переходы в flee перенаправляем на экземпляре босса (TameFlee);
+    //  - PopulateObject при сохранении админки дублировал списки лута —
+    //    заменено на замену экземпляра + авто-дедупликация при загрузке.
+    [Info("OctaBoss", "Octavian", "1.7.1")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -408,6 +410,48 @@ namespace Oxide.Plugins
                 _cfg = DefaultBosses();
                 SaveConfig();
             }
+            else
+            {
+                // Защита от старого бага раздувания лут-таблицы (PopulateObject дублировал её при каждом клике «Сохранить»)
+                bool cleaned = false;
+                foreach (var b in _cfg.Bosses)
+                {
+                    if (b?.Rewards?.Loot == null || b.Rewards.Loot.Count <= 25) continue;
+                    var dedupped = DeduplicateLoot(b.Rewards.Loot);
+                    if (dedupped.Count < b.Rewards.Loot.Count)
+                    {
+                        PrintWarning($"OctaBoss[{b.Key}]: обнаружено раздувание лут-таблицы ({b.Rewards.Loot.Count} -> {dedupped.Count}). Очищено.");
+                        b.Rewards.Loot = dedupped;
+                        cleaned = true;
+                    }
+                }
+                if (cleaned) SaveConfig();
+            }
+        }
+
+        private static List<LootEntry> DeduplicateLoot(List<LootEntry> src)
+        {
+            if (src == null || src.Count <= 25) return src;
+            for (int period = 15; period <= 35 && period <= src.Count / 2; period++)
+            {
+                if (src.Count % period != 0) continue;
+                bool isRepetition = true;
+                for (int i = period; i < src.Count; i++)
+                {
+                    var a = src[i % period];
+                    var b = src[i];
+                    if (a.ShortName != b.ShortName || a.BlueprintTarget != b.BlueprintTarget ||
+                        a.MinAmount != b.MinAmount || a.MaxAmount != b.MaxAmount ||
+                        a.Pool != b.Pool || Math.Abs(a.Chance - b.Chance) > 0.001f)
+                    {
+                        isRepetition = false;
+                        break;
+                    }
+                }
+                if (isRepetition)
+                    return src.Take(period).ToList();
+            }
+            return src;
         }
 
         protected override void LoadDefaultConfig() => _cfg = DefaultBosses();
@@ -860,10 +904,15 @@ namespace Oxide.Plugins
             NotifyDiscord($"{st.Spec.DisplayName} появился в квадрате {grid} ({pos.x:0},{pos.z:0})");
         }
 
+        private static readonly JsonSerializerSettings JsonClonerSettings = new JsonSerializerSettings
+        {
+            ObjectCreationHandling = ObjectCreationHandling.Replace
+        };
+
         // глубокая копия спека — боевой слепок босса
         private static BossSpec CloneSpec(BossSpec src)
         {
-            return JsonConvert.DeserializeObject<BossSpec>(JsonConvert.SerializeObject(src));
+            return JsonConvert.DeserializeObject<BossSpec>(JsonConvert.SerializeObject(src), JsonClonerSettings);
         }
 
         private static void ApplySpeed(BaseCombatEntity ent, float mult)
@@ -2313,7 +2362,7 @@ namespace Oxide.Plugins
             var live = _cfg.Bosses.FirstOrDefault(b => b.Key == st.BossKey) ?? _cfg.Bosses.FirstOrDefault();
             if (live != null && st.BossKey != live.Key) st.BossKey = live.Key;
             if (live != null && st.Draft == null)
-                st.Draft = JsonConvert.DeserializeObject<BossSpec>(JsonConvert.SerializeObject(live));
+                st.Draft = CloneSpec(live);
             return st;
         }
 
@@ -2322,7 +2371,7 @@ namespace Oxide.Plugins
         {
             var live = _cfg.Bosses.FirstOrDefault(b => b.Key == st.BossKey);
             if (live != null)
-                st.Draft = JsonConvert.DeserializeObject<BossSpec>(JsonConvert.SerializeObject(live));
+                st.Draft = CloneSpec(live);
             st.Dirty = false;
         }
 
@@ -3675,9 +3724,14 @@ namespace Oxide.Plugins
                     if (!Perm(player, "edit")) { UiToast(player, "✕ Нет права edit", CRed); return; }
                     string warnMsg;
                     ValidateDraft(st.Draft, out warnMsg);
-                    var live = _cfg.Bosses.FirstOrDefault(b => b.Key == st.BossKey);
-                    if (live != null)
-                        JsonConvert.PopulateObject(JsonConvert.SerializeObject(st.Draft), live);
+                    var idx = _cfg.Bosses.FindIndex(b => b.Key == st.BossKey);
+                    if (idx >= 0)
+                    {
+                        var newLive = CloneSpec(st.Draft);
+                        _cfg.Bosses[idx] = newLive;
+                        if (_bosses.TryGetValue(st.BossKey, out var bst))
+                            bst.Live = newLive;
+                    }
                     st.Dirty = false;
                     SyncRuntime();
                     SaveConfig();
