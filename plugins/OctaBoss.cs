@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.4.2")]
+    [Info("OctaBoss", "Octavian", "1.5.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -39,6 +39,8 @@ namespace Oxide.Plugins
             [JsonProperty("Шанс (0-1)")] public float Chance = 0.5f;
             [JsonProperty("Скин ID (0 = без)")] public ulong SkinId = 0;
             [JsonProperty("Чертёж: целевой предмет (если задан)")] public string BlueprintTarget = "";
+            // 0 = независимый шанс; >0 = из пула выпадает РОВНО один предмет (Chance = вес)
+            [JsonProperty("Пул (0 = сам по себе, >0 = один предмет из пула)")] public int Pool = 0;
         }
 
         private class EscortSettings
@@ -77,6 +79,7 @@ namespace Oxide.Plugins
             [JsonProperty("Бафф урона победителя (x)")] public float BuffDamage = 1.2f;
             [JsonProperty("Длительность баффа (мин)")] public float BuffMinutes = 15f;
             [JsonProperty("Время жизни мешка с лутом (сек)")] public float LootLifetimeSeconds = 3600f;
+            [JsonProperty("Мешок закрыт после смерти (сек)")] public float LootLockSeconds = 10f;
             [JsonProperty("Лут-таблица")] public List<LootEntry> Loot = new List<LootEntry>();
         }
 
@@ -102,7 +105,25 @@ namespace Oxide.Plugins
             [JsonProperty("Экстра агрессия (никогда не убегает)")] public bool HyperAggro = false;
             [JsonProperty("Форс-агро Provoke (для скотины вместо HyperAggro)")] public bool ForceProvoke = false;
             [JsonProperty("Перезарядка боя: сек без урона до регена (0 = выкл)")] public float RegenDelaySeconds = 60f;
-            [JsonProperty("Реген % макс. HP в секунду")] public float RegenPercentPerSec = 10f;
+            [JsonProperty("Реген % макс. HP в секунду")] public float RegenPercentPerSec = 2.5f;
+            // --- фазы боя: P1 пасущийся (>P2Threshold), P2 разъярённый, P3 последний рывок ---
+            [JsonProperty("Фазы боя включены")] public bool PhasesEnabled = true;
+            [JsonProperty("Фаза 2: порог входа (доля HP, вход при ниже)")] public float Phase2Threshold = 0.8f;
+            [JsonProperty("Фаза 3: порог входа (доля HP, вход при ниже)")] public float Phase3Threshold = 0.3f;
+            [JsonProperty("Фаза 2: множитель исходящего урона")] public float P2DamageMult = 1.15f;
+            [JsonProperty("Фаза 3: множитель исходящего урона")] public float P3DamageMult = 1.35f;
+            [JsonProperty("Фаза 2: радиус агро (м)")] public float P2AggroRadius = 120f;
+            [JsonProperty("Фаза 3: радиус агро (м)")] public float P3AggroRadius = 150f;
+            [JsonProperty("Фаза 2: множитель скорости")] public float P2SpeedMult = 1.15f;
+            [JsonProperty("Фаза 3: множитель скорости")] public float P3SpeedMult = 1.35f;
+            [JsonProperty("Фаза 3: часть свиты разбегается (0-1)")] public float P3EscortFleeChance = 0.4f;
+            [JsonProperty("Пересмотр цели по угрозе каждые (сек, 0=выкл)")] public float RetargetSeconds = 12f;
+            [JsonProperty("Гистерезис смены цели (x угрозы текущей)")] public float ThreatHysteresis = 1.35f;
+            [JsonProperty("Фаза 3: рывок к дальнему дамагеру каждые (сек, 0=выкл)")] public float LeapSeconds = 15f;
+            [JsonProperty("Фаза 3: урон рывка по площади")] public float LeapDamage = 60f;
+            [JsonProperty("Фаза 3: щит после рывка (сек, -25% входящего)")] public float LeapShieldSeconds = 3f;
+            [JsonProperty("Анонс фазы 2")] public string Phase2Announce = "{name} РАЗЪЯРЁН — ищет, кто больше всех его обидел!";
+            [JsonProperty("Анонс фазы 3")] public string Phase3Announce = "{name} ОТЧАЯЛСЯ — финальный рывок! Держитесь вместе!";
             [JsonProperty("Свита")] public EscortSettings Escort = new EscortSettings();
             [JsonProperty("Спавн")] public SpecSpawn Spawn = new SpecSpawn();
             [JsonProperty("Награды")] public SpecRewards Rewards = new SpecRewards();
@@ -129,9 +150,9 @@ namespace Oxide.Plugins
             [JsonProperty("Уведомления")] public NotifySettings Notify = new NotifySettings();
         }
 
-        // компактная запись строки лута: LE(шортнейм, мин, макс, шанс[, цель чертежа])
-        private static LootEntry LE(string sn, int min, int max, float ch, string bp = "", ulong skin = 0) =>
-            new LootEntry { ShortName = sn, MinAmount = min, MaxAmount = max, Chance = ch, BlueprintTarget = bp, SkinId = skin };
+        // компактная запись строки лута: LE(шортнейм, мин, макс, шанс[, цель чертежа][, пул])
+        private static LootEntry LE(string sn, int min, int max, float ch, string bp = "", int pool = 0) =>
+            new LootEntry { ShortName = sn, MinAmount = min, MaxAmount = max, Chance = ch, BlueprintTarget = bp, Pool = pool };
 
         private static List<LootEntry> RichLoot() => new List<LootEntry>
         {
@@ -140,16 +161,16 @@ namespace Oxide.Plugins
             LE("sulfur", 6000, 12000, 0.9f),
             LE("gunpowder", 3000, 6000, 0.7f),
             LE("techparts", 30, 60, 0.6f),
-            LE("keycard_blue", 1, 1, 0.35f),
-            LE("keycard_red", 1, 1, 0.2f),
-            LE("lmg.m249", 1, 1, 0.15f),
-            LE("rifle.lr300", 1, 1, 0.25f),
-            LE("rifle.l96", 1, 1, 0.15f),
-            LE("rocket.launcher", 1, 1, 0.2f),
-            LE("multiplegrenadelauncher", 1, 1, 0.2f),
-            LE("shotgun.spas12", 1, 1, 0.25f),
-            LE("ammo.rifle.explosive", 60, 128, 0.4f),
-            LE("ammo.rocket.hv", 2, 4, 0.3f),
+            LE("keycard_blue", 1, 1, 0.6f, pool: 2),
+            LE("keycard_red", 1, 1, 0.2f, pool: 2),
+            LE("lmg.m249", 1, 1, 0.05f, pool: 1),
+            LE("rifle.lr300", 1, 1, 0.25f, pool: 1),
+            LE("rifle.l96", 1, 1, 0.15f, pool: 1),
+            LE("rocket.launcher", 1, 1, 0.15f, pool: 1),
+            LE("multiplegrenadelauncher", 1, 1, 0.2f, pool: 1),
+            LE("shotgun.spas12", 1, 1, 0.2f, pool: 1),
+            LE("ammo.rifle.explosive", 60, 128, 0.15f, pool: 2),
+            LE("ammo.rocket.hv", 2, 4, 0.05f, pool: 2),
             LE("advancedblueprintfragment", 3, 3, 1f),
             LE("blueprintbase", 1, 1, 0.35f, "rifle.ak"),
             LE("blueprintbase", 1, 1, 0.25f, "rifle.lr300"),
@@ -169,16 +190,16 @@ namespace Oxide.Plugins
             LE("sulfur", 2000, 4000, 0.9f),
             LE("gunpowder", 1000, 2000, 0.7f),
             LE("techparts", 10, 20, 0.6f),
-            LE("keycard_blue", 1, 1, 0.15f),
-            LE("keycard_red", 1, 1, 0.07f),
-            LE("lmg.m249", 1, 1, 0.05f),
-            LE("rifle.lr300", 1, 1, 0.08f),
-            LE("rifle.l96", 1, 1, 0.05f),
-            LE("rocket.launcher", 1, 1, 0.07f),
-            LE("multiplegrenadelauncher", 1, 1, 0.07f),
-            LE("shotgun.spas12", 1, 1, 0.08f),
-            LE("ammo.rifle.explosive", 20, 42, 0.25f),
-            LE("ammo.rocket.hv", 1, 2, 0.15f),
+            LE("keycard_blue", 1, 1, 0.6f, pool: 2),
+            LE("keycard_red", 1, 1, 0.1f, pool: 2),
+            LE("lmg.m249", 1, 1, 0.03f, pool: 1),
+            LE("rifle.lr300", 1, 1, 0.15f, pool: 1),
+            LE("rifle.l96", 1, 1, 0.1f, pool: 1),
+            LE("rocket.launcher", 1, 1, 0.12f, pool: 1),
+            LE("multiplegrenadelauncher", 1, 1, 0.15f, pool: 1),
+            LE("shotgun.spas12", 1, 1, 0.45f, pool: 1),
+            LE("ammo.rifle.explosive", 20, 42, 0.25f, pool: 2),
+            LE("ammo.rocket.hv", 1, 2, 0.05f, pool: 2),
             LE("advancedblueprintfragment", 1, 1, 1f),
             LE("blueprintbase", 1, 1, 0.12f, "rifle.ak"),
             LE("blueprintbase", 1, 1, 0.08f, "rifle.lr300"),
@@ -405,7 +426,23 @@ namespace Oxide.Plugins
             public bool Warned;
             public bool Raging;
             public bool ResetDone; // уже «зализал раны» — реген и сброс трекера отработали
+            public bool DeathHandled; // смерть уже обработана — защита от двойного лута/наград
             public readonly Dictionary<ulong, float> DamageBy = new Dictionary<ulong, float>();
+            // фазы/угроза
+            public int Phase = 1;
+            public ulong ThreatTargetId;
+            public DateTime LastThreatDecay;
+            public DateTime LastRetargetAt;
+            public DateTime LastLeapAt;
+            public DateTime ShieldUntil;
+            public readonly Dictionary<ulong, float> ThreatBy = new Dictionary<ulong, float>();
+            // урон за последние ~20с — «кто сейчас бесит босса»
+            public class RecentHit { public DateTime T; public ulong Id; public float D; }
+            public readonly List<RecentHit> RecentHits = new List<RecentHit>();
+            // роли свиты: 0=охранник (держится у босса), 1=приманка (идёт на игрока)
+            public readonly Dictionary<BaseCombatEntity, int> EscortRoles = new Dictionary<BaseCombatEntity, int>();
+            public DateTime LastEscortTick;
+            public float CurSpeedMult = 1f; // накопленный множитель скорости (фазы)
 
             public bool Alive => Entity != null && !Entity.IsDestroyed && Entity.IsAlive();
         }
@@ -432,6 +469,7 @@ namespace Oxide.Plugins
         }
 
         private readonly List<PendingCorpse> _corpses = new List<PendingCorpse>();
+        private readonly Dictionary<DroppedItemContainer, DateTime> _lockedBags = new Dictionary<DroppedItemContainer, DateTime>();
         private readonly Dictionary<ulong, Buff> _buffs = new Dictionary<ulong, Buff>();
         private readonly Dictionary<string, string> _lastKillInfo = new Dictionary<string, string>();
         private Timer _timerSpawn, _timerAggro;
@@ -691,7 +729,18 @@ namespace Oxide.Plugins
             st.LastDamageAt = DateTime.UtcNow;
             st.Raging = false;
             st.ResetDone = true; // свежий босс — регена не требуется
+            st.DeathHandled = false;
             st.DamageBy.Clear();
+            st.Phase = 1;
+            st.ThreatTargetId = 0;
+            st.ThreatBy.Clear();
+            st.RecentHits.Clear();
+            st.EscortRoles.Clear();
+            st.LastThreatDecay = DateTime.UtcNow;
+            st.LastRetargetAt = DateTime.UtcNow;
+            st.LastLeapAt = DateTime.UtcNow;
+            st.LastEscortTick = DateTime.UtcNow;
+            st.CurSpeedMult = st.Spec.SpeedMultiplier;
 
             ent.InitializeHealth(st.Spec.Health, st.Spec.Health);
             ent.startHealth = st.Spec.Health;
@@ -768,6 +817,10 @@ namespace Oxide.Plugins
                 try { e.SendNetworkUpdateImmediate(); } catch { }
                 st.Escorts.Add(e);
             }
+            // роли: первые ceil(N*0.6) — охранники у босса, остальные — приманки
+            var guardN = Mathf.CeilToInt(st.Escorts.Count * 0.6f);
+            for (var i = 0; i < st.Escorts.Count; i++)
+                st.EscortRoles[st.Escorts[i]] = i < guardN ? 0 : 1;
         }
 
         // тихий деспавн без лута/наград (старая копия при респавне, таймаут жизни)
@@ -792,6 +845,7 @@ namespace Oxide.Plugins
                     e.Kill();
                 }
             st.Escorts.Clear();
+            st.EscortRoles.Clear();
         }
 
         private void ClearMarker(BossState st)
@@ -868,18 +922,25 @@ namespace Oxide.Plugins
                 var regenDelay = st.Spec.RegenDelaySeconds;
                 if (regenDelay > 0 && (now - st.LastDamageAt).TotalSeconds >= regenDelay)
                 {
-                    if (!st.ResetDone)
-                    {
-                        st.ResetDone = true;
-                        if (st.DamageBy.Count > 0)
-                            Announce(Fmt(st.Spec.ResetAnnounce, st.Spec, null));
-                        st.DamageBy.Clear();
-                        st.Raging = false;
-                    }
                     var ent = st.Entity;
-                    if (ent.Health() < ent.MaxHealth())
+                    // на 95%+ бой считается полностью сброшенным: ярость снята,
+                    // трекер очищен — новая группа начинает с чистого листа
+                    if (ent.Health() >= ent.MaxHealth() * 0.95f)
+                    {
+                        if (!st.ResetDone)
+                        {
+                            st.ResetDone = true;
+                            if (st.DamageBy.Count > 0)
+                                Announce(Fmt(st.Spec.ResetAnnounce, st.Spec, null));
+                            st.DamageBy.Clear();
+                            st.Raging = false;
+                        }
+                    }
+                    else
+                    {
                         ent.SetHealth(Mathf.Min(ent.MaxHealth(),
                             ent.Health() + ent.MaxHealth() * st.Spec.RegenPercentPerSec * 0.01f));
+                    }
                 }
 
                 // деспавн по старости жизни
@@ -891,6 +952,49 @@ namespace Oxide.Plugins
                     continue;
                 }
 
+                // фазы по HP: 1 пасущийся / 2 разъярённый / 3 последний рывок
+                var hpFrac = st.Entity.Health() / st.Entity.MaxHealth();
+                var newPhase = !st.Spec.PhasesEnabled ? 1
+                    : hpFrac > st.Spec.Phase2Threshold ? 1
+                    : hpFrac > st.Spec.Phase3Threshold ? 2 : 3;
+                if (newPhase != st.Phase)
+                {
+                    st.Phase = newPhase;
+                    if (newPhase == 2 && !string.IsNullOrEmpty(st.Spec.Phase2Announce))
+                        Announce(Fmt(st.Spec.Phase2Announce, st.Spec, null));
+                    if (newPhase == 3)
+                    {
+                        if (!string.IsNullOrEmpty(st.Spec.Phase3Announce))
+                            Announce(Fmt(st.Spec.Phase3Announce, st.Spec, null));
+                        EscortPanic(st); // часть свиты разбегается, часть входит в ярость
+                    }
+                    ApplyPhaseSpeed(st);
+                }
+
+                // таблица угрозы: decay ×0.92 каждые 5 сек — свежая активность
+                // важнее, а набежавший сунуть ножом не станет вечной целью
+                if ((now - st.LastThreatDecay).TotalSeconds >= 5)
+                {
+                    st.LastThreatDecay = now;
+                    foreach (var k in st.ThreatBy.Keys.ToList()) st.ThreatBy[k] *= 0.92f;
+                }
+
+                // пересмотр цели по угрозе с гистерезисом (фаза 2+)
+                if (st.Phase >= 2 && st.Spec.RetargetSeconds > 0 &&
+                    (now - st.LastRetargetAt).TotalSeconds >= st.Spec.RetargetSeconds)
+                {
+                    st.LastRetargetAt = now;
+                    TryRetarget(st);
+                }
+
+                // фаза 3: рывок к самому дальнему дамагеру + AoE
+                if (st.Phase == 3 && st.Spec.LeapSeconds > 0 &&
+                    (now - st.LastLeapAt).TotalSeconds >= st.Spec.LeapSeconds)
+                {
+                    st.LastLeapAt = now;
+                    TryLeap(st);
+                }
+
                 // ярость
                 if (!st.Raging && st.Entity.Health() <= st.Entity.MaxHealth() * st.Spec.RageThreshold)
                 {
@@ -898,7 +1002,14 @@ namespace Oxide.Plugins
                     Announce(Fmt(st.Spec.RageAnnounce, st.Spec, null));
                 }
 
-                var radius = st.Raging ? st.Spec.AggroRadius * 1.5f : st.Spec.AggroRadius;
+                // поведение свиты по ролям — не чаще раза в 3 сек
+                if ((now - st.LastEscortTick).TotalSeconds >= 3)
+                {
+                    st.LastEscortTick = now;
+                    EscortTick(st);
+                }
+
+                var radius = AggroOf(st);
                 var target = NearestPlayer(st.Entity.transform.position, radius);
                 if (target == null) continue;
 
@@ -951,6 +1062,187 @@ namespace Oxide.Plugins
         private BossState EscortOf(BaseEntity ent) =>
             _bosses.Values.FirstOrDefault(st => st.Escorts.Contains(ent));
 
+        // скорость по фазе: ApplySpeed умножает ТЕКУЩИЕ значения агента —
+        // поэтому делим на накопленный множитель, а не передаём абсолют
+        private void ApplyPhaseSpeed(BossState st)
+        {
+            var want = st.Spec.SpeedMultiplier *
+                (st.Phase == 3 ? st.Spec.P3SpeedMult : st.Phase == 2 ? st.Spec.P2SpeedMult : 1f);
+            if (!st.Alive || Mathf.Abs(want - st.CurSpeedMult) <= 0.01f) return;
+            ApplySpeed(st.Entity, want / st.CurSpeedMult);
+            st.CurSpeedMult = want;
+        }
+
+        // P3: часть свиты разбегается (тихий деспавн), часть входит в агро
+        private void EscortPanic(BossState st)
+        {
+            foreach (var e in st.Escorts.ToList())
+            {
+                if (e == null || e.IsDestroyed) continue;
+                if (UnityEngine.Random.value < st.Spec.P3EscortFleeChance)
+                {
+                    st.Escorts.Remove(e);
+                    st.EscortRoles.Remove(e);
+                    e.Kill();
+                }
+                else
+                {
+                    try { (e as Rust.Ai.Gen2.BaseNPC2)?.MarkHostileFor(60f); } catch { }
+                }
+            }
+        }
+
+        // охрана держится у босса (leash 50м — возврат телепортом), приманки
+        // провоцируются на ближайшего игрока: жечь патроны придётся
+        private void EscortTick(BossState st)
+        {
+            if (!st.Alive) return;
+            var bossPos = st.Entity.transform.position;
+            foreach (var e in st.Escorts)
+            {
+                if (e == null || e.IsDestroyed) continue;
+                var role = st.EscortRoles.TryGetValue(e, out var r) ? r : 0;
+                var npc = e as Rust.Ai.Gen2.BaseNPC2;
+                var lv = e as Rust.Ai.Gen2.LivestockAnimal;
+                if (role == 0)
+                {
+                    if (Vector3.Distance(e.transform.position, bossPos) > 50f)
+                    {
+                        var back = bossPos + new Vector3(
+                            UnityEngine.Random.Range(-6f, 6f), 0f, UnityEngine.Random.Range(-6f, 6f));
+                        try { back.y = TerrainMeta.HeightMap.GetHeight(back) + 0.3f; } catch { back.y = bossPos.y; }
+                        try { e.transform.position = back; } catch { }
+                        continue;
+                    }
+                    // охрана атакует того же, кого бесится босс (или последнего стрелка)
+                    var tp = st.ThreatTargetId != 0 ? FindPlayer(st.ThreatTargetId) : null;
+                    if (tp == null || tp.IsDead())
+                    {
+                        var last = st.RecentHits.LastOrDefault();
+                        tp = last != null ? FindPlayer(last.Id) : null;
+                    }
+                    if (tp != null && !tp.IsDead())
+                    {
+                        try { npc?.MarkHostileFor(30f); } catch { }
+                        try { lv?.Provoke(tp); lv?.RememberAggressor(tp); } catch { }
+                    }
+                }
+                else
+                {
+                    var np = NearestPlayer(e.transform.position, 60f);
+                    if (np != null)
+                    {
+                        try { npc?.MarkHostileFor(30f); } catch { }
+                        try { lv?.Provoke(np); lv?.RememberAggressor(np); } catch { }
+                    }
+                }
+            }
+        }
+
+        // итоговый множитель исходящего урона: база × фаза × ярость
+        private static float DmgMult(BossState st)
+        {
+            var spec = st.Spec;
+            var phase = st.Phase == 3 ? spec.P3DamageMult : st.Phase == 2 ? spec.P2DamageMult : 1f;
+            return spec.DamageMultiplier * phase * (st.Raging ? spec.RageDamageMultiplier : 1f);
+        }
+
+        private static float AggroOf(BossState st)
+        {
+            var spec = st.Spec;
+            var r = st.Phase == 3 ? spec.P3AggroRadius : st.Phase == 2 ? spec.P2AggroRadius : spec.AggroRadius;
+            return st.Raging ? r * 1.5f : r;
+        }
+
+        // модификатор дистанции для скоринга цели
+        private static float DistMod(float d) => d <= 30 ? 1f : d <= 60 ? 0.7f : d <= 120 ? 0.4f : 0.1f;
+
+        // попытка перевести босса на новую цель: угроза × дистанция,
+        // смена только если новая цель сильнее текущей ×гистерезис — иначе
+        // босс будет метаться между игроками на каждый выстрел
+        private void TryRetarget(BossState st)
+        {
+            if (!st.Alive) return;
+            var now = DateTime.UtcNow;
+            st.RecentHits.RemoveAll(h => (now - h.T).TotalSeconds > 20);
+            var bossPos = st.Entity.transform.position;
+            BasePlayer candP = null;
+            var candScore = 0f;
+            ulong candId = 0;
+            foreach (var kv in st.ThreatBy)
+            {
+                var p = FindPlayer(kv.Key);
+                if (p == null || p.IsDead() || !p.IsConnected) continue;
+                var score = kv.Value * DistMod(Vector3.Distance(bossPos, p.transform.position));
+                if (score > candScore) { candScore = score; candP = p; candId = kv.Key; }
+            }
+            var curScore = st.ThreatTargetId != 0 && st.ThreatBy.TryGetValue(st.ThreatTargetId, out var ct)
+                ? ct * DistMod(Vector3.Distance(bossPos, FindPlayer(st.ThreatTargetId)?.transform.position ?? bossPos))
+                : 0f;
+            if (candP == null || candId == st.ThreatTargetId) return;
+            if (st.ThreatTargetId == 0 || candScore > curScore * st.Spec.ThreatHysteresis)
+            {
+                st.ThreatTargetId = candId;
+                ForceTarget(st, candP);
+                // свита на P2+ идёт за топ-дамагером, а не за ближайшим
+                if (st.Phase >= 2)
+                    foreach (var e in st.Escorts)
+                        try { (e as Rust.Ai.Gen2.BaseNPC2)?.MarkHostileFor(30f); } catch { }
+            }
+        }
+
+        // лучшее, что можно выжать из AI зверей извне: hostile + provoke/aggressor
+        private void ForceTarget(BossState st, BasePlayer p)
+        {
+            if (p == null) return;
+            try { st.Ai?.MarkHostileFor(60f); } catch { }
+            if (st.Livestock != null)
+            {
+                try { st.Livestock.Provoke(p); } catch { }
+                try { st.Livestock.RememberAggressor(p); } catch { }
+            }
+        }
+
+        // фаза 3: рывок к самому ДАЛЬНЕМУ активному дамагеру + AoE-удар.
+        // Дистанционный фоллоуфол: <=3м полный урон, <=7м половина, дальше ноль —
+        // разбежались вовремя = живы. Водные звери не прыгают: телепорт
+        // порвёт их водный навмеш (см. DieOffNavmesh у крокодила).
+        private void TryLeap(BossState st)
+        {
+            if (!st.Alive || st.Spec.Spawn.NeedsWater) return;
+            var bossPos = st.Entity.transform.position;
+            BasePlayer tgt = null;
+            var bestD = 0f;
+            foreach (var id in st.DamageBy.Keys)
+            {
+                var p = FindPlayer(id);
+                if (p == null || p.IsDead() || !p.IsConnected) continue;
+                var d = Vector3.Distance(bossPos, p.transform.position);
+                if (d > bestD && d <= st.Spec.P3AggroRadius + 30f) { bestD = d; tgt = p; }
+            }
+            if (tgt == null) return;
+
+            var ent = st.Entity;
+            var dir = (tgt.transform.position - bossPos);
+            dir.y = 0;
+            dir = dir.sqrMagnitude > 0.01f ? dir.normalized : Vector3.forward;
+            var dest = tgt.transform.position - dir * 3f;
+            dest.y = TerrainMeta.HeightMap.GetHeight(dest) + 0.5f;
+            try { ent.transform.position = dest; } catch { return; }
+
+            var mult = DmgMult(st);
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                if (p == null || p.IsDead()) continue;
+                var d = Vector3.Distance(p.transform.position, tgt.transform.position);
+                var f = d <= 3f ? 1f : d <= 7f ? 0.5f : 0f;
+                if (f <= 0f) continue;
+                p.Hurt(st.Spec.LeapDamage * mult * f, DamageType.Bleeding, ent);
+            }
+            st.ShieldUntil = DateTime.UtcNow.AddSeconds(st.Spec.LeapShieldSeconds);
+            ForceTarget(st, tgt);
+        }
+
         #endregion
 
         #region Damage
@@ -986,9 +1278,18 @@ namespace Oxide.Plugins
                     }
                 }
                 ApplyBossArmor(st.Spec, info);
+                // щит после рывка (фаза 3): -25% входящего на пару секунд
+                if (DateTime.UtcNow < st.ShieldUntil) info.damageTypes.ScaleAll(0.75f);
                 if (attacker != null && !attacker.IsNpc)
                 {
-                    AddDamage(st.DamageBy, Uid(attacker), info.damageTypes.Total());
+                    // кап по текущему HP: оверкилл (500 урона в тело на 3 HP)
+                    // не должен накручивать трекер и красть «топ-дамагер»
+                    var capped = Mathf.Min(info.damageTypes.Total(), entity.Health());
+                    AddDamage(st.DamageBy, Uid(attacker), capped);
+                    AddDamage(st.ThreatBy, Uid(attacker), capped);
+                    st.RecentHits.Add(new BossState.RecentHit
+                        { T = DateTime.UtcNow, Id = Uid(attacker), D = capped });
+                    if (st.RecentHits.Count > 400) st.RecentHits.RemoveRange(0, st.RecentHits.Count - 200);
                     st.LastDamageAt = DateTime.UtcNow;
                     st.ResetDone = false; // бой идёт — реген отключён
                 }
@@ -1002,8 +1303,11 @@ namespace Oxide.Plugins
                 var atk = StateOf(src);
                 if (atk != null && atk.Alive)
                 {
-                    var mult = atk.Spec.DamageMultiplier * (atk.Raging ? atk.Spec.RageDamageMultiplier : 1f);
-                    info.damageTypes.ScaleAll(mult);
+                    // танкование тоже угроза: полученный от босса урон ×0.25
+                    var victim = entity as BasePlayer;
+                    if (victim != null && !victim.IsNpc)
+                        AddDamage(atk.ThreatBy, Uid(victim), info.damageTypes.Total() * 0.25f);
+                    info.damageTypes.ScaleAll(DmgMult(atk));
                     return;
                 }
             }
@@ -1052,6 +1356,7 @@ namespace Oxide.Plugins
             if (esc != null)
             {
                 esc.Escorts.Remove(entity);
+                esc.EscortRoles.Remove(entity);
                 RegisterCorpseScale(entity, esc.Spec.Escort.Scale);
                 return;
             }
@@ -1067,6 +1372,10 @@ namespace Oxide.Plugins
         // лута и наград НЕТ: иначе бесплатный мешок = вымани крокодила с навмеша.
         private void HandleBossDeath(BossState st, HitInfo info, bool adminKill = false)
         {
+            // Kill() из админки/деспавна и OnEntityDeath могут сработать оба —
+            // без флага было бы двойной лут, двойные награды и два анонса
+            if (st.DeathHandled) return;
+            st.DeathHandled = true;
             if (!st.Alive && st.Entity == null) return;
             var ent = st.Entity;
 
@@ -1096,7 +1405,16 @@ namespace Oxide.Plugins
             st.Entity = null;
             st.Ai = null;
             st.Livestock = null;
-            st.Escorts.Clear(); // свита остаётся — обычные животные
+            // свита: 60 сек паникует у туши, потом исчезает — не бесплатное
+            // мясо и не зверинец на карте после каждого ивента
+            var leftover = st.Escorts.Where(e => e != null && !e.IsDestroyed).ToList();
+            st.Escorts.Clear();
+            if (leftover.Count > 0)
+                timer.Once(60f, () =>
+                {
+                    foreach (var e in leftover)
+                        if (e != null && !e.IsDestroyed) e.Kill();
+                });
             ScheduleNext(st);
         }
 
@@ -1162,16 +1480,56 @@ namespace Oxide.Plugins
             bag.inventory.SetFlag(ItemContainer.Flag.NoItemInput, true);
 
             var rng = new System.Random();
+            // пул 0 — независимые шансы как раньше; пул N>0 — ровно ОДИН
+            // предмет из пула (Chance = вес). Иначе дроп превращался в склад.
+            var pools = new Dictionary<int, List<LootEntry>>();
             foreach (var e in spec.Rewards.Loot)
             {
-                if (rng.NextDouble() > e.Chance) continue;
-                var item = CreateLootItem(spec, e, rng.Next(e.MinAmount, e.MaxAmount + 1));
-                if (item != null && !item.MoveToContainer(bag.inventory))
-                    item.Remove();
+                if (e.Pool > 0)
+                {
+                    if (!pools.TryGetValue(e.Pool, out var g)) pools[e.Pool] = g = new List<LootEntry>();
+                    g.Add(e);
+                    continue;
+                }
+                if (rng.NextDouble() <= e.Chance) AddLootItem(spec, e, rng, bag.inventory);
+            }
+            foreach (var g in pools.Values)
+            {
+                var tw = g.Sum(x => x.Chance);
+                if (tw <= 0) continue;
+                var roll = rng.NextDouble() * tw;
+                foreach (var e in g)
+                {
+                    roll -= e.Chance;
+                    if (roll > 0) continue;
+                    AddLootItem(spec, e, rng, bag.inventory);
+                    break;
+                }
             }
 
             bag.Spawn();
             bag.ResetRemovalTime(Mathf.Max(spec.Rewards.LootLifetimeSeconds, bag.CalculateRemovalTime()));
+            // спорный лут: первые N секунд мешок закрыт — победитель должен
+            // дожить до открытия, чужие получают шанс на врыв
+            if (spec.Rewards.LootLockSeconds > 0)
+                _lockedBags[bag] = DateTime.UtcNow.AddSeconds(spec.Rewards.LootLockSeconds);
+        }
+
+        private object CanLootEntity(BasePlayer player, BaseEntity entity)
+        {
+            var bag = entity as DroppedItemContainer;
+            if (bag == null || !_lockedBags.TryGetValue(bag, out var until)) return null;
+            var left = (float)(until - DateTime.UtcNow).TotalSeconds;
+            if (left <= 0) { _lockedBags.Remove(bag); return null; }
+            player.ChatMessage($"{Tag} Лут откроется через {Mathf.CeilToInt(left)} сек — не мешай ему стать твоим");
+            return false;
+        }
+
+        private void AddLootItem(BossSpec spec, LootEntry e, System.Random rng, ItemContainer inv)
+        {
+            var item = CreateLootItem(spec, e, rng.Next(e.MinAmount, e.MaxAmount + 1));
+            if (item != null && !item.MoveToContainer(inv))
+                item.Remove(); // мест не хватило — теряется молча, но честно
         }
 
         // предмет по строке лут-таблицы: обычный или чертёж (blueprintbase + цель)
@@ -1204,21 +1562,68 @@ namespace Oxide.Plugins
         // альт-фарма: без капа каждый твинк с одним ударом тащит участие
         private const int MaxParticipationRewards = 5;
 
+        // ключ команды: нативный Rust-тим > плагин Clans > соло по SteamID.
+        // Награда идёт КОМАНДЕ, а не ласт-хиттеру/одиночке из сквада.
+        private string TeamKeyOf(BasePlayer p)
+        {
+            try
+            {
+                var t = p.Team;
+                if (t != null && t.teamID != 0) return $"team:{t.teamID}";
+            }
+            catch { }
+            foreach (var pl in Interface.Oxide.RootPluginManager.GetPlugins())
+                if (pl.Name == "Clans" && pl.IsLoaded)
+                {
+                    try
+                    {
+                        var tag = pl.Call("GetClanOf", p) as string;
+                        if (!string.IsNullOrEmpty(tag)) return $"clan:{tag}";
+                    }
+                    catch { }
+                }
+            return $"solo:{Uid(p)}";
+        }
+
         private void GiveRewards(BossState st, BasePlayer killer)
         {
             var spec = st.Spec;
 
-            // победитель = ТОП-ДАМАГЕР, а не ласт-хиттер: иначе голый с камнем
-            // ворует награду у сквада, снявшего 99% HP. Ласт-хит уходит в анонс.
+            // топ-дамагер — носитель баффа и имя в анонсе (не ласт-хиттер)
             BasePlayer winner = null;
             var top = st.DamageBy.OrderByDescending(k => k.Value).FirstOrDefault();
             if (top.Key != 0) winner = FindPlayer(top.Key);
             if (winner == null) winner = killer; // топ-дамагер оффлайн — добившему
 
-            if (spec.Rewards.Currency > 0 && winner != null)
-                PayCurrency(winner, spec.Rewards.Currency, "за победу (топ урон)");
+            // урон по командам: победителей определяем командой
+            var teamDmg = new Dictionary<string, float>();
+            var members = new Dictionary<string, List<KeyValuePair<ulong, float>>>();
+            foreach (var kv in st.DamageBy)
+            {
+                var p = FindPlayer(kv.Key);
+                if (p == null) continue;
+                var tk = TeamKeyOf(p);
+                teamDmg[tk] = (teamDmg.TryGetValue(tk, out var v) ? v : 0) + kv.Value;
+                if (!members.TryGetValue(tk, out var m)) members[tk] = m = new List<KeyValuePair<ulong, float>>();
+                m.Add(kv);
+            }
+            var winTeam = teamDmg.OrderByDescending(kv => kv.Value).FirstOrDefault().Key;
 
-            // участие: топ-5 по урону выше порога, без победителя
+            // основная награда — команде-победителю, внутри делится пропорционально
+            // урону; доля <10% не платится (анти-альт внутри сквада)
+            if (winTeam != null && spec.Rewards.Currency > 0 && members.TryGetValue(winTeam, out var winMembers))
+            {
+                var tTotal = winMembers.Sum(m => m.Value);
+                foreach (var m in winMembers)
+                {
+                    var share = tTotal > 0 ? m.Value / tTotal : 0;
+                    if (share < 0.10f) continue;
+                    var p = FindPlayer(m.Key);
+                    if (p != null) PayCurrency(p, (int)(spec.Rewards.Currency * share), "за победу (команда)");
+                }
+            }
+
+            // участие: топ-5 игроков НЕ из команды-победителя выше порога
             var total = st.DamageBy.Values.Sum();
             if (total > 0 && spec.Rewards.CurrencyParticipation > 0)
             {
@@ -1226,20 +1631,21 @@ namespace Oxide.Plugins
                 foreach (var kv in st.DamageBy.OrderByDescending(k => k.Value))
                 {
                     if (paid >= MaxParticipationRewards) break;
-                    if (kv.Value / total < spec.Rewards.ParticipationPct) break; // отсортировано — дальше порога нет
-                    if (winner != null && kv.Key == Uid(winner)) continue;
+                    if (kv.Value / total < spec.Rewards.ParticipationPct) break;
                     var p = FindPlayer(kv.Key);
-                    if (p == null) continue;
+                    if (p == null || TeamKeyOf(p) == winTeam) continue;
                     PayCurrency(p, spec.Rewards.CurrencyParticipation, "за участие");
                     paid++;
                 }
             }
 
-            // бафф победителя (топ-дамагеру)
+            // бафф топ-дамагеру — но его квадрат раскрывается всему серверу:
+            // цена за силу. «Герой метки» и есть кульминация PvP-ивента.
             if (winner != null && spec.Rewards.BuffDamage > 1f && spec.Rewards.BuffMinutes > 0)
             {
                 _buffs[Uid(winner)] = new Buff { Expires = DateTime.UtcNow.AddMinutes(spec.Rewards.BuffMinutes), Mult = spec.Rewards.BuffDamage };
                 SendReply(winner, $"{Tag} Бафф победителя: +{(spec.Rewards.BuffDamage - 1f) * 100:0}% урона на {spec.Rewards.BuffMinutes:0} мин");
+                Announce($"★ {CleanName(winner.displayName)} забрал бафф победителя — квадрат <color=#FFD35C>{GridOf(winner.transform.position)}</color>. Заберите его.");
             }
         }
 
