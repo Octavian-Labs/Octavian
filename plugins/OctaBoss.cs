@@ -1147,18 +1147,22 @@ namespace Oxide.Plugins
                     var npc = st.Ai;
                     if (npc != null)
                     {
-                        // flee-переходы вырезаны из графа при спавне; здесь —
-                        // сторож на случай обходных путей (переход добавлен
-                        // позже, босс вошёл в flee до «приручения»)
+                        // flee/food-переходы вырезаны из графа при спавне;
+                        // здесь — сторож на случай обходных путей (босс вошёл
+                        // в flee/food до «приручения» или переход проскочил)
                         try
                         {
                             var fsm = npc.GetComponent<Rust.Ai.Gen2.FSMComponent>();
                             if (fsm != null && st.AiCombatState != null &&
-                                fsm.CurrentState is Rust.Ai.Gen2.State_Flee)
+                                (fsm.CurrentState is Rust.Ai.Gen2.State_Flee ||
+                                 IsFoodState(fsm.CurrentState)))
                                 fsm.SetState(st.AiCombatState);
                         }
                         catch { }
                         try { npc.MarkHostileFor(60f); } catch { }
+                        // и актуальная цель — иначе Senses.Target пуст и босс
+                        // предпочитает есть тушу, пока в него стреляют
+                        try { npc.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(target); } catch { }
                     }
                 }
                 else if (st.Spec.ForceProvoke && st.Livestock != null)
@@ -1392,6 +1396,18 @@ namespace Oxide.Plugins
         private static bool IsFleeState(Rust.Ai.Gen2.FSMStateBase s) =>
             s is Rust.Ai.Gen2.State_Flee && s.GetType().Name != "State_GoBackToWater";
 
+        // пищевая ветка: босс — ивент, а не фермер. Туши/корм он не ест —
+        // иначе с отсутствующей целью в сенсорах валяется у жратвы,
+        // пока в него стреляют. (У крока BringFoodBackToWater есть, но он
+        // пропускается целиком — засадный цикл не трогаем.)
+        private static readonly HashSet<string> FoodStateNames = new HashSet<string>
+        {
+            "State_ApproachFood", "State_EatFood", "State_DragCorpse",
+            "State_BringFoodBackToWater"
+        };
+        private static bool IsFoodState(Rust.Ai.Gen2.FSMStateBase s) =>
+            s != null && FoodStateNames.Contains(s.GetType().Name);
+
         // боевой лист графа: бегство ОТСЮДА — «ударил-убежал» или паника
         // от урона, возвращаем в бой (в отличие от структурных State_Nothing-
         // узлов и утилитных MoveToLastReachablePoint — там flee = сдача)
@@ -1509,13 +1525,14 @@ namespace Oxide.Plugins
             int rewired = 0;
             foreach (var s in states)
             {
-                if (IsFleeState(s)) continue;
+                if (IsFleeState(s) || IsFoodState(s)) continue;
                 if (s.transitions != null)
                 for (var i = 0; i < s.transitions.Count; i++)
                 {
                     var e = s.transitions[i];
-                    if (e.dstState == null || !IsFleeState(e.dstState)) continue;
-                    var dst = TransTreeHas(e.transition, FleeLegitConds) ? roam
+                    if (e.dstState == null || (!IsFleeState(e.dstState) && !IsFoodState(e.dstState))) continue;
+                    var dst = IsFoodState(e.dstState) ? roam
+                        : TransTreeHas(e.transition, FleeLegitConds) ? roam
                         : (IsCombatSrcState(s) || TransTreeHas(e.transition, FleeCombatConds)) ? combat : roam;
                     s.transitions[i] = (e.transition, dst);
                     rewired++;
@@ -1524,8 +1541,9 @@ namespace Oxide.Plugins
                 for (var i = 0; i < s.endTransitions.Count; i++)
                 {
                     var e = s.endTransitions[i];
-                    if (e.dstState == null || !IsFleeState(e.dstState)) continue;
-                    var dst = TransTreeHas(e.transition, FleeLegitConds) ? roam
+                    if (e.dstState == null || (!IsFleeState(e.dstState) && !IsFoodState(e.dstState))) continue;
+                    var dst = IsFoodState(e.dstState) ? roam
+                        : TransTreeHas(e.transition, FleeLegitConds) ? roam
                         : (IsCombatSrcState(s) || TransTreeHas(e.transition, FleeCombatConds)) ? combat : roam;
                     s.endTransitions[i] = (e.transition, dst, e.status);
                     rewired++;
@@ -1540,11 +1558,13 @@ namespace Oxide.Plugins
             }
             catch { }
 
-            // если зверь УЖЕ в бегстве (подхват после reload) — штатный
-            // выход через SetState: корректно отработают OnStateExit/Enter
+            // если зверь УЖЕ в бегстве или жрёт тушу (подхват после
+            // reload) — штатный выход через SetState: корректно
+            // отработают OnStateExit/Enter
             try
             {
-                if (fsm.CurrentState != null && IsFleeState(fsm.CurrentState))
+                if (fsm.CurrentState != null &&
+                    (IsFleeState(fsm.CurrentState) || IsFoodState(fsm.CurrentState)))
                     fsm.SetState(combat);
             }
             catch { }
@@ -1654,20 +1674,14 @@ namespace Oxide.Plugins
                     // ответка на ЛЮБОЙ урон от игрока, в т.ч. снайп с 200м:
                     // без этого босс — бесплатный мешок HP, стоящий за радиусом агро
                     try { st.Ai?.MarkHostileFor(60f); } catch { }
+                    // выстрел = стрелок становится целью по-настоящему:
+                    // без TrySetTarget Senses.Target остаётся пустым и босс
+                    // валяется в ветке еды/роума вместо боя
+                    try { st.Ai?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(attacker); } catch { }
                     if (st.Spec.ForceProvoke && st.Livestock != null)
                     {
                         try { st.Livestock.Provoke(attacker); } catch { }
                         try { st.Livestock.RememberAggressor(attacker); } catch { }
-                    }
-                    if (st.Spec.HyperAggro)
-                    {
-                        // каждый выстрел = снос фактов страха — FSM не уйдёт в бегство
-                        try
-                        {
-                            var bb = st.Ai?.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
-                            if (bb != null) { bb.Remove("flee"); bb.Remove("fleeing"); bb.Remove("threatened"); }
-                        }
-                        catch { }
                     }
                 }
                 ApplyBossArmor(st.Spec, info);
