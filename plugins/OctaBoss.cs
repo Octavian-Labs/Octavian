@@ -22,8 +22,9 @@ namespace Oxide.Plugins
     //  - труп — отдельная entity, масштабируется в OnEntitySpawned по parentEnt;
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
-    //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.6.1")]
+    //  - бегство Gen2 — реальные состояния графа FSM, не ключи blackboard:
+    //    переходы в flee перенаправляем на экземпляре босса (TameFlee).
+    [Info("OctaBoss", "Octavian", "1.7.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -453,6 +454,9 @@ namespace Oxide.Plugins
             public readonly Dictionary<BaseCombatEntity, int> EscortRoles = new Dictionary<BaseCombatEntity, int>();
             public DateTime LastEscortTick;
             public float CurSpeedMult = 1f; // накопленный множитель скорости (фазы)
+            // боевое состояние FSM, найденное при «приручении» — сторож
+            // возвращает сюда босса, если он всё же оказался в flee-состоянии
+            public Rust.Ai.Gen2.FSMStateBase AiCombatState;
 
             public bool Alive => Entity != null && !Entity.IsDestroyed && Entity.IsAlive();
         }
@@ -584,7 +588,11 @@ namespace Oxide.Plugins
                 }
                 var guardN = Mathf.CeilToInt(st.Escorts.Count * 0.6f);
                 for (var i = 0; i < st.Escorts.Count; i++)
+                {
                     st.EscortRoles[st.Escorts[i]] = i < guardN ? 0 : 1;
+                    try { TameFlee(st.Escorts[i].GetComponent<Rust.Ai.Gen2.FSMComponent>()); } catch { }
+                }
+                TameBossFlee(st);
                 SpawnMarker(st, ent.transform.position);
                 Puts($"OctaBoss[{spec.Key}]: босс пережил reload — стейт подхвачен (свита: {st.Escorts.Count})");
             }
@@ -844,6 +852,8 @@ namespace Oxide.Plugins
             ApplySpeed(ent, st.Spec.SpeedMultiplier);
             SpawnMarker(st, pos);
             SpawnEscorts(st, pos);
+            // вырезаем боевое бегство из графа FSM этого экземпляра
+            TameBossFlee(st);
 
             var grid = GridOf(pos);
             Announce(Fmt(st.Spec.SpawnAnnounce, st.Spec, grid));
@@ -915,6 +925,8 @@ namespace Oxide.Plugins
                 if (ai != null && esc.Male.HasValue) { try { ai.IsMale = esc.Male.Value; } catch { } }
                 e.Spawn();
                 try { e.SendNetworkUpdateImmediate(); } catch { }
+                // свита — тоже без боевой паники
+                try { TameFlee(e.GetComponent<Rust.Ai.Gen2.FSMComponent>()); } catch { }
                 st.Escorts.Add(e);
             }
             // роли: первые ceil(N*0.6) — охранники у босса, остальные — приманки
@@ -1132,20 +1144,18 @@ namespace Oxide.Plugins
 
                 if (st.Spec.HyperAggro)
                 {
-                    // кабаны/хищники Gen2 убегают — снимаем факты страха и держим боевой статус
                     var npc = st.Ai;
                     if (npc != null)
                     {
+                        // flee-переходы вырезаны из графа при спавне; здесь —
+                        // сторож на случай обходных путей (переход добавлен
+                        // позже, босс вошёл в flee до «приручения»)
                         try
                         {
-                            var bb = npc.GetComponent<Rust.Ai.Gen2.BlackboardComponent>();
-                            if (bb != null)
-                            {
-                                bb.Remove("flee");
-                                bb.Remove("fleeing");
-                                bb.Remove("threatened");
-                                bb.Remove("flee_damage_percentage");
-                            }
+                            var fsm = npc.GetComponent<Rust.Ai.Gen2.FSMComponent>();
+                            if (fsm != null && st.AiCombatState != null &&
+                                fsm.CurrentState is Rust.Ai.Gen2.State_Flee)
+                                fsm.SetState(st.AiCombatState);
                         }
                         catch { }
                         try { npc.MarkHostileFor(60f); } catch { }
@@ -1255,6 +1265,7 @@ namespace Oxide.Plugins
                     if (tp != null && !tp.IsDead())
                     {
                         try { npc?.MarkHostileFor(30f); } catch { }
+                        try { npc?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(tp); } catch { }
                         try { lv?.Provoke(tp); lv?.RememberAggressor(tp); } catch { }
                     }
                 }
@@ -1264,6 +1275,7 @@ namespace Oxide.Plugins
                     if (np != null)
                     {
                         try { npc?.MarkHostileFor(30f); } catch { }
+                        try { npc?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(np); } catch { }
                         try { lv?.Provoke(np); lv?.RememberAggressor(np); } catch { }
                     }
                 }
@@ -1322,17 +1334,228 @@ namespace Oxide.Plugins
             }
         }
 
-        // лучшее, что можно выжать из AI зверей извне: hostile + provoke/aggressor
+        // лучшее, что можно выжать из AI зверей извне: hostile + реальная
+        // установка цели в SenseComponent + provoke/aggressor для скотины
         private void ForceTarget(BossState st, BasePlayer p)
         {
             if (p == null) return;
             try { st.Ai?.MarkHostileFor(60f); } catch { }
+            try { st.Ai?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(p); } catch { }
             if (st.Livestock != null)
             {
                 try { st.Livestock.Provoke(p); } catch { }
                 try { st.Livestock.RememberAggressor(p); } catch { }
             }
         }
+
+        #region Gen2 FSM — вырезание боевого бегства
+
+        // Бегство в Gen2 — это реальные состояния графа (State_Flee и
+        // наследники: FleeToHide у кошек, FleeFire, HerdFlee у скотины), а не
+        // ключи blackboard: чистка "flee"/"threatened" переход не отменяет.
+        // Поэтому правим граф НА ЭКЗЕМПЛЯРЕ босса (списки transitions/
+        // endTransitions у FSMStateBase публичные): каждый переход, ведущий
+        // в flee-состояние, перенаправляем — боевые («ударил-убежал», паника
+        // от урона/взгляда) обратно в бой, легитимные отступления (сейф-зона,
+        // вода, огонь, недосягаемая цель, сдача энкаунтера) — в roam, т.е.
+        // спокойный уход без панического бега. Обычных животных не трогаем.
+        // Крокодила пропускаем целиком: его «бегство» — GoBackToWater, это
+        // штатный засадный цикл (нырнул → выпрыгнул), а не паника.
+
+        // условия «уважительного отхода» — им даём roam вместо паники
+        private static readonly HashSet<string> FleeLegitConds = new HashSet<string>
+        {
+            "Trans_TargetIsInSafeZone", "Trans_IsInWater_Slow", "Trans_IsTargetInWater",
+            "Trans_IsTargetTooFarFromWater", "Trans_TooFarFromWater",
+            "Trans_IsTargetProtectedByMount", "Trans_IsSwimming", "Trans_TargetIsNearFire",
+            "Trans_HasBlackboardBool", "Trans_TargetInRange", "Trans_CanReachTarget_Slow"
+        };
+
+        // условия страха/боевого отхода — из них босс должен драться
+        private static readonly HashSet<string> FleeCombatConds = new HashSet<string>
+        {
+            "Trans_IsAfraidOfTarget", "Trans_IsWatchedByTarget", "Trans_IsHealthBelowPercentage",
+            "Trans_IsProtective", "Trans_InitialAlliesNotFighting", "Trans_RecentlyHurt",
+            "Trans_AggressorNearby", "Trans_LoudNoiseNearby", "Trans_WouldRunFromAHit",
+            "Trans_HerdMateHurt", "Trans_InitialAlliesHurt"
+        };
+
+        // имена полей боевого «резюме»-состояния в порядке предпочтения:
+        // волк→fastApproach, тигр→approach, скотина→warnApproach, зверь→chase
+        private static readonly string[] CombatStateNames =
+        {
+            "approach", "fastApproach", "warnApproach", "reacCircle", "comboCircle",
+            "charge", "chargeRun", "chase", "fastSneak", "observe", "attack"
+        };
+        private static readonly string[] RoamStateNames = { "roam", "randomIdle", "idle", "graze" };
+
+        private static bool IsFleeState(Rust.Ai.Gen2.FSMStateBase s) =>
+            s is Rust.Ai.Gen2.State_Flee && s.GetType().Name != "State_GoBackToWater";
+
+        // боевой лист графа: бегство ОТСЮДА — «ударил-убежал» или паника
+        // от урона, возвращаем в бой (в отличие от структурных State_Nothing-
+        // узлов и утилитных MoveToLastReachablePoint — там flee = сдача)
+        private static bool IsCombatSrcState(Rust.Ai.Gen2.FSMStateBase s)
+        {
+            var n = s.GetType().Name;
+            return n.Contains("Hurt") || n.Contains("Attack") || n.Contains("Charge") ||
+                n.Contains("Kick") || n.Contains("Stomp") || n.Contains("Bite") ||
+                n.Contains("Circle") || n.Contains("Leap") || n.Contains("Intimidat") ||
+                n.Contains("Shoving") || n.Contains("GetUp") || n.Contains("RaiseHead") ||
+                n.Contains("TurnAndRun") || n.Contains("Deadly");
+        }
+
+        private static Rust.Ai.Gen2.FSMStateBase FsmStateByField(
+            Rust.Ai.Gen2.FSMComponent fsm, string[] names)
+        {
+            const System.Reflection.BindingFlags fl =
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance;
+            var t = fsm.GetType();
+            foreach (var n in names)
+            {
+                var f = t.GetField(n, fl);
+                if (f != null && typeof(Rust.Ai.Gen2.FSMStateBase).IsAssignableFrom(f.FieldType))
+                {
+                    var s = f.GetValue(fsm) as Rust.Ai.Gen2.FSMStateBase;
+                    if (s != null) return s;
+                }
+            }
+            return null;
+        }
+
+        // есть ли в дереве условия перехода (композиты/инверторы — дети в полях)
+        // условие с именем из набора; обход рефлексией — API детей у
+        // Trans_And/Trans_Or/инвертора не единый, а поля достать можно
+        private static bool TransTreeHas(Rust.Ai.Gen2.FSMTransitionBase t, HashSet<string> names)
+        {
+            var seen = new HashSet<object>();
+            var stack = new Stack<Rust.Ai.Gen2.FSMTransitionBase>();
+            if (t != null) stack.Push(t);
+            while (stack.Count > 0)
+            {
+                var o = stack.Pop();
+                if (o == null || !seen.Add(o)) continue;
+                if (names.Contains(o.GetType().Name)) return true;
+                const System.Reflection.BindingFlags fl =
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Instance;
+                foreach (var f in o.GetType().GetFields(fl))
+                {
+                    var v = f.GetValue(o);
+                    if (v is Rust.Ai.Gen2.FSMTransitionBase sub) stack.Push(sub);
+                    else if (v is System.Collections.IEnumerable en && !(v is string))
+                        foreach (var item in en)
+                            if (item is Rust.Ai.Gen2.FSMTransitionBase it) stack.Push(it);
+                }
+            }
+            return false;
+        }
+
+        // точка входа для босса: правит граф и запоминает боевое состояние
+        private void TameBossFlee(BossState st)
+        {
+            st.AiCombatState = null;
+            if (st.Entity == null || st.Entity.IsDestroyed) return;
+            st.AiCombatState = TameFlee(st.Entity.GetComponent<Rust.Ai.Gen2.FSMComponent>());
+        }
+
+        // Хирургия графа на экземпляре. Возвращает боевое состояние для
+        // сторожа (null — FSM нет/не тронут). Переходы в flee переписываем
+        // на боевое или roam-состояние — сами flee-узлы становятся
+        // недостижимыми и больше не входят в работу.
+        private Rust.Ai.Gen2.FSMStateBase TameFlee(Rust.Ai.Gen2.FSMComponent fsm)
+        {
+            if (fsm == null || fsm is Rust.Ai.Gen2.CrocodileFSM) return null;
+            const System.Reflection.BindingFlags fl =
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance;
+
+            // собираем все узлы графа: поля FSM-компонента + parent-цепочки
+            // (анонимные State_Nothing-ветки висят только на parent) + BFS
+            // по переходам; повторяем до стабилизации — у найденных
+            // parent-узлов могут быть свои переходы в новые узлы
+            var states = new HashSet<Rust.Ai.Gen2.FSMStateBase>();
+            foreach (var f in fsm.GetType().GetFields(fl))
+                if (typeof(Rust.Ai.Gen2.FSMStateBase).IsAssignableFrom(f.FieldType) &&
+                    f.GetValue(fsm) is Rust.Ai.Gen2.FSMStateBase s) states.Add(s);
+            if (fsm.CurrentState != null) states.Add(fsm.CurrentState);
+            bool grew = true;
+            while (grew)
+            {
+                grew = false;
+                foreach (var s in states.ToList())
+                    for (var p = s.parent; p != null; p = p.parent)
+                        if (states.Add(p)) grew = true; else break;
+                var q = new Queue<Rust.Ai.Gen2.FSMStateBase>(states);
+                while (q.Count > 0)
+                {
+                    var s = q.Dequeue();
+                    if (s.transitions != null)
+                        foreach (var t in s.transitions)
+                            if (t.dstState != null && states.Add(t.dstState)) { q.Enqueue(t.dstState); grew = true; }
+                    if (s.endTransitions != null)
+                        foreach (var t in s.endTransitions)
+                            if (t.dstState != null && states.Add(t.dstState)) { q.Enqueue(t.dstState); grew = true; }
+                }
+            }
+
+            var combat = FsmStateByField(fsm, CombatStateNames);
+            var roam = FsmStateByField(fsm, RoamStateNames);
+            if (combat == null && roam == null) return null;
+            if (combat == null) combat = roam;
+            if (roam == null) roam = combat;
+
+            int rewired = 0;
+            foreach (var s in states)
+            {
+                if (IsFleeState(s)) continue;
+                if (s.transitions != null)
+                for (var i = 0; i < s.transitions.Count; i++)
+                {
+                    var e = s.transitions[i];
+                    if (e.dstState == null || !IsFleeState(e.dstState)) continue;
+                    var dst = TransTreeHas(e.transition, FleeLegitConds) ? roam
+                        : (IsCombatSrcState(s) || TransTreeHas(e.transition, FleeCombatConds)) ? combat : roam;
+                    s.transitions[i] = (e.transition, dst);
+                    rewired++;
+                }
+                if (s.endTransitions != null)
+                for (var i = 0; i < s.endTransitions.Count; i++)
+                {
+                    var e = s.endTransitions[i];
+                    if (e.dstState == null || !IsFleeState(e.dstState)) continue;
+                    var dst = TransTreeHas(e.transition, FleeLegitConds) ? roam
+                        : (IsCombatSrcState(s) || TransTreeHas(e.transition, FleeCombatConds)) ? combat : roam;
+                    s.endTransitions[i] = (e.transition, dst, e.status);
+                    rewired++;
+                }
+            }
+
+            // у базового зверя страх по здоровью — сериализованное поле;
+            // обнуляем как страховку (переход уже перенаправлен, но дёшево)
+            try
+            {
+                fsm.GetType().GetField("fleeBelowHealthFraction", fl)?.SetValue(fsm, 0f);
+            }
+            catch { }
+
+            // если зверь УЖЕ в бегстве (подхват после reload) — штатный
+            // выход через SetState: корректно отработают OnStateExit/Enter
+            try
+            {
+                if (fsm.CurrentState != null && IsFleeState(fsm.CurrentState))
+                    fsm.SetState(combat);
+            }
+            catch { }
+
+            if (rewired > 0)
+                Puts($"OctaBoss: {fsm.GetType().Name} — {rewired} flee-переход(ов) перенаправлено " +
+                     $"(бой→{combat?.Name}, отход→{roam?.Name})");
+            return combat;
+        }
+
+        #endregion
 
         // фаза 3: рывок к самому ДАЛЬНЕМУ активному дамагеру + AoE-удар.
         // Дистанционный фоллоуфол: <=3м полный урон, <=7м половина, дальше ноль —
