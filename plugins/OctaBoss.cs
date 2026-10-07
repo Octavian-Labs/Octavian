@@ -23,7 +23,7 @@ namespace Oxide.Plugins
     //  - Kill() не дёргает OnEntityDeath — смерть обрабатываем вручную;
     //  - arg.Args — StringView, сравнивать через .ToString();
     //  - бегство Gen2: снимаем flee-факты из blackboard + MarkHostileFor.
-    [Info("OctaBoss", "Octavian", "1.6.0")]
+    [Info("OctaBoss", "Octavian", "1.6.1")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -419,7 +419,9 @@ namespace Oxide.Plugins
         // активный босс-инстанс: спека + рантайм-состояние
         private class BossState
         {
-            public BossSpec Spec;
+            public BossSpec Live;  // живой спек из конфига — расписание/Enabled
+            public BossSpec Spec;  // боевой СЛЕПОК на момент спавна — правки
+                                   // конфига посреди боя живого босса не меняют
             public BaseCombatEntity Entity;
             public Rust.Ai.Gen2.BaseNPC2 Ai;
             public Rust.Ai.Gen2.LivestockAnimal Livestock;
@@ -440,6 +442,9 @@ namespace Oxide.Plugins
             public DateTime LastRetargetAt;
             public DateTime LastLeapAt;
             public DateTime ShieldUntil;
+            public DateTime LeapStrikeAt; // !=default — замах идёт, удар в этот момент
+            public Vector3 LeapDest;      // точка удара, зафиксированная в начале замаха
+            public ulong LeapTargetId;
             public readonly Dictionary<ulong, float> ThreatBy = new Dictionary<ulong, float>();
             // урон за последние ~20с — «кто сейчас бесит босса»
             public class RecentHit { public DateTime T; public ulong Id; public float D; }
@@ -473,6 +478,15 @@ namespace Oxide.Plugins
             public bool Stale => DateTime.UtcNow > Expires;
         }
 
+        // слепок живых боссов для переживания reload плагина:
+        // Unload пишет netID -> key, Init подхватывает через ReattachSaved
+        private class SavedBoss
+        {
+            public string Key;
+            public ulong NetId;
+            public List<ulong> EscortIds = new List<ulong>();
+        }
+
         private readonly List<PendingCorpse> _corpses = new List<PendingCorpse>();
         private readonly Dictionary<DroppedItemContainer, DateTime> _lockedBags = new Dictionary<DroppedItemContainer, DateTime>();
         private readonly Dictionary<ulong, Buff> _buffs = new Dictionary<ulong, Buff>();
@@ -492,19 +506,38 @@ namespace Oxide.Plugins
                 PrintError($"OctaBoss: дублирующийся ключ вида '{g.Key}' — в спавне участвует только последний!");
             foreach (var spec in _cfg.Bosses.Where(s => s.Enabled))
             {
-                var st = new BossState { Spec = spec };
+                var st = new BossState { Live = spec, Spec = spec };
                 ScheduleNext(st, first: true);
                 _bosses[spec.Key] = st;
                 Puts($"OctaBoss[{spec.Key}]: следующий спавн через {(st.NextSpawnAt - DateTime.UtcNow).TotalMinutes:0} мин");
             }
             _timerSpawn = timer.Every(30f, SpawnTick);
             _timerAggro = timer.Every(1f, AggroTick);
+            ReattachSaved();
         }
 
         private void Unload()
         {
             _timerSpawn?.Destroy();
             _timerAggro?.Destroy();
+            // живых боссов не бросаем сиротами: пишем netID -> key в дата-файл,
+            // после reload подхватываем их обратно в стейт (ReattachSaved)
+            var saved = new List<SavedBoss>();
+            foreach (var kv in _bosses)
+            {
+                var st = kv.Value;
+                if (!st.Alive || st.Entity.net == null) continue;
+                saved.Add(new SavedBoss
+                {
+                    Key = kv.Key,
+                    NetId = st.Entity.net.ID.Value,
+                    EscortIds = st.Escorts
+                        .Where(e => e != null && !e.IsDestroyed && e.net != null)
+                        .Select(e => e.net.ID.Value).ToList()
+                });
+            }
+            if (saved.Count > 0)
+                Interface.Oxide.DataFileSystem.WriteObject("OctaBoss_state", saved);
             foreach (var st in _bosses.Values) ClearMarker(st);
             foreach (var p in BasePlayer.activePlayerList)
             {
@@ -512,13 +545,57 @@ namespace Oxide.Plugins
                 CuiHelper.DestroyUi(p, AdminUIName);
             }
             _ui.Clear();
-            // живых боссов не трогаем — доживают как обычные животные
+        }
+
+        // подхват боссов, переживших reload (OctaBoss_state пишется в Unload)
+        private void ReattachSaved()
+        {
+            List<SavedBoss> saved;
+            try { saved = Interface.Oxide.DataFileSystem.ReadObject<List<SavedBoss>>("OctaBoss_state"); }
+            catch { saved = null; }
+            if (saved == null || saved.Count == 0) return;
+            // файл потреблён — чистим, чтобы следующий reload не подхватил призраков
+            Interface.Oxide.DataFileSystem.WriteObject("OctaBoss_state", new List<SavedBoss>());
+            foreach (var sb in saved)
+            {
+                var spec = _cfg.Bosses.FirstOrDefault(b => b.Key == sb.Key && b.Enabled);
+                if (spec == null) continue;
+                BossState st;
+                if (!_bosses.TryGetValue(spec.Key, out st) || st.Alive) continue;
+                var ent = BaseNetworkable.serverEntities.Find(new NetworkableId(sb.NetId)) as BaseCombatEntity;
+                if (ent == null || ent.IsDestroyed || !ent.IsAlive()) continue;
+                // после рестарта netID могли переиспользовать — сверяем префаб,
+                // иначе подхватим чужую сущность как «босса»
+                if (!string.Equals(ent.PrefabName, spec.Prefab, StringComparison.OrdinalIgnoreCase)) continue;
+                st.Spec = CloneSpec(st.Live); // как при спавне — свой слепок
+                st.Entity = ent;
+                st.Ai = ent as Rust.Ai.Gen2.BaseNPC2;
+                st.Livestock = ent as Rust.Ai.Gen2.LivestockAnimal;
+                st.SpawnedAt = DateTime.UtcNow;
+                st.LastDamageAt = DateTime.UtcNow;
+                st.ResetDone = true;
+                st.DeathHandled = false;
+                st.CurSpeedMult = spec.SpeedMultiplier;
+                foreach (var eid in sb.EscortIds)
+                {
+                    var e = BaseNetworkable.serverEntities.Find(new NetworkableId(eid)) as BaseCombatEntity;
+                    if (e != null && !e.IsDestroyed && e.IsAlive() && e is Rust.Ai.Gen2.BaseNPC2)
+                        st.Escorts.Add(e);
+                }
+                var guardN = Mathf.CeilToInt(st.Escorts.Count * 0.6f);
+                for (var i = 0; i < st.Escorts.Count; i++)
+                    st.EscortRoles[st.Escorts[i]] = i < guardN ? 0 : 1;
+                SpawnMarker(st, ent.transform.position);
+                Puts($"OctaBoss[{spec.Key}]: босс пережил reload — стейт подхвачен (свита: {st.Escorts.Count})");
+            }
         }
 
         private void ScheduleNext(BossState st, bool first = false)
         {
-            var jitter = UnityEngine.Random.Range(-st.Spec.Spawn.IntervalJitterMinutes, st.Spec.Spawn.IntervalJitterMinutes);
-            var mins = Math.Max(1f, st.Spec.Spawn.IntervalMinutes + jitter);
+            // расписание — по ЖИВОМУ конфигу, а не по боевому слепку:
+            // правка интервала в панели вступает в силу уже для след. цикла
+            var jitter = UnityEngine.Random.Range(-st.Live.Spawn.IntervalJitterMinutes, st.Live.Spawn.IntervalJitterMinutes);
+            var mins = Math.Max(1f, st.Live.Spawn.IntervalMinutes + jitter);
             // после рестарта все боссы спавнились почти одновременно через ~5 мин —
             // предсказуемый «вайп-фарм»; размазываем первый спавн случайно
             st.NextSpawnAt = DateTime.UtcNow.AddMinutes(
@@ -535,15 +612,15 @@ namespace Oxide.Plugins
             var now = DateTime.UtcNow;
             foreach (var st in _bosses.Values)
             {
-                if (!st.Spec.Enabled || st.Alive) continue;
-                if (!st.Warned && now >= st.NextSpawnAt.AddMinutes(-st.Spec.Spawn.WarnBeforeMinutes))
+                if (!st.Live.Enabled || st.Alive) continue;
+                if (!st.Warned && now >= st.NextSpawnAt.AddMinutes(-st.Live.Spawn.WarnBeforeMinutes))
                 {
                     st.Warned = true;
-                    var vars = st.Spec.WarnAnnounceVariants;
+                    var vars = st.Live.WarnAnnounceVariants;
                     var tpl = vars != null && vars.Count > 0
                         ? vars[UnityEngine.Random.Range(0, vars.Count)]
-                        : st.Spec.WarnAnnounce;
-                    Announce(Fmt(tpl, st.Spec, $"{st.Spec.Spawn.WarnBeforeMinutes:0}"));
+                        : st.Live.WarnAnnounce;
+                    Announce(Fmt(tpl, st.Live, $"{st.Live.Spawn.WarnBeforeMinutes:0}"));
                 }
                 if (now < st.NextSpawnAt) continue;
                 SpawnBoss(st);
@@ -703,6 +780,10 @@ namespace Oxide.Plugins
             // значит без лута/наград/перепланировки): иначе получим двух боссов
             if (st.Alive) DespawnBoss(st);
 
+            // боевой слепок настроек на момент спавна: правки конфига
+            // в панели применятся к СЛЕДУЮЩЕМУ боссу, живой доиграет на своих
+            st.Spec = CloneSpec(st.Live);
+
             var pos = at ?? FindMonumentSpawnPos(st);
             if (pos == Vector3.zero) pos = FindSpawnPos(st);
             if (pos == Vector3.zero)
@@ -751,6 +832,9 @@ namespace Oxide.Plugins
             st.LastLeapAt = DateTime.UtcNow;
             st.LastEscortTick = DateTime.UtcNow;
             st.CurSpeedMult = st.Spec.SpeedMultiplier;
+            st.ShieldUntil = default(DateTime);
+            st.LeapStrikeAt = default(DateTime);
+            st.LeapTargetId = 0;
 
             ent.InitializeHealth(st.Spec.Health, st.Spec.Health);
             ent.startHealth = st.Spec.Health;
@@ -764,6 +848,12 @@ namespace Oxide.Plugins
             var grid = GridOf(pos);
             Announce(Fmt(st.Spec.SpawnAnnounce, st.Spec, grid));
             NotifyDiscord($"{st.Spec.DisplayName} появился в квадрате {grid} ({pos.x:0},{pos.z:0})");
+        }
+
+        // глубокая копия спека — боевой слепок босса
+        private static BossSpec CloneSpec(BossSpec src)
+        {
+            return JsonConvert.DeserializeObject<BossSpec>(JsonConvert.SerializeObject(src));
         }
 
         private static void ApplySpeed(BaseCombatEntity ent, float mult)
@@ -919,6 +1009,24 @@ namespace Oxide.Plugins
 
         #region Aggro & Rage
 
+        // полный сброс боя: трекеры урона/угрозы, цель, щит, замах,
+        // фаза и накопленная скорость — как будто боя не было
+        private void ResetCombat(BossState st)
+        {
+            if (st.DamageBy.Count > 0 || st.ThreatBy.Count > 0)
+                Announce(Fmt(st.Spec.ResetAnnounce, st.Spec, null));
+            st.DamageBy.Clear();
+            st.ThreatBy.Clear();
+            st.RecentHits.Clear();
+            st.ThreatTargetId = 0;
+            st.Raging = false;
+            st.ShieldUntil = default(DateTime);
+            st.LeapStrikeAt = default(DateTime);
+            st.Phase = 1;
+            ApplyPhaseSpeed(st);
+            st.ResetDone = true;
+        }
+
         private void AggroTick()
         {
             var now = DateTime.UtcNow;
@@ -933,24 +1041,13 @@ namespace Oxide.Plugins
                 if (regenDelay > 0 && (now - st.LastDamageAt).TotalSeconds >= regenDelay)
                 {
                     var ent = st.Entity;
-                    // на 95%+ бой считается полностью сброшенным: ярость снята,
-                    // трекер очищен — новая группа начинает с чистого листа
-                    if (ent.Health() >= ent.MaxHealth() * 0.95f)
-                    {
-                        if (!st.ResetDone)
-                        {
-                            st.ResetDone = true;
-                            if (st.DamageBy.Count > 0)
-                                Announce(Fmt(st.Spec.ResetAnnounce, st.Spec, null));
-                            st.DamageBy.Clear();
-                            st.Raging = false;
-                        }
-                    }
-                    else
-                    {
+                    // реген идёт до ПОЛНОГО HP, не до порога сброса
+                    if (ent.Health() < ent.MaxHealth())
                         ent.SetHealth(Mathf.Min(ent.MaxHealth(),
                             ent.Health() + ent.MaxHealth() * st.Spec.RegenPercentPerSec * 0.01f));
-                    }
+                    // на 95%+ бой считается полностью сброшенным — один раз
+                    if (!st.ResetDone && ent.Health() >= ent.MaxHealth() * 0.95f)
+                        ResetCombat(st);
                 }
 
                 // деспавн по старости жизни
@@ -997,12 +1094,20 @@ namespace Oxide.Plugins
                     TryRetarget(st);
                 }
 
-                // фаза 3: рывок к самому дальнему дамагеру + AoE
-                if (st.Phase == 3 && st.Spec.LeapSeconds > 0 &&
-                    (now - st.LastLeapAt).TotalSeconds >= st.Spec.LeapSeconds)
+                // фаза 3: замах → удар по зафиксированной точке
+                if (st.Phase == 3 && st.Spec.LeapSeconds > 0)
                 {
-                    st.LastLeapAt = now;
-                    TryLeap(st);
+                    if (st.LeapStrikeAt != default(DateTime) && now >= st.LeapStrikeAt)
+                    {
+                        st.LeapStrikeAt = default(DateTime);
+                        ExecuteLeap(st);
+                    }
+                    else if (st.LeapStrikeAt == default(DateTime) &&
+                        (now - st.LastLeapAt).TotalSeconds >= st.Spec.LeapSeconds)
+                    {
+                        st.LastLeapAt = now;
+                        WindupLeap(st);
+                    }
                 }
 
                 // ярость
@@ -1020,7 +1125,9 @@ namespace Oxide.Plugins
                 }
 
                 var radius = AggroOf(st);
-                var target = NearestPlayer(st.Entity.transform.position, radius);
+                // цель по угрозе важнее ближайшего — иначе threat-таблица
+                // декоративная: Provoke на ближайшего затирал бы её каждый тик
+                var target = ThreatPlayer(st) ?? NearestPlayer(st.Entity.transform.position, radius);
                 if (target == null) continue;
 
                 if (st.Spec.HyperAggro)
@@ -1051,6 +1158,20 @@ namespace Oxide.Plugins
                     try { st.Livestock.RememberAggressor(target); } catch { }
                 }
             }
+        }
+
+        // текущая цель по угрозе; мёртвая/отключившаяся освобождается
+        // немедленно, без ожидания таймера ретаргета и гистерезиса
+        private BasePlayer ThreatPlayer(BossState st)
+        {
+            if (st.ThreatTargetId == 0) return null;
+            var p = FindPlayer(st.ThreatTargetId);
+            if (p == null || p.IsDead() || !p.IsConnected)
+            {
+                st.ThreatTargetId = 0;
+                return null;
+            }
+            return p;
         }
 
         private static BasePlayer NearestPlayer(Vector3 pos, float radius)
@@ -1217,7 +1338,11 @@ namespace Oxide.Plugins
         // Дистанционный фоллоуфол: <=3м полный урон, <=7м половина, дальше ноль —
         // разбежались вовремя = живы. Водные звери не прыгают: телепорт
         // порвёт их водный навмеш (см. DieOffNavmesh у крокодила).
-        private void TryLeap(BossState st)
+        // фаза 3, рывок: замах 1.5 сек с ФИКСАЦИЕЙ точки удара — игрок,
+        // вышедший из зоны за замах, удар не получает. Сквозь постройки
+        // не прыгаем. Водные виды не прыгают вообще — телепорт рвёт
+        // их водный навмеш (DieOffNavmesh у крокодила).
+        private void WindupLeap(BossState st)
         {
             if (!st.Alive || st.Spec.Spawn.NeedsWater) return;
             var bossPos = st.Entity.transform.position;
@@ -1232,25 +1357,60 @@ namespace Oxide.Plugins
             }
             if (tgt == null) return;
 
-            var ent = st.Entity;
-            var dir = (tgt.transform.position - bossPos);
-            dir.y = 0;
+            var dir = tgt.transform.position - bossPos; dir.y = 0;
             dir = dir.sqrMagnitude > 0.01f ? dir.normalized : Vector3.forward;
             var dest = tgt.transform.position - dir * 3f;
             dest.y = TerrainMeta.HeightMap.GetHeight(dest) + 0.5f;
-            try { ent.transform.position = dest; } catch { return; }
 
-            var mult = DmgMult(st);
+            // через стены и внутрь баз не прыгаем — отказ рывка, а не
+            // незаметный телепорт сквозь фундамент
+            var flat = dest - bossPos; flat.y = 0;
+            try
+            {
+                RaycastHit hit;
+                if (Physics.Raycast(bossPos + Vector3.up, flat.normalized, out hit,
+                        flat.magnitude, LayerMask.GetMask("Construction", "Deployed")))
+                    return;
+            }
+            catch { }
+
+            st.LeapDest = dest;
+            st.LeapTargetId = Uid(tgt);
+            st.LeapStrikeAt = DateTime.UtcNow.AddSeconds(1.5);
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                if (p == null || p.IsDead() || !p.IsConnected) continue;
+                if (Vector3.Distance(p.transform.position, bossPos) <= st.Spec.P3AggroRadius + 40f)
+                    SendReply(p, $"{Tag} ★ <color=#E8B84B>{st.Spec.DisplayName}</color> ГОТОВИТ РЫВОК — расходитесь!");
+            }
+        }
+
+        private void ExecuteLeap(BossState st)
+        {
+            if (!st.Alive) return;
+            var dest = st.LeapDest;
+            var ent = st.Entity;
+            try { ent.transform.position = dest; } catch { return; }
+            try { ent.SendNetworkUpdateImmediate(); } catch { }
+
+            // Множитель исходящего урона применяет OnEntityTakeDamage
+            // (ветка «урон ОТ босса») — сюда идёт голая база × дистанция,
+            // иначе был двойной множитель (~2200 вместо ~360 до брони).
+            // Радиус считаем от фактической точки удара.
             foreach (var p in BasePlayer.activePlayerList)
             {
                 if (p == null || p.IsDead()) continue;
-                var d = Vector3.Distance(p.transform.position, tgt.transform.position);
+                var d = Vector3.Distance(p.transform.position, dest);
                 var f = d <= 3f ? 1f : d <= 7f ? 0.5f : 0f;
                 if (f <= 0f) continue;
-                p.Hurt(st.Spec.LeapDamage * mult * f, DamageType.Bleeding, ent);
+                var before = p.Health();
+                p.Hurt(st.Spec.LeapDamage * f, DamageType.Slash, ent);
+                Puts($"OctaBoss[{st.Spec.Key}]: рывок -> {CleanName(p.displayName)}: " +
+                     $"база {st.Spec.LeapDamage:0} ×{f} ×mult={DmgMult(st):0.##} -> снято {before - p.Health():0}");
             }
             st.ShieldUntil = DateTime.UtcNow.AddSeconds(st.Spec.LeapShieldSeconds);
-            ForceTarget(st, tgt);
+            var tgt = FindPlayer(st.LeapTargetId);
+            if (tgt != null) ForceTarget(st, tgt);
         }
 
         #endregion
@@ -1292,16 +1452,23 @@ namespace Oxide.Plugins
                 if (DateTime.UtcNow < st.ShieldUntil) info.damageTypes.ScaleAll(0.75f);
                 if (attacker != null && !attacker.IsNpc)
                 {
-                    // кап по текущему HP: оверкилл (500 урона в тело на 3 HP)
-                    // не должен накручивать трекер и красть «топ-дамагер»
-                    var capped = Mathf.Min(info.damageTypes.Total(), entity.Health());
-                    AddDamage(st.DamageBy, Uid(attacker), capped);
-                    AddDamage(st.ThreatBy, Uid(attacker), capped);
-                    st.RecentHits.Add(new BossState.RecentHit
-                        { T = DateTime.UtcNow, Id = Uid(attacker), D = capped });
-                    if (st.RecentHits.Count > 400) st.RecentHits.RemoveRange(0, st.RecentHits.Count - 200);
-                    st.LastDamageAt = DateTime.UtcNow;
-                    st.ResetDone = false; // бой идёт — реген отключён
+                    // нулевой урон (полный иммунитет/отмена) — это НЕ бой:
+                    // LastDamageAt не трогаем, иначе заблокированный выстрел
+                    // вечно откладывал бы реген
+                    var dealt = info.damageTypes.Total();
+                    if (dealt > 0.01f)
+                    {
+                        // кап по текущему HP: оверкилл (500 урона в тело на 3 HP)
+                        // не должен накручивать трекер и красть «топ-дамагер»
+                        var capped = Mathf.Min(dealt, entity.Health());
+                        AddDamage(st.DamageBy, Uid(attacker), capped);
+                        AddDamage(st.ThreatBy, Uid(attacker), capped);
+                        st.RecentHits.Add(new BossState.RecentHit
+                            { T = DateTime.UtcNow, Id = Uid(attacker), D = capped });
+                        if (st.RecentHits.Count > 400) st.RecentHits.RemoveRange(0, st.RecentHits.Count - 200);
+                        st.LastDamageAt = DateTime.UtcNow;
+                        st.ResetDone = false; // бой идёт — реген отключён
+                    }
                 }
                 return;
             }
@@ -1398,7 +1565,15 @@ namespace Oxide.Plugins
 
             ClearMarker(st);
 
-            var hadCombat = adminKill || killer != null || st.DamageBy.Values.Sum() > 0;
+            // «бой» = реальный киллер, админ-килл или СВЕЖИЙ урон (60 сек).
+            // Иначе один давний выстрел легализует лут при смерти от
+            // окружения (DieOffNavmesh, утопление) — эксплойт выманивания.
+            var recentCombat = st.DamageBy.Values.Sum() > 0 &&
+                (DateTime.UtcNow - st.LastDamageAt).TotalSeconds < 60;
+            var hadCombat = adminKill || killer != null || recentCombat;
+            Puts($"OctaBoss[{st.Spec.Key}]: смерть — добил={killerName}, " +
+                 $"adminKill={adminKill}, свежийБой={recentCombat}, " +
+                 $"урон={st.DamageBy.Values.Sum():0}, лут={(hadCombat ? "да" : "нет")}");
             if (hadCombat)
             {
                 SpawnLoot(st.Spec, ent.transform.position + Vector3.up * 0.5f);
@@ -2352,6 +2527,17 @@ namespace Oxide.Plugins
                 DrawSection(c, cnt, t, x, y - 0.045f, colW);
                 if (col == 0) yL = y - 0.055f; else yR = y - 0.055f;
             };
+            // серая пояснительная строка — итоговые значения из черновика
+            Action<string, int> info = (t, col) =>
+            {
+                var x = colX[col]; var y = col == 0 ? yL : yR;
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = t, FontSize = 10, Align = TextAnchor.MiddleLeft, Color = TMuted },
+                    RectTransform = { AnchorMin = $"{x} {y - 0.046f}", AnchorMax = $"{x + colW} {y}" }
+                }, cnt);
+                if (col == 0) yL = y - 0.056f; else yR = y - 0.056f;
+            };
             Func<string, UiNum> nf = id => Nums.First(n => n.Id == id);
             Func<string, UiBool> bf = id => Bools.First(n => n.Id == id);
             Func<string, UiTxt> tf = id => Txts.First(n => n.Id == id);
@@ -2395,6 +2581,10 @@ namespace Oxide.Plugins
                     tgl(bf("hyper"), 0);
                     tgl(bf("provoke"), 0);
                     tgl(bf("immune"), 0);
+                    // итоговые множители исходящего урона — по черновику
+                    var dm = d.DamageMultiplier;
+                    info($"Итог урона: ф1 ×{dm:0.##} · ф2 ×{dm * d.P2DamageMult:0.##} · ф3 ×{dm * d.P3DamageMult:0.##}", 1);
+                    info($"Ярость при HP ≤ {d.RageThreshold * 100:0}%: ещё ×{d.RageDamageMultiplier:0.##}", 1);
                     break;
                 }
                 case AdminTab.Phases:
@@ -2416,6 +2606,10 @@ namespace Oxide.Plugins
                     num(nf("flee"), 1);
                     num(nf("retarget"), 1);
                     num(nf("hyst"), 1);
+                    // реальный урон рывка в ф3 — база × фаза (× ярость)
+                    var dm3 = d.DamageMultiplier * d.P3DamageMult;
+                    info($"Рывок ф3: {d.LeapDamage:0} базы ×{dm3:0.##} = до {d.LeapDamage * dm3:0}", 0);
+                    info($"В ярости: до {d.LeapDamage * dm3 * d.RageDamageMultiplier:0} до брони", 0);
                     break;
                 }
                 case AdminTab.Escort:
@@ -2862,6 +3056,7 @@ namespace Oxide.Plugins
                 new { T = "ТИХИЙ ДЕСПАВН — без лута и наград", Cmd = "octabossui ask despawn", Col = GoldDark, Prm = "kill" },
                 new { T = "СЛЕДУЮЩИЙ СПАВН ЧЕРЕЗ 1 МИН", Cmd = "octabossui next1", Col = CBlue, Prm = "spawn" },
                 new { T = "СБРОСИТЬ ТРЕКЕР УРОНА/УГРОЗЫ", Cmd = "octabossui resetdmg", Col = GlassHov, Prm = "edit" },
+                new { T = "ПРИМЕНИТЬ ЧЕРНОВИК К ЖИВОМУ БОССУ", Cmd = "octabossui ask applive", Col = Gold, Prm = "edit" },
                 new { T = "ПЕРЕЧИТАТЬ КОНФИГ С ДИСКА", Cmd = "octabossui ask reloadcfg", Col = CRed, Prm = "edit" },
             };
             var y = 0.90f;
@@ -2972,6 +3167,7 @@ namespace Oxide.Plugins
                 case "reload": title = "Отбросить несохранённые\nизменения черновика?"; yes = "ОТБРОСИТЬ"; col = Gold; break;
                 case "reloadcfg": title = "Перечитать конфиг с диска?\nВсе черновики будут потеряны."; yes = "ПЕРЕЧИТАТЬ"; break;
                 case "preset": title = $"Применить пресет {st.Pending.Split(':')[1].ToUpper()}?\nТекущий черновик будет заменён."; yes = "ПРИМЕНИТЬ"; col = Gold; break;
+                case "applive": title = "Применить черновик к ЖИВОМУ\nбоссу прямо сейчас?\nСохранённый конфиг не меняется."; yes = "ПРИМЕНИТЬ"; col = Gold; break;
                 case "boss": title = "Несохранённые изменения\nбудут потеряны. Продолжить?"; yes = "ПЕРЕЙТИ"; col = Gold; break;
                 default: title = "Подтвердить действие?"; break;
             }
@@ -3145,7 +3341,7 @@ namespace Oxide.Plugins
                 {
                     _bosses.TryGetValue(spec.Key, out var bs);
                     if (a1 == "spawn" && (bs == null || !bs.Alive)) { DoSpawn(player, spec); return; }
-                    if (a1 == "kill" && (bs == null || !bs.Alive)) { UiToast(player, "⚠ Босса нет на карте", Gold); return; }
+                    if ((a1 == "kill" || a1 == "applive") && (bs == null || !bs.Alive)) { UiToast(player, "⚠ Босса нет на карте", Gold); return; }
                     if (a1 == "reload" && !st.Dirty) { ResetDraft(st); UiDrawAll(player); UiToast(player, "✓ Черновик обновлён", CGreen); return; }
                     st.Pending = a1;
                     UiRefresh(player, "CFM");
@@ -3193,6 +3389,19 @@ namespace Oxide.Plugins
                             ResetDraft(st);
                             UiToast(player, "✓ Черновик обновлён", CGreen);
                             break;
+                        case "applive":
+                        {
+                            // явная точечная замена боевого слепка живого босса
+                            // черновиком — конфиг при этом не трогаем
+                            var bsa = FindState(spec.Key);
+                            if (bsa != null && bsa.Alive)
+                            {
+                                bsa.Spec = CloneSpec(st.Draft);
+                                UiToast(player, "✓ Применено к живому боссу", CGreen);
+                            }
+                            else UiToast(player, "⚠ Босса нет на карте", Gold);
+                            break;
+                        }
                         case "reloadcfg":
                             LoadConfig();
                             _ui.Clear();
@@ -3288,7 +3497,9 @@ namespace Oxide.Plugins
                     SyncRuntime();
                     SaveConfig();
                     UiDrawAll(player);
-                    UiToast(player, warnMsg != null ? "⚠ " + warnMsg : "✓ Конфигурация сохранена",
+                    UiToast(player, warnMsg != null
+                            ? "⚠ " + warnMsg
+                            : "✓ Сохранено — живой босс на старых настройках",
                             warnMsg != null ? Gold : CGreen);
                     return;
                 }
@@ -3312,7 +3523,7 @@ namespace Oxide.Plugins
             BossState st;
             if (!_bosses.TryGetValue(spec.Key, out st))
             {
-                st = new BossState { Spec = spec };
+                st = new BossState { Live = spec, Spec = spec };
                 ScheduleNext(st);
                 _bosses[spec.Key] = st;
             }
@@ -3389,7 +3600,7 @@ namespace Oxide.Plugins
             {
                 if (spec.Enabled && !_bosses.ContainsKey(spec.Key))
                 {
-                    var st = new BossState { Spec = spec };
+                    var st = new BossState { Live = spec, Spec = spec };
                     ScheduleNext(st, first: true);
                     _bosses[spec.Key] = st;
                 }
