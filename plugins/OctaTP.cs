@@ -22,9 +22,10 @@ using UnityEngine;
 namespace Oxide.Plugins
 {
     // OctaTP — ребрендинг NTeleportation (nivex, v1.9.1) под Octavian.
-    // Функционал оригинала сохранён без изменений; перекрашены только
-    // идентификаторы (плагин/пермишены/команды) и оформление чата.
-    [Info("OctaTP", "Octavian", "2.0.0")]
+    // v2.0.1: починен телепорт по маркеру на карте (OnMapMarkerAdd в Carbon,
+    // корректная высота рельефа/воды, поддержка админов без отдельного пермишна,
+    // полноценный Teleport вместо голого player.Teleport, команды /tpm и /tpmarker).
+    [Info("OctaTP", "Octavian", "2.0.1")]
     [Description("Multiple teleportation systems for admin and players — дома, tpr/tpa, города, админ-tp")]
     class OctaTP : RustPlugin
     {
@@ -3125,6 +3126,8 @@ namespace Oxide.Plugins
         private void AddCovalenceCommands()
         {
             AddCovalenceCommand("toggletpmarker", nameof(CommandBlockMapMarker));
+            AddCovalenceCommand("tpm", nameof(CommandTpMarker));
+            AddCovalenceCommand("tpmarker", nameof(CommandTpMarker));
             if (config.Settings.TPREnabled)
             {
                 AddCovalenceCommand("tpr", nameof(CommandTeleportRequest));
@@ -7219,43 +7222,126 @@ namespace Oxide.Plugins
         [PluginReference] Plugin RaidableBases, AbandonedBases;
 
         private List<string> blockMapMarker = new();
+        private readonly Dictionary<ulong, float> _lastMarkerTp = new();
 
         private void CommandBlockMapMarker(IPlayer user, string command, string[] args)
         {
-            if (!blockMapMarker.Remove(user.Id))
+            if (blockMapMarker.Remove(user.Id))
+            {
+                user.Reply("Авто-телепорт по клику на карте включен.");
+            }
+            else
             {
                 blockMapMarker.Add(user.Id);
+                user.Reply("Авто-телепорт по клику на карте отключен. Используйте /tpm для телепорта к метке.");
             }
         }
 
-        private void OnMapMarkerAdded(BasePlayer player, ProtoBuf.MapNote note)
+        private void CommandTpMarker(IPlayer user, string command, string[] args)
         {
-            if (player.IsAlive() && !blockMapMarker.Contains(player.UserIDString) && !player.isMounted)
+            var player = user.Object as BasePlayer;
+            if (player == null || !player.IsAlive()) return;
+
+            if (permission.UserHasPermission(player.UserIDString, "octatp.blocktpmarker"))
             {
-                if (permission.UserHasPermission(player.UserIDString, "octatp.blocktpmarker"))
+                PrintMsgL(player, "BlockedMarkerTeleport");
+                return;
+            }
+
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin) && !permission.UserHasPermission(player.UserIDString, PermTpMarker))
+            {
+                PrintMsgL(player, "BlockedMarkerTeleport");
+                return;
+            }
+
+            ProtoBuf.MapNote note = null;
+            var pois = player.State?.pointsOfInterest;
+            if (pois != null && pois.Count > 0)
+            {
+                note = pois[pois.Count - 1];
+            }
+            else
+            {
+                var pings = player.State?.pings;
+                if (pings != null && pings.Count > 0)
                 {
-                    PrintMsgL(player, "BlockedMarkerTeleport");
-                }
-                else if (permission.UserHasPermission(player.UserIDString, PermTpMarker))
-                {
-                    float y = TerrainMeta.HeightMap.GetHeight(note.worldPosition);
-                    if (player.IsFlying) y = Mathf.Max(y, player.transform.position.y);
-                    if (config.Settings.CheckBoundaries && !CheckBoundaries(note.worldPosition.x, y, note.worldPosition.z))
-                    {
-                        PrintMsgL(player, "AdminTPOutOfBounds");
-                        PrintMsgL(player, "AdminTPBoundaries", boundary);
-                    }
-                    else if (CheckIsEventTerritory(note.worldPosition))
-                    {
-                        PrintMsgL(player, "BlockedMarkerTeleport");
-                    }
-                    else if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin) && player.IsBuildingBlocked(note.worldPosition, Quaternion.identity, player.bounds))
-                    {
-                        PrintMsgL(player, "BlockedAuthMarkerTeleport");
-                    }
-                    else player.Teleport(note.worldPosition + new Vector3(0f, y, 0f));
+                    note = pings[pings.Count - 1];
                 }
             }
+
+            if (note == null)
+            {
+                PrintMsg(player, "У вас нет меток или пингов на карте. Откройте карту (G) и поставьте метку.");
+                return;
+            }
+
+            TryTeleportToMarker(player, note, force: true);
+        }
+
+        // Carbon hook (pre-hook в Server_AddMarker)
+        private object OnMapMarkerAdd(BasePlayer player, ProtoBuf.MapNote note)
+        {
+            TryTeleportToMarker(player, note);
+            return null;
+        }
+
+        // Oxide hook (post-hook в Server_AddMarker)
+        private void OnMapMarkerAdded(BasePlayer player, ProtoBuf.MapNote note)
+        {
+            TryTeleportToMarker(player, note);
+        }
+
+        private void TryTeleportToMarker(BasePlayer player, ProtoBuf.MapNote note, bool force = false)
+        {
+            if (player == null || !player.IsAlive() || player.isMounted || note == null) return;
+
+            // Защита от дублирования при вызове обоих хуков
+            float last;
+            if (_lastMarkerTp.TryGetValue(player.userID, out last) && UnityEngine.Time.realtimeSinceStartup - last < 0.5f)
+                return;
+
+            if (!force && blockMapMarker.Contains(player.UserIDString)) return;
+
+            if (permission.UserHasPermission(player.UserIDString, "octatp.blocktpmarker"))
+            {
+                PrintMsgL(player, "BlockedMarkerTeleport");
+                return;
+            }
+
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin) && !permission.UserHasPermission(player.UserIDString, PermTpMarker))
+            {
+                return;
+            }
+
+            Vector3 targetPos = note.worldPosition;
+            float terrainY = TerrainMeta.HeightMap.GetHeight(targetPos);
+            float waterY = TerrainMeta.WaterMap ? TerrainMeta.WaterMap.GetHeight(targetPos) : 0f;
+            float surfaceY = Mathf.Max(terrainY, waterY);
+            if (player.IsFlying) surfaceY = Mathf.Max(surfaceY, player.transform.position.y);
+            targetPos.y = surfaceY + 0.5f;
+
+            if (config.Settings.CheckBoundaries && !CheckBoundaries(targetPos.x, targetPos.y, targetPos.z))
+            {
+                PrintMsgL(player, "AdminTPOutOfBounds");
+                PrintMsgL(player, "AdminTPBoundaries", boundary);
+                return;
+            }
+
+            if (CheckIsEventTerritory(targetPos))
+            {
+                PrintMsgL(player, "BlockedMarkerTeleport");
+                return;
+            }
+
+            if (!player.IsAdmin && !permission.UserHasPermission(player.UserIDString, PermAdmin) &&
+                player.IsBuildingBlocked(targetPos, Quaternion.identity, player.bounds))
+            {
+                PrintMsgL(player, "BlockedAuthMarkerTeleport");
+                return;
+            }
+
+            _lastMarkerTp[player.userID] = UnityEngine.Time.realtimeSinceStartup;
+            Teleport(player, targetPos, "marker", 0uL, town: false, allowTPB: true, removeHostility: true, build: true, craft: true, cave: true, death: false);
         }
 
         private bool CheckIsEventTerritory(Vector3 worldPosition)
