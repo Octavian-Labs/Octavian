@@ -357,12 +357,12 @@ namespace Oxide.Plugins
         private void CreateStandaloneRoot(ref CuiElementContainer ui)
         {
             CUIClass.CreatePanel(ref ui, "octakits_root", "Overlay", "0 0 0 0.85", "0 0", "1 1", true, 0f, 0f, "assets/content/ui/uibackgroundblur.mat");
-            CUIClass.CreatePanel(ref ui, "octakits_content", "octakits_root", GlassBg, "0.14 0.10", "0.86 0.92", false, 0.2f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_content", "octakits_root", GlassBg, "0.18 0.08", "0.82 0.94", false, 0.2f, 0f, "assets/icons/iconmaterial.mat");
             // золотая шапка
             CUIClass.CreatePanel(ref ui, "octakits_header", "octakits_content", "0 0 0 0", "0 0.95", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "octakits_headline", "octakits_content", Gold, "0 0.945", "1 0.948", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreateText(ref ui, "octakits_title", "octakits_header", GoldBright, "◆ <b>НАБОРЫ</b>", 16, "0.02 0.1", "0.5 0.9", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
-            CUIClass.CreateText(ref ui, "octakits_sub", "octakits_header", TMuted, "выбери набор — обзор покажет содержимое", 10, "0.5 0.1", "0.93 0.9", TextAnchor.MiddleRight, "robotocondensed-regular.ttf");
+            CUIClass.CreateText(ref ui, "octakits_sub", "octakits_header", TMuted, "выбери набор — обзор покажет содержимое", 10, "0.5 0.1", "0.76 0.9", TextAnchor.MiddleRight, "robotocondensed-regular.ttf");
             CUIClass.CreateButton(ref ui, "octakits_close", "octakits_header", CRed, "<b>✕</b>", 13, "0.945 0.15", "0.99 0.85", "octakits_close", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
         }
 
@@ -552,14 +552,14 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, $"kitpanel_{i}", "octakits_content", config?.ui?.colors?["Дополнительная панель"] ?? GlassBg, _anchors[0], _anchors[1], false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "0 0");
                     // Верхняя золотая полоска карточки
                     CUIClass.CreatePanel(ref ui, $"kit_goldline_{i}", $"kitpanel_{i}", Gold, "0 0.97", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
-                    //logo
-                    CUIClass.CreatePanel(ref ui, $"kit_icon_panel_{i}", $"kitpanel_{i}", config?.ui?.colors?["Основная панель"] ?? GlassRow, "0.03 0.33", "0.32 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                    //logo — квадратная иконка фиксированной ширины, чтобы не растягивалась
+                    CUIClass.CreatePanel(ref ui, $"kit_icon_panel_{i}", $"kitpanel_{i}", config?.ui?.colors?["Основная панель"] ?? GlassRow, "0.03 0.34", "0.03 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "84 0");
                         string imageUrl = Img(kitInfo?.ImageUrl ?? "");
                         if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit '{kitname}' image URL: '{kitInfo?.ImageUrl ?? "NULL"}'");
                         if (!string.IsNullOrEmpty(imageUrl))
                             CUIClass.CreateImage(ref ui, "img", $"kit_icon_panel_{i}", imageUrl, "0.06 0.06", "0.94 0.94", 0.2f);
                     //title
-                    CUIClass.CreatePanel(ref ui, $"kit_title_panel_{i}", $"kitpanel_{i}", "0 0 0 0", "0.35 0.33", "0.97 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                    CUIClass.CreatePanel(ref ui, $"kit_title_panel_{i}", $"kitpanel_{i}", "0 0 0 0", "0.33 0.33", "0.97 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
                         string titleFormatted = $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>\n" +
                                                 $"<size=10><color=#9E9482>{kitDescr}</color></size>\n\n" +
                                                 $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cooldown}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesleft}</color></size>";
@@ -582,12 +582,15 @@ namespace Oxide.Plugins
             // Сносим всё старое окно целиком (корень уносит и карточки, и детальный просмотр)
             CuiHelper.DestroyUi(player, "octakits_root");
 
-            if (page > 0) {
-                CUIClass.CreateButton(ref ui, "octakits_btn_back", "octakits_content", GlassRow, "<size=22><color=#FFD35C>‹</color></size>", 14, "0.02 0.45", "0.06 0.55", $"octakits_page {page - 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
-            }
-
-            if ((double) page + 1 < ((double) kitList.Count / 9)) {
-                CUIClass.CreateButton(ref ui, "octakits_btn_next", "octakits_content", GlassRow, "<size=22><color=#FFD35C>›</color></size>", 14, "0.94 0.45", "0.98 0.55", $"octakits_page {page + 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+            // Пагинация — в шапке, не перекрывает карточки
+            int totalPages = (int)Math.Ceiling(kitList.Count / 9.0);
+            if (totalPages > 1)
+            {
+                if (page > 0)
+                    CUIClass.CreateButton(ref ui, "octakits_pg_back", "octakits_header", GlassRow, "<size=14><color=#FFD35C>‹</color></size>", 12, "0.775 0.15", "0.825 0.85", $"octakits_page {page - 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateText(ref ui, "octakits_pg_label", "octakits_header", TMuted, $"{page + 1}/{totalPages}", 11, "0.825 0.15", "0.885 0.85", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                if (page + 1 < totalPages)
+                    CUIClass.CreateButton(ref ui, "octakits_pg_next", "octakits_header", GlassRow, "<size=14><color=#FFD35C>›</color></size>", 12, "0.885 0.15", "0.935 0.85", $"octakits_page {page + 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             }
 
             CuiHelper.AddUi(player, ui);
@@ -1120,10 +1123,12 @@ namespace Oxide.Plugins
                 return;
             }
 
-            
-            CuiHelper.DestroyUi(player, "octakits_viewkit_inventory"); 
-            CuiHelper.DestroyUi(player, "octakits_viewkit_info"); 
-            ShowKits(player, Convert.ToInt32(args[0]));
+            int pg = 0;
+            int.TryParse(args[0], out pg);
+            pg = Math.Max(0, pg);
+            CuiHelper.DestroyUi(player, "octakits_viewkit_inventory");
+            CuiHelper.DestroyUi(player, "octakits_viewkit_info");
+            ShowKits(player, pg);
 
         }
 

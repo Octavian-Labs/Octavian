@@ -1341,7 +1341,7 @@ namespace Oxide.Plugins
             if (Kits == null)
             {
                 CUIClass.CreateText(ref ui, "owkit_err", "imagePanel", "1 1 1 0.6",
-                    "Система наборов сейчас недоступна.", 16, "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                    "Система наборов сейчас недоступна.", 16, "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 KitsTab_Destroy(player);
                 CuiHelper.AddUi(player, ui);
                 return;
@@ -1351,7 +1351,7 @@ namespace Oxide.Plugins
             if (kits.Count == 0)
             {
                 CUIClass.CreateText(ref ui, "owkit_err", "imagePanel", "1 1 1 0.6",
-                    "На сервере пока нет доступных наборов.", 16, "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                    "На сервере пока нет доступных наборов.", 16, "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 KitsTab_Destroy(player);
                 CuiHelper.AddUi(player, ui);
                 return;
@@ -1384,14 +1384,15 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, $"owkit_card_{i}", "imagePanel", KGlassBg, a[0], a[1], false, 0f, "assets/icons/iconmaterial.mat");
                 CUIClass.CreatePanel(ref ui, $"owkit_gold_{i}", $"owkit_card_{i}", KGold, "0 0.97", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
 
-                CUIClass.CreatePanel(ref ui, $"owkit_icon_{i}", $"owkit_card_{i}", KGlassRow, "0.03 0.33", "0.32 0.92", false, 0f, "assets/icons/iconmaterial.mat");
+                // иконка — квадрат фиксированной ширины, чтобы картинка не растягивалась
+                CUIClass.CreatePanel(ref ui, $"owkit_icon_{i}", $"owkit_card_{i}", KGlassRow, "0.03 0.34", "0.03 0.92", false, 0f, "assets/icons/iconmaterial.mat", "", "0 0", "80 0");
                 if (!string.IsNullOrEmpty(image))
                     CUIClass.CreateImage(ref ui, $"owkit_icon_{i}", Img3(image), "0.06 0.06", "0.94 0.94", 0.2f);
 
                 string title = $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>\n" +
                                $"<size=10><color=#9E9482>{descr}</color></size>\n\n" +
                                $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cdText}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesText}</color></size>";
-                CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_card_{i}", KTWhite, title, 13, "0.35 0.33", "0.97 0.92", TextAnchor.UpperLeft, "robotocondensed-bold.ttf");
+                CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_card_{i}", KTWhite, title, 13, "0.33 0.33", "0.97 0.92", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
                 CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26",
                     $"octawelcome_kit_view {kitname.Replace(" ", "%")} {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
@@ -1401,13 +1402,18 @@ namespace Oxide.Plugins
                     $"octawelcome_kit_claim {kitname.Replace(" ", "%")} {page} 0", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
 
-            // пагинация
-            if (page > 0)
-                CUIClass.CreateButton(ref ui, "owkit_prev", "imagePanel", KGlassRow, "<size=22><color=#FFD35C>‹</color></size>", 14, "0.02 0.45", "0.06 0.55",
-                    $"octawelcome_kit_page {page - 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
-            if ((double)page + 1 < (double)kits.Count / 9)
-                CUIClass.CreateButton(ref ui, "owkit_next", "imagePanel", KGlassRow, "<size=22><color=#FFD35C>›</color></size>", 14, "0.94 0.45", "0.98 0.55",
-                    $"octawelcome_kit_page {page + 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            // пагинация — узкая полоса внизу панели, не перекрывает карточки
+            int totalPages = (int)Math.Ceiling(kits.Count / 9.0);
+            if (totalPages > 1)
+            {
+                if (page > 0)
+                    CUIClass.CreateButton(ref ui, "owkit_prev", "imagePanel", KGlassRow, "<color=#FFD35C>‹</color>", 13, "0.40 0.004", "0.46 0.048",
+                        $"octawelcome_kit_page {page - 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                CUIClass.CreateText(ref ui, "owkit_pg", "imagePanel", "0.58 0.53 0.43 1", $"стр. {page + 1}/{totalPages}", 10, "0.46 0.004", "0.54 0.048", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                if (page + 1 < totalPages)
+                    CUIClass.CreateButton(ref ui, "owkit_next", "imagePanel", KGlassRow, "<color=#FFD35C>›</color>", 13, "0.54 0.004", "0.60 0.048",
+                        $"octawelcome_kit_page {page + 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            }
 
             KitsTab_Destroy(player);
             CuiHelper.AddUi(player, ui);
@@ -1444,7 +1450,7 @@ namespace Oxide.Plugins
                         }
                     });
                     CUIClass.CreateText(ref ui, $"{prefix}{i}_am", $"{prefix}{i}", "0.95 0.75 0.30 1",
-                        $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, "robotocondensed-bold.ttf");
+                        $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 }
                 catch { }
             }
@@ -1466,17 +1472,17 @@ namespace Oxide.Plugins
             CUIClass.CreatePanel(ref ui, "owkit_view_inv", "imagePanel", KGlassBg, "0.37 0.04", "0.99 0.96", false, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "owkit_inv_gold", "owkit_view_inv", KGold, "0 0.985", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
 
-            CUIClass.CreateText(ref ui, "owkit_sec_main", "owkit_view_inv", KGold, "◆ <b>ОСНОВНОЙ ИНВЕНТАРЬ</b>", 11, "0.03 0.93", "0.97 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "owkit_sec_main", "owkit_view_inv", KGold, "◆ <b>ОСНОВНОЙ ИНВЕНТАРЬ</b>", 11, "0.03 0.93", "0.97 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_div_main", "owkit_view_inv", KGoldDark, "0.03 0.925", "0.97 0.928", false, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "owkit_inv_main", "owkit_view_inv", "0 0 0 0", "0.02 0.44", "0.98 0.91", false, 0f, "assets/icons/iconmaterial.mat");
             KitsTab_ItemCells(ref ui, "owkit_inv_main", _kitMainA, main, "owkit_mitem_");
 
-            CUIClass.CreateText(ref ui, "owkit_sec_belt", "owkit_view_inv", KGold, "◆ <b>БЫСТРЫЙ ДОСТУП</b>", 11, "0.03 0.38", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "owkit_sec_belt", "owkit_view_inv", KGold, "◆ <b>БЫСТРЫЙ ДОСТУП</b>", 11, "0.03 0.38", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_div_belt", "owkit_view_inv", KGoldDark, "0.03 0.375", "0.97 0.378", false, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "owkit_inv_belt", "owkit_view_inv", "0 0 0 0", "0.02 0.24", "0.98 0.36", false, 0f, "assets/icons/iconmaterial.mat");
             KitsTab_ItemCells(ref ui, "owkit_inv_belt", _kitBeltA, belt, "owkit_bitem_");
 
-            CUIClass.CreateText(ref ui, "owkit_sec_wear", "owkit_view_inv", KGold, "◆ <b>ЭКИПИРОВКА</b>", 11, "0.03 0.19", "0.97 0.23", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "owkit_sec_wear", "owkit_view_inv", KGold, "◆ <b>ЭКИПИРОВКА</b>", 11, "0.03 0.19", "0.97 0.23", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_div_wear", "owkit_view_inv", KGoldDark, "0.03 0.185", "0.97 0.188", false, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "owkit_inv_wear", "owkit_view_inv", "0 0 0 0", "0.02 0.05", "0.98 0.17", false, 0f, "assets/icons/iconmaterial.mat");
             KitsTab_ItemCells(ref ui, "owkit_inv_wear", _kitClothA, wear, "owkit_witem_");
@@ -1484,7 +1490,7 @@ namespace Oxide.Plugins
             // левая часть — информация о наборе
             CUIClass.CreatePanel(ref ui, "owkit_view_info", "imagePanel", KGlassBg, "0.01 0.04", "0.35 0.96", false, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "owkit_v_gold", "owkit_view_info", KGold, "0 0.985", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
-            CUIClass.CreateText(ref ui, "owkit_v_title", "owkit_view_info", "0.95 0.75 0.30 1", $"◆ <b>{kitname.ToUpper()}</b>", 18, "0.06 0.91", "0.94 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "owkit_v_title", "owkit_view_info", "0.95 0.75 0.30 1", $"◆ <b>{kitname.ToUpper()}</b>", 18, "0.06 0.91", "0.94 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_v_div1", "owkit_view_info", KGoldDark, "0.06 0.895", "0.94 0.898", false, 0f, "assets/icons/iconmaterial.mat");
 
             int cooldownSec = 0, maxUses = 0, used = 0;
@@ -1504,13 +1510,13 @@ namespace Oxide.Plugins
                           $"<color=#8E8777>• Доступно:</color>  <color=#FFD35C>{usesText}</color>\n" +
                           $"<color=#8E8777>• Стоимость:</color> <color=#FFD35C>{costText}</color>\n" +
                           $"<color=#8E8777>• Статус:</color>    {permStatus}";
-            CUIClass.CreateText(ref ui, "owkit_v_info", "owkit_view_info", KTWhite, info, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "owkit_v_info", "owkit_view_info", KTWhite, info, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_v_div2", "owkit_view_info", KGoldDark, "0.06 0.635", "0.94 0.638", false, 0f, "assets/icons/iconmaterial.mat");
 
             string descr = "";
             try { descr = Kits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
             if (string.IsNullOrEmpty(descr)) descr = "Описание набора не указано.";
-            CUIClass.CreateText(ref ui, "owkit_v_descr", "owkit_view_info", "0.58 0.53 0.43 1", descr, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf");
+            CUIClass.CreateText(ref ui, "owkit_v_descr", "owkit_view_info", "0.58 0.53 0.43 1", descr, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
             CUIClass.CreateButton(ref ui, "owkit_v_back", "owkit_view_info", KGlassRow, "<color=#FFD35C>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16",
                 $"octawelcome_kit_page {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
@@ -1532,6 +1538,7 @@ namespace Oxide.Plugins
 
             CuiHelper.DestroyUi(player, "owkit_prev");
             CuiHelper.DestroyUi(player, "owkit_next");
+            CuiHelper.DestroyUi(player, "owkit_pg");
             CuiHelper.DestroyUi(player, "owkit_err");
             CuiHelper.DestroyUi(player, "owkit_view_inv");
             CuiHelper.DestroyUi(player, "owkit_view_info");
@@ -1547,6 +1554,7 @@ namespace Oxide.Plugins
 
             int page = 0;
             int.TryParse(args[0], out page);
+            page = Math.Max(0, page);
             CuiHelper.DestroyUi(player, "owkit_view_inv");
             CuiHelper.DestroyUi(player, "owkit_view_info");
             KitsTab_Show(player, page);
