@@ -507,6 +507,11 @@ namespace Oxide.Plugins
 
         private readonly Dictionary<string, BossState> _bosses = new Dictionary<string, BossState>();
 
+        // имена босса/свиты по сущности — переживают смерть сущности,
+        // потому что киллфид (OctaFeed) читает имя в том же тике гибели,
+        // когда Alive уже false, а свита уже вычищена из списка
+        private readonly Dictionary<BaseEntity, string> _bossNames = new Dictionary<BaseEntity, string>();
+
         // «ждём труп этой смерти с таким масштабом»: матч по parentEnt,
         // фолбэк — по позиции смерти (parentEnt бывает пуст). TTL чистится лениво
         private class PendingCorpse
@@ -617,6 +622,7 @@ namespace Oxide.Plugins
                 if (!string.Equals(ent.PrefabName, spec.Prefab, StringComparison.OrdinalIgnoreCase)) continue;
                 st.Spec = CloneSpec(st.Live); // как при спавне — свой слепок
                 st.Entity = ent;
+                _bossNames[ent] = st.Spec.DisplayName;
                 st.Ai = ent as Rust.Ai.Gen2.BaseNPC2;
                 st.Livestock = ent as Rust.Ai.Gen2.LivestockAnimal;
                 st.SpawnedAt = DateTime.UtcNow;
@@ -628,7 +634,10 @@ namespace Oxide.Plugins
                 {
                     var e = BaseNetworkable.serverEntities.Find(new NetworkableId(eid)) as BaseCombatEntity;
                     if (e != null && !e.IsDestroyed && e.IsAlive() && e is Rust.Ai.Gen2.BaseNPC2)
+                    {
                         st.Escorts.Add(e);
+                        _bossNames[e] = $"Свита ({st.Spec.DisplayName})";
+                    }
                 }
                 var guardN = Mathf.CeilToInt(st.Escorts.Count * 0.6f);
                 for (var i = 0; i < st.Escorts.Count; i++)
@@ -866,6 +875,7 @@ namespace Oxide.Plugins
             ent.Spawn();
 
             st.Entity = ent;
+            _bossNames[ent] = st.Spec.DisplayName;
             st.Ai = ent as Rust.Ai.Gen2.BaseNPC2;
             st.Livestock = livestock;
             st.SpawnedAt = DateTime.UtcNow;
@@ -954,6 +964,8 @@ namespace Oxide.Plugins
 
         private void SpawnEscorts(BossState st, Vector3 center)
         {
+            foreach (var old in st.Escorts)
+                if (old != null) _bossNames.Remove(old);
             st.Escorts.Clear();
             var esc = st.Spec.Escort;
             var prefab = string.IsNullOrEmpty(esc.Prefab) ? st.Spec.Prefab : esc.Prefab;
@@ -977,6 +989,7 @@ namespace Oxide.Plugins
                 // свита — тоже без боевой паники
                 try { TameFlee(e.GetComponent<Rust.Ai.Gen2.FSMComponent>()); } catch { }
                 st.Escorts.Add(e);
+                _bossNames[e] = $"Свита ({st.Spec.DisplayName})";
             }
             // роли: первые ceil(N*0.6) — охранники у босса, остальные — приманки
             var guardN = Mathf.CeilToInt(st.Escorts.Count * 0.6f);
@@ -988,6 +1001,9 @@ namespace Oxide.Plugins
         private void DespawnBoss(BossState st)
         {
             ClearMarker(st);
+            if (st.Entity != null) _bossNames.Remove(st.Entity);
+            foreach (var e in st.Escorts)
+                if (e != null) _bossNames.Remove(e);
             if (st.Spec.Escort.KillOnDespawn) KillEscorts(st); else st.Escorts.Clear();
             if (st.Alive) st.Entity.Kill();
             st.Entity = null;
@@ -1261,6 +1277,9 @@ namespace Oxide.Plugins
         public string GetBossName(BaseCombatEntity ent)
         {
             if (ent == null) return null;
+            // реестр переживает смерть сущности — киллфиду нужно имя
+            // даже когда Alive уже false и свита вычищена из списка
+            if (_bossNames.TryGetValue(ent, out string bossName)) return bossName;
             var st = StateOf(ent);
             if (st != null && st.Alive) return st.Spec.DisplayName;
             var esc = EscortOf(ent);
@@ -1292,6 +1311,7 @@ namespace Oxide.Plugins
                 {
                     st.Escorts.Remove(e);
                     st.EscortRoles.Remove(e);
+                    _bossNames.Remove(e);
                     e.Kill();
                 }
                 else
@@ -1779,6 +1799,8 @@ namespace Oxide.Plugins
                 esc.Escorts.Remove(entity);
                 esc.EscortRoles.Remove(entity);
                 RegisterCorpseScale(entity, esc.Spec.Escort.Scale);
+                // имя держим ещё пару секунд — киллфид читает его в этом же тике смерти
+                timer.Once(2f, () => _bossNames.Remove(entity));
                 return;
             }
 
@@ -1799,6 +1821,8 @@ namespace Oxide.Plugins
             st.DeathHandled = true;
             if (!st.Alive && st.Entity == null) return;
             var ent = st.Entity;
+            // имя босса держим пару секунд после смерти — киллфид читает его в этом же тике
+            if (ent != null) timer.Once(2f, () => _bossNames.Remove(ent));
 
             // туша — новая сущность с дефолтным масштабом; масштабируем в OnEntitySpawned по parentEnt
             RegisterCorpseScale(ent, st.Spec.Scale);
@@ -1842,7 +1866,11 @@ namespace Oxide.Plugins
                 timer.Once(60f, () =>
                 {
                     foreach (var e in leftover)
-                        if (e != null && !e.IsDestroyed) e.Kill();
+                        if (e != null && !e.IsDestroyed)
+                        {
+                            _bossNames.Remove(e);
+                            e.Kill();
+                        }
                 });
             ScheduleNext(st);
         }
@@ -3860,6 +3888,9 @@ namespace Oxide.Plugins
                 }
                 else if (!spec.Enabled && _bosses.TryGetValue(spec.Key, out var st))
                 {
+                    if (st.Entity != null) _bossNames.Remove(st.Entity);
+                    foreach (var e in st.Escorts)
+                        if (e != null) _bossNames.Remove(e);
                     if (st.Alive) DespawnBoss(st);
                     _bosses.Remove(spec.Key);
                 }

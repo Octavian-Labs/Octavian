@@ -856,8 +856,14 @@ namespace Oxide.Plugins
                     else if (victim is BradleyAPC bradley)
                         outputRow = new DeathRow(bradley, killerPlayer, info);
                     else
-                        // Игрок убил животное / босса!
-                        outputRow = new DeathRow(victim, killerPlayer, info);
+                    {
+                        // Игрок убил что-то прочее: в фид идут только боссы и свита OctaBoss.
+                        // Обычных животных, бочки, трупы и прочие контейнеры пропускаем.
+                        string bossName = null;
+                        try { bossName = OctaBoss?.Call("GetBossName", victim) as string; } catch { }
+                        if (!string.IsNullOrEmpty(bossName))
+                            outputRow = new DeathRow(victim, killerPlayer, info);
+                    }
                 }
             }
 
