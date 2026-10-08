@@ -2757,12 +2757,12 @@ namespace Oxide.Plugins
                 CopyPasteParams = new[] { "deployables", "true", "inventories", "true" },
                 Menu = new ConfigData.MenuOptions
                 {
-                    Panel = new ConfigData.UIColor { Hex = "#232323", Alpha = 1f },
-                    Disabled = new ConfigData.UIColor { Hex = "#3e3e42", Alpha = 1f },
-                    Color1 = new ConfigData.UIColor { Hex = "#007acc", Alpha = 1f },
-                    Color2 = new ConfigData.UIColor { Hex = "#6a8b38", Alpha = 1f },
-                    Color3 = new ConfigData.UIColor { Hex = "#d85540", Alpha = 1f },
-                    Color4 = new ConfigData.UIColor { Hex = "#d08822", Alpha = 1f },
+                    Panel = new ConfigData.UIColor { Hex = "#141210", Alpha = 0.95f },
+                    Disabled = new ConfigData.UIColor { Hex = "#1E1B18", Alpha = 0.90f },
+                    Color1 = new ConfigData.UIColor { Hex = "#D4A338", Alpha = 1f },
+                    Color2 = new ConfigData.UIColor { Hex = "#358542", Alpha = 1f },
+                    Color3 = new ConfigData.UIColor { Hex = "#94211A", Alpha = 1f },
+                    Color4 = new ConfigData.UIColor { Hex = "#7A521A", Alpha = 1f },
                     DefaultKitURL = "https://chaoscode.io/oxide/Images/kiticon.png",
                     MagnifyIconURL = "https://chaoscode.io/oxide/Images/magnifyingglass.png"
                 },

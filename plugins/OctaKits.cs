@@ -13,11 +13,26 @@ using Network;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaKits", "Octavian", "1.0.0")]
-    [Description("Интерфейс наборов Octavian поверх плагина Kits — сетка, просмотр, кулдауны")]
+    [Info("OctaKits", "Octavian", "1.1.0")]
+    [Description("Интерфейс наборов Octavian поверх плагина Kits — стиль золото на стекле")]
     public class OctaKits : RustPlugin
     {   
         [PluginReference] Plugin ImageLibrary, Kits;
+
+        // Фирменная палитра Octavian (золото на стекле, эталон OctaBoss)
+        private const string GoldBright = "0.95 0.75 0.30 1";
+        private const string Gold       = "0.82 0.61 0.20 1";
+        private const string GoldDark   = "0.48 0.32 0.10 1";
+        private const string GoldGlass  = "0.82 0.61 0.20 0.18";
+        private const string GlassBg    = "0.02 0.018 0.015 0.92";
+        private const string GlassLt    = "0.05 0.045 0.035 0.92";
+        private const string GlassRow   = "0.08 0.07 0.05 0.85";
+        private const string GlassHov   = "0.13 0.105 0.06 0.95";
+        private const string TMain      = "0.93 0.88 0.75 1";
+        private const string TMuted     = "0.58 0.53 0.43 1";
+        private const string TWhite     = "1 0.98 0.90 1";
+        private const string CGreen     = "0.20 0.52 0.27 0.92";
+        private const string CRed       = "0.58 0.13 0.10 0.92";
 
         private Dictionary<string, KitCache> kitCache = new Dictionary<string, KitCache>();
         private readonly Dictionary<ulong, Timer> _cdTimers = new Dictionary<ulong, Timer>();
@@ -482,27 +497,29 @@ namespace Oxide.Plugins
 
                 if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Creating UI for kit '{kitname}' - Uses: {usesleft}, Cooldown: {cooldown}, HasPermission: {kitInfo.HasPermission}");
 
-                CUIClass.CreatePanel(ref ui, $"kitpanel_{i}", "imagePanel", config?.ui?.colors?["Дополнительная панель"] ?? "0 0 0 0.5", _anchors[0], _anchors[1], false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "0 0");
+                CUIClass.CreatePanel(ref ui, $"kitpanel_{i}", "imagePanel", config?.ui?.colors?["Дополнительная панель"] ?? GlassBg, _anchors[0], _anchors[1], false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "0 0");
+                    // Верхняя золотая полоска карточки
+                    CUIClass.CreatePanel(ref ui, $"kit_goldline_{i}", $"kitpanel_{i}", Gold, "0 0.97", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
                     //logo
-                    CUIClass.CreatePanel(ref ui, $"kit_icon_panel_{i}", $"kitpanel_{i}", config?.ui?.colors?["Основная панель"] ?? "0 0 0 0.5", "0.03 0.33", "0.32 0.94", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                    CUIClass.CreatePanel(ref ui, $"kit_icon_panel_{i}", $"kitpanel_{i}", config?.ui?.colors?["Основная панель"] ?? GlassRow, "0.03 0.33", "0.32 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
                         string imageUrl = Img(kitInfo?.ImageUrl ?? "");
                         if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit '{kitname}' image URL: '{kitInfo?.ImageUrl ?? "NULL"}'");
-                        CUIClass.CreateImage(ref ui, "img", $"kit_icon_panel_{i}", imageUrl, "0.05 0.05", "0.95 0.95", 0.2f);
+                        if (!string.IsNullOrEmpty(imageUrl))
+                            CUIClass.CreateImage(ref ui, "img", $"kit_icon_panel_{i}", imageUrl, "0.06 0.06", "0.94 0.94", 0.2f);
                     //title
-                    CUIClass.CreatePanel(ref ui, $"kit_title_panel_{i}", $"kitpanel_{i}",  config?.ui?.colors?["Основная панель"] ?? "0 0 0 0.5", "0.34 0.33", "0.96 0.94", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
-                        CUIClass.CreateText(ref ui, "kitname", $"kit_title_panel_{i}", "1 1 1 0.6", gl("kit_title_format")
-                                                                                                    .Replace("{kit_title}", kitname)
-                                                                                                    .Replace("{kit_description}", kitDescr)
-                                                                                                    .Replace("{kit_cooldown}", cooldown)
-                                                                                                    .Replace("{kit_usesleft}", usesleft), 11, "0.05 0.00", "0.95 1", TextAnchor.MiddleLeft, $"robotocondensed-regular.ttf", 0.0f);
+                    CUIClass.CreatePanel(ref ui, $"kit_title_panel_{i}", $"kitpanel_{i}", "0 0 0 0", "0.35 0.33", "0.97 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                        string titleFormatted = $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>\n" +
+                                                $"<size=10><color=#9E9482>{kitDescr}</color></size>\n\n" +
+                                                $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cooldown}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesleft}</color></size>";
+                        CUIClass.CreateText(ref ui, "kitname", $"kit_title_panel_{i}", TWhite, titleFormatted, 13, "0.0 0.0", "1 1", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", 0.0f);
 
                     //view button
-                    CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}",  config?.ui?.colors?["Основная панель"] ?? "0 0 0 0.5",  gl("view_button"), 12, "0.01 0.06", $"0.32 0.28", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}", GlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
                     string[] btn_props = Button_Cooldown_Text(player, kitname).Split('%');
                     if (btn_props.Length >= 2)
                     {
-                        CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}",  btn_props[1], btn_props[0], 12, "0.34 0.06", $"0.96 0.28", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                        CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.35 0.05", "0.97 0.26", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                     }
                     else
                     {
@@ -511,19 +528,20 @@ namespace Oxide.Plugins
                 }
             
             for (var i = 0; i < 9; i++)
+            {
                 CuiHelper.DestroyUi(player, $"kitpanel_{i}");
+                CuiHelper.DestroyUi(player, $"kit_goldline_{i}");
+            }
 
             CuiHelper.DestroyUi(player, "octakits_btn_next");
             CuiHelper.DestroyUi(player, "octakits_btn_back");
 
             if (page > 0) {
-                CUIClass.CreateButton(ref ui, "octakits_btn_back", "imagePanel", config?.ui?.prevPage?.color ?? "0 0 0 0.6", config?.ui?.prevPage?.text ?? "‹", 11, config?.ui?.prevPage?.anchorMin ?? "0.02 0.45", config?.ui?.prevPage?.anchorMax ?? "0.08 0.55", $"octakits_page {page - 1}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_btn_back", "imagePanel", GlassRow, "<size=22><color=#FFD35C>‹</color></size>", 14, "0.02 0.45", "0.06 0.55", $"octakits_page {page - 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             }
 
-
-            if ((double) page + 1 <  ((double) kitList.Count / 9)) {
-                //next page button
-                CUIClass.CreateButton(ref ui, "octakits_btn_next", "imagePanel", config?.ui?.nextPage?.color ?? "0 0 0 0.6", config?.ui?.nextPage?.text ?? "›", 11, config?.ui?.nextPage?.anchorMin ?? "0.92 0.45", config?.ui?.nextPage?.anchorMax ?? "0.98 0.55", $"octakits_page {page + 1}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+            if ((double) page + 1 < ((double) kitList.Count / 9)) {
+                CUIClass.CreateButton(ref ui, "octakits_btn_next", "imagePanel", GlassRow, "<size=22><color=#FFD35C>›</color></size>", 14, "0.94 0.45", "0.98 0.55", $"octakits_page {page + 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             }
 
             CuiHelper.AddUi(player, ui);
@@ -565,7 +583,7 @@ namespace Oxide.Plugins
                 if (btn_props.Length >= 2)
                 {
                     // Обновляем кнопку получения кита
-                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}", btn_props[1], btn_props[0], 12, "0.34 0.06", "0.96 0.28", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.35 0.05", "0.97 0.26", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                     CuiHelper.DestroyUi(player, $"kit_claimbtn_{i}");
                 }
             }
@@ -601,14 +619,20 @@ namespace Oxide.Plugins
                 PrintWarning($"[OctaKits DEBUG] Kit items loaded - Main: {main?.Count() ?? 0}, Belt: {belt?.Count() ?? 0}, Wear: {wear?.Count() ?? 0}");
             }
 
-            CUIClass.CreatePanel(ref ui, "octakits_viewkit_inventory", "imagePanel", "0 0 0 0.0", "0.4 0", "1 1", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_viewkit_inventory", "imagePanel", GlassBg, "0.37 0.04", "0.99 0.96", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                // Золотая полоска сверху
+                CUIClass.CreatePanel(ref ui, "octakits_inv_goldline", "octakits_viewkit_inventory", Gold, "0 0.985", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+                // Заголовок секции: основной инвентарь
+                CUIClass.CreateText(ref ui, "octakits_sec_main", "octakits_viewkit_inventory", Gold, "◆ <b>ОСНОВНОЙ ИНВЕНТАРЬ</b>", 11, "0.03 0.93", "0.97 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+                CUIClass.CreatePanel(ref ui, "octakits_div_main", "octakits_viewkit_inventory", GoldDark, "0.03 0.925", "0.97 0.928", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+
                 //main
-                CUIClass.CreatePanel(ref ui, $"octakits_viewkit_inventory_main", "octakits_viewkit_inventory", "0 0 0 0.0", "0.14 0.45", "1 0.99", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                CUIClass.CreatePanel(ref ui, $"octakits_viewkit_inventory_main", "octakits_viewkit_inventory", "0 0 0 0.0", "0.02 0.44", "0.98 0.91", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
                 for (int i = 0; i < mainA.Count(); i++)
                 {   
                     if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Processing main item {i} for kit '{kitname}'");
                     string[] splitA = mainA[i].Split('-');
-                    CUIClass.CreatePanel(ref ui, $"octakits_imain_item{i}", "octakits_viewkit_inventory_main", config?.ui?.colors?["Ячейка предмета"] ?? "0 0 0 0.6", splitA[0], splitA[1], false, 0.2f, 0f, "assets/icons/iconmaterial.mat"); 
+                    CUIClass.CreatePanel(ref ui, $"octakits_imain_item{i}", "octakits_viewkit_inventory_main", GlassRow, splitA[0], splitA[1], false, 0.2f, 0f, "assets/icons/iconmaterial.mat"); 
                     
                     try{
                         if (main != null && i < main.Count())
@@ -623,10 +647,10 @@ namespace Oxide.Plugins
                                 {
                                     Parent = $"octakits_imain_item{i}",
                                     Name = $"{shortname}_{i}",
-                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.13 0.13", AnchorMax = "0.87 0.87"}},
+                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90"}},
                                     FadeOut = 0f
                                 });
-                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", "1 1 1 0.6", $"x{item.SelectToken("Amount")}", 11, "0.05 0.00", "0.95 1", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
+                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
                             }
                         }
                     
@@ -635,12 +659,16 @@ namespace Oxide.Plugins
                     }
                 }
             
-                CUIClass.CreatePanel(ref ui, "octakits_viewkit_inventory_belt", "octakits_viewkit_inventory", "0 0 0 0.0", "0.14 0.28", "1 0.42", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                // Заголовок секции: быстрый доступ
+                CUIClass.CreateText(ref ui, "octakits_sec_belt", "octakits_viewkit_inventory", Gold, "◆ <b>БЫСТРЫЙ ДОСТУП</b>", 11, "0.03 0.38", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+                CUIClass.CreatePanel(ref ui, "octakits_div_belt", "octakits_viewkit_inventory", GoldDark, "0.03 0.375", "0.97 0.378", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+
+                CUIClass.CreatePanel(ref ui, "octakits_viewkit_inventory_belt", "octakits_viewkit_inventory", "0 0 0 0.0", "0.02 0.24", "0.98 0.36", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
                 for (int i = 0; i < beltA.Count(); i++)
                 {   
                     if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Processing belt item {i} for kit '{kitname}'");
                     string[] splitA = beltA[i].Split('-');
-                    CUIClass.CreatePanel(ref ui, $"octakits_imain_item{i}", "octakits_viewkit_inventory_belt", config?.ui?.colors?["Ячейка предмета"] ?? "0 0 0 0.6", splitA[0], splitA[1], false, 0.2f, 0f, "assets/icons/iconmaterial.mat"); 
+                    CUIClass.CreatePanel(ref ui, $"octakits_imain_item{i}", "octakits_viewkit_inventory_belt", GlassRow, splitA[0], splitA[1], false, 0.2f, 0f, "assets/icons/iconmaterial.mat"); 
                     
                     try{
                         if (belt != null && i < belt.Count())
@@ -655,10 +683,10 @@ namespace Oxide.Plugins
                                 {
                                     Parent = $"octakits_imain_item{i}",
                                     Name = $"{shortname}_{i}",
-                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.13 0.13", AnchorMax = "0.87 0.87"}},
+                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90"}},
                                     FadeOut = 0f
                                 });
-                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", "1 1 1 0.6", $"x{item.SelectToken("Amount")}", 11, "0.05 0.00", "0.95 1", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
+                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
                             }
                         }
                     
@@ -667,12 +695,16 @@ namespace Oxide.Plugins
                     }
                 }
 
-                CUIClass.CreatePanel(ref ui, $"octakits_viewkit_inventory_wear", "octakits_viewkit_inventory", "0 0 0 0.0", "0.14 0.13", "1 0.25", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                // Заголовок секции: экипировка
+                CUIClass.CreateText(ref ui, "octakits_sec_wear", "octakits_viewkit_inventory", Gold, "◆ <b>ЭКИПИРОВКА</b>", 11, "0.03 0.19", "0.97 0.23", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+                CUIClass.CreatePanel(ref ui, "octakits_div_wear", "octakits_viewkit_inventory", GoldDark, "0.03 0.185", "0.97 0.188", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+
+                CUIClass.CreatePanel(ref ui, $"octakits_viewkit_inventory_wear", "octakits_viewkit_inventory", "0 0 0 0.0", "0.02 0.05", "0.98 0.17", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
                 for (int i = 0; i < clothA.Count(); i++)
                 {   
                     if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Processing wear item {i} for kit '{kitname}'");
                     string[] splitA = clothA[i].Split('-');
-                    CUIClass.CreatePanel(ref ui, $"octakits_imain_item{i}", "octakits_viewkit_inventory_wear", config?.ui?.colors?["Ячейка предмета"] ?? "0 0 0 0.6", splitA[0], splitA[1], false, 0.2f, 0f, "assets/icons/iconmaterial.mat"); 
+                    CUIClass.CreatePanel(ref ui, $"octakits_imain_item{i}", "octakits_viewkit_inventory_wear", GlassRow, splitA[0], splitA[1], false, 0.2f, 0f, "assets/icons/iconmaterial.mat"); 
                     
                     try{
                         if (wear != null && i < wear.Count())
@@ -687,10 +719,10 @@ namespace Oxide.Plugins
                                 {
                                     Parent = $"octakits_imain_item{i}",
                                     Name = $"{shortname}_{i}",
-                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.13 0.13", AnchorMax = "0.87 0.87"}},
+                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90"}},
                                     FadeOut = 0f
                                 });
-                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", "1 1 1 0.6", $"x{item.SelectToken("Amount")}", 11, "0.05 0.00", "0.95 1", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
+                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
                             }
                         }
                     
@@ -700,33 +732,41 @@ namespace Oxide.Plugins
                 }
             
             
-            
-            CUIClass.CreatePanel(ref ui, "octakits_viewkit_info", "imagePanel", "0 0 0 0.0", "0.0 0", "0.4 1", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
-                CUIClass.CreateText(ref ui, "kit_title", "octakits_viewkit_info", "1 1 1 0.8", gl("kit_title_format_view").Replace("{kit_title}", kitname), 38, "0.05 0.00", "1 0.97", TextAnchor.UpperLeft, $"robotocondensed-bold.ttf", 0.0f);  
+            CUIClass.CreatePanel(ref ui, "octakits_viewkit_info", "imagePanel", GlassBg, "0.01 0.04", "0.35 0.96", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+                // Верхняя золотая полоска
+                CUIClass.CreatePanel(ref ui, "octakits_v_goldline", "octakits_viewkit_info", Gold, "0 0.985", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+                CUIClass.CreateText(ref ui, "kit_title", "octakits_viewkit_info", GoldBright, $"◆ <b>{kitname.ToUpper()}</b>", 18, "0.06 0.91", "0.94 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", 0.0f);  
+                CUIClass.CreatePanel(ref ui, "octakits_v_div1", "octakits_viewkit_info", GoldDark, "0.06 0.895", "0.94 0.898", false, 0f, 0f, "assets/icons/iconmaterial.mat");
                 
                 string cooldown = gl("cooldown_title_none");
                 if ((int) Kits.Call<int>("GetKitCooldown", kitname) != 0)
                     cooldown = $"{TimeFormated(Convert.ToDouble(Kits.Call<int>("GetKitCooldown", kitname)))}";
-                CUIClass.CreateText(ref ui, "kit_cooldown", "octakits_viewkit_info", "1 1 1 0.35",gl("cooldown_title").Replace("{kit_cooldown}", cooldown), 13, "0.055 0.00", "0.95 0.86", TextAnchor.UpperLeft, $"robotocondensed-bold.ttf", 0.0f);  
                 
                 string usesleft = gl("uses_title_unlimited");
                 if ((int) Kits.Call<int>("GetKitMaxUses", kitname) != 0)
                     usesleft = $"{(int) Kits.Call("GetKitMaxUses", kitname) - (int) Kits.Call("GetPlayerKitUses", player.userID, kitname)}";
-                CUIClass.CreateText(ref ui, "kit_usesleft", "octakits_viewkit_info", "1 1 1 0.35",gl("uses_title").Replace("{kit_uses}", usesleft), 13, "0.055 0.00", "0.95 0.82", TextAnchor.UpperLeft, $"robotocondensed-bold.ttf", 0.0f);  
                 
                 string cost = gl("price_title_free");
                 if(Convert.ToInt32(kitObj.SelectToken("Cost")) != 0)
-                    cost = gl("price_title").Replace("{kit_price}",$"{kitObj.SelectToken("Cost")}").Replace("{kit_currency}", addonsData?["addons"]?.RustKits_currencyName ?? "$"); //$"PRICE <color=#ffffffcd>{kitObj.SelectToken("Cost")} {addonsData["addons"].RustKits_currencyName}</color>";
-                CUIClass.CreateText(ref ui, "kit_cost", "octakits_viewkit_info", "1 1 1 0.35", cost, 13, "0.055 0.00", "0.95 0.78", TextAnchor.UpperLeft, $"robotocondensed-bold.ttf", 0.0f);  
+                    cost = $"{kitObj.SelectToken("Cost")} {addonsData?["addons"]?.RustKits_currencyName ?? "$"}";
                 
-                string perm = gl("perms_title_no");
-                if ((string)kitObj.SelectToken("RequiredPermission") != "")
-                    perm = gl("perms_title_yes");              
-                CUIClass.CreateText(ref ui, "kit_perm", "octakits_viewkit_info", "1 1 1 0.35", perm, 13, "0.055 0.00", "0.95 0.54", TextAnchor.UpperLeft, $"robotocondensed-bold.ttf", 0.0f);  
+                string permReq = (string)kitObj.SelectToken("RequiredPermission");
+                string permStatus = string.IsNullOrEmpty(permReq) ? "<color=#A3E06C>Разрешён</color>" : 
+                                    (permission.UserHasPermission(player.UserIDString, permReq) ? "<color=#A3E06C>Разрешён</color>" : "<color=#E05A47>Требуется привилегия</color>");
 
-                CUIClass.CreateText(ref ui, "kit_description", "octakits_viewkit_info", "1 1 1 0.45",(string) Kits.Call("GetKitDescription", kitname), 12, "0.05 0.00", "1 0.45", TextAnchor.UpperLeft, $"robotocondensed-bold.ttf", 0.0f);  
+                string infoText = $"<color=#8E8777>• Кулдаун:</color>  <color=#FFD35C>{cooldown}</color>\n" +
+                                  $"<color=#8E8777>• Доступно:</color>  <color=#FFD35C>{usesleft}</color>\n" +
+                                  $"<color=#8E8777>• Стоимость:</color> <color=#FFD35C>{cost}</color>\n" +
+                                  $"<color=#8E8777>• Статус:</color>    {permStatus}";
+
+                CUIClass.CreateText(ref ui, "kit_info_block", "octakits_viewkit_info", TWhite, infoText, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", 0.0f);
+                CUIClass.CreatePanel(ref ui, "octakits_v_div2", "octakits_viewkit_info", GoldDark, "0.06 0.635", "0.94 0.638", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+
+                string descText = (string)Kits.Call("GetKitDescription", kitname);
+                if (string.IsNullOrEmpty(descText)) descText = "Описание набора не указано.";
+                CUIClass.CreateText(ref ui, "kit_description", "octakits_viewkit_info", TMuted, descText, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", 0.0f);  
                 
-                CUIClass.CreateButton(ref ui, "octakits_btn_back", $"octakits_viewkit_info", config?.ui?.colors?["Кнопка назад"] ?? "0 0 0 0.6", gl("back_button"), 11, "0.055 0.15", "0.40 0.225", $"octakits_page {page}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_btn_back", "octakits_viewkit_info", GlassRow, "<color=#FFD35C>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16", $"octakits_page {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                 
                 string[] btn_props = Button_Cooldown_Text(player, kitname).Split('%');
                 if (btn_props.Length < 2)
@@ -735,7 +775,7 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                CUIClass.CreateButton(ref ui, "octakits_btn_claim", $"octakits_viewkit_info", btn_props[1],  btn_props[0], 11, "0.45 0.15", "0.85 0.225", $"octakits_try_claim {kitname.Replace(" ", "%")} 1 0", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_btn_claim", "octakits_viewkit_info", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.49 0.06", "0.94 0.16", $"octakits_try_claim {kitname.Replace(" ", "%")} 1 0", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
             for (var i = 0; i < 9; i++)
                 CuiHelper.DestroyUi(player, $"kitpanel_{i}");
@@ -876,26 +916,26 @@ namespace Oxide.Plugins
 
                 if (IsKitOnCd(player, kitname))
                 {
-                    return gl("on_cooldown_button").Replace("{kit_cooldown}", $"{GetCurrentKitCd(player, kitname)}") + $"%{config?.ui?.colors?["Кнопка перезарядки"] ?? "0.80 0.25 0.16 0.85"}";
+                    return gl("on_cooldown_button").Replace("{kit_cooldown}", $"{GetCurrentKitCd(player, kitname)}") + $"%{config?.ui?.colors?["Кнопка перезарядки"] ?? CRed}";
                 }
                 else
                 {
                     if (!string.IsNullOrEmpty(perm))
                     {
                         if (!permission.UserHasPermission(player.UserIDString, perm))
-                            return gl("no_perms_button") + $"%{config?.ui?.colors?["Кнопка без доступа"] ?? "0.14 0.14 0.14 0.9"}";
+                            return gl("no_perms_button") + $"%{config?.ui?.colors?["Кнопка без доступа"] ?? GlassLt}";
                     }
 
                     if (kitUseLimit != 0)
                     {
                         if (kitUseLimit - kitTimesUsed < 1)
-                            return gl("no_uses_button") + $"%{config?.ui?.colors?["Кнопка без использований"] ?? "0.14 0.14 0.14 0.6"}";
+                            return gl("no_uses_button") + $"%{config?.ui?.colors?["Кнопка без использований"] ?? GlassLt}";
                     }
 
                     if (cost != 0)
-                        return $"{cost} {addonsData?["addons"]?.RustKits_currencyName ?? "$"}" + $"%{config?.ui?.colors?["Кнопка забрать"] ?? "0.91 0.72 0.29 0.85"}";
+                        return $"{cost} {addonsData?["addons"]?.RustKits_currencyName ?? "$"}" + $"%{config?.ui?.colors?["Кнопка забрать"] ?? CGreen}";
                     else
-                        return gl("claim_button") + $"%{config?.ui?.colors?["Кнопка забрать"] ?? "0.91 0.72 0.29 0.85"}";
+                        return gl("claim_button") + $"%{config?.ui?.colors?["Кнопка забрать"] ?? CGreen}";
                 }
             }
             catch (Exception ex)
@@ -1424,14 +1464,14 @@ namespace Oxide.Plugins
                         updateCooldownButtons = true,
                         colors = new Dictionary<string, string>()
                         {   
-                            {"Кнопка забрать", "0.91 0.72 0.29 0.85"},
-                            {"Кнопка перезарядки", "0.80 0.25 0.16 0.85"},
-                            {"Кнопка без доступа", "0.14 0.14 0.14 0.9"},
-                            {"Кнопка без использований", "0.14 0.14 0.14 0.6"},
-                            {"Кнопка назад", "0 0 0 0.6"},
-                            {"Основная панель", "0 0 0 0.5"},
-                            {"Дополнительная панель", "0 0 0 0.5"},
-                            {"Ячейка предмета", "0 0 0 0.6"}
+                            {"Кнопка забрать", CGreen},
+                            {"Кнопка перезарядки", CRed},
+                            {"Кнопка без доступа", GlassLt},
+                            {"Кнопка без использований", GlassLt},
+                            {"Кнопка назад", GlassRow},
+                            {"Основная панель", GlassRow},
+                            {"Дополнительная панель", GlassBg},
+                            {"Ячейка предмета", GlassRow}
                         },
                         prevPage = new OctaKits.Configuration.Ui.PageBtn
                         {
