@@ -1319,8 +1319,13 @@ namespace Oxide.Plugins
             if (cdLeft > 0) return $"⏱ {KitFmtTime(cdLeft)}%{KRed}";
 
             string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
-            if (!string.IsNullOrEmpty(perm) && !permission.UserHasPermission(player.UserIDString, perm))
-                return $"НЕТ ДОСТУПА%{KGlassLt}";
+            if (!string.IsNullOrEmpty(perm))
+            {
+                // доступ решает OctaKits (обычные пермишены + уровни OctVIP)
+                bool hasAccess = false;
+                try { hasAccess = Convert.ToBoolean(OctaKits.Call("HasKitPermission", player, perm)); } catch { }
+                if (!hasAccess) return $"НЕТ ДОСТУПА%{KGlassLt}";
+            }
 
             int maxUses = kit.SelectToken("MaximumUses")?.Value<int>() ?? 0;
             if (maxUses > 0)
@@ -1331,7 +1336,11 @@ namespace Oxide.Plugins
             }
 
             int cost = kit.SelectToken("Cost")?.Value<int>() ?? 0;
-            return cost > 0 ? $"ЗАБРАТЬ • {cost}$%{KGreen}" : $"ЗАБРАТЬ%{KGreen}";
+            if (cost <= 0) return $"ЗАБРАТЬ%{KGreen}";
+
+            string curLabel = "$";
+            try { curLabel = OctaKits.Call("GetCurrencyLabel") as string ?? "$"; } catch { }
+            return $"ЗАБРАТЬ • {cost} {curLabel}%{KGreen}";
         }
 
         private void KitsTab_Show(BasePlayer player, int page = 0)
@@ -1380,28 +1389,36 @@ namespace Oxide.Plugins
                 string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
                 string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
 
-                // карточка набора: тёмное стекло + золотая полоска сверху
+                // карточка набора (~202x95 px): тёмное стекло + золотая полоска сверху
                 CUIClass.CreatePanel(ref ui, $"owkit_card_{i}", "imagePanel", KGlassBg, a[0], a[1], false, 0f, "assets/icons/iconmaterial.mat");
-                CUIClass.CreatePanel(ref ui, $"owkit_gold_{i}", $"owkit_card_{i}", KGold, "0 0.97", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
+                CUIClass.CreatePanel(ref ui, $"owkit_gold_{i}", $"owkit_card_{i}", KGold, "0 0.955", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
 
-                // иконка — квадрат по обеим осям через оффсеты: иначе на широкой карточке растягивалась
-                CUIClass.CreatePanel(ref ui, $"owkit_icon_{i}", $"owkit_card_{i}", KGlassRow, "0.035 0.94", "0.035 0.94", false, 0f, "assets/icons/iconmaterial.mat", "", "0 -76", "76 0");
+                // иконка — жёсткий квадрат 60px у левого верхнего угла (панель задаёт px-геометрию)
+                CUIClass.CreatePanel(ref ui, $"owkit_icon_{i}", $"owkit_card_{i}", KGlassRow, "0.04 0.93", "0.04 0.93", false, 0f, "assets/icons/iconmaterial.mat", "", "0 -58", "58 0");
                 if (!string.IsNullOrEmpty(image))
-                    CUIClass.CreateImage(ref ui, $"owkit_icon_{i}", Img3(image), "0.06 0.06", "0.94 0.94", 0.2f);
+                    CUIClass.CreateImage(ref ui, $"owkit_icon_{i}", Img3(image), "0.08 0.08", "0.92 0.92", 0.2f);
 
-                // название и описание — справа от иконки; строка КД/лимит — отдельной линией под иконкой
-                string title = $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>\n" +
-                               $"<size=10><color=#9E9482>{descr}</color></size>";
-                CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_card_{i}", KTWhite, title, 13, "0.31 0.44", "0.97 0.92", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-                CUIClass.CreateText(ref ui, $"owkit_meta_{i}", $"owkit_card_{i}", KTWhite,
-                    $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cdText}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesText}</color></size>",
-                    11, "0.035 0.28", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                // текст — правая колонка: CreateText оффсетов не принимает,
+                // поэтому левый край в px (72px, правее 58px иконки) задают прозрачные панели-обёртки
+                CUIClass.CreatePanel(ref ui, $"owkit_tp_{i}", $"owkit_card_{i}", "0 0 0 0", "0 0.70", "0.985 0.92", false, 0f, "assets/icons/iconmaterial.mat", "", "72 0", "0 0");
+                CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_tp_{i}", KTWhite,
+                    $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>", 12, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
-                CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26",
+                CUIClass.CreatePanel(ref ui, $"owkit_dp_{i}", $"owkit_card_{i}", "0 0 0 0", "0 0.44", "0.985 0.68", false, 0f, "assets/icons/iconmaterial.mat", "", "72 0", "0 0");
+                CUIClass.CreateText(ref ui, $"owkit_descr_{i}", $"owkit_dp_{i}", KTWhite,
+                    $"<size=9><color=#9E9482>{descr}</color></size>", 9, "0 0", "1 1", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+
+                CUIClass.CreatePanel(ref ui, $"owkit_mp_{i}", $"owkit_card_{i}", "0 0 0 0", "0 0.26", "0.985 0.42", false, 0f, "assets/icons/iconmaterial.mat", "", "72 0", "0 0");
+                CUIClass.CreateText(ref ui, $"owkit_meta_{i}", $"owkit_mp_{i}", KTWhite,
+                    $"<size=9><color=#8E8777>КД:</color> <color=#FFD35C>{cdText}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesText}</color></size>",
+                    9, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+
+                // нижний ряд кнопок: ОБЗОР — под иконкой, клейм — на оставшуюся ширину
+                CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=#FFD35C>ОБЗОР</color>", 10, "0.035 0.05", "0.31 0.22",
                     $"octawelcome_kit_view {kitname.Replace(" ", "%")} {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
                 string[] btn = KitsTab_BtnState(player, kitname).Split('%');
-                CUIClass.CreateButton(ref ui, $"owkit_claim_{i}", $"owkit_card_{i}", btn[1], $"<b>{btn[0]}</b>", 11, "0.35 0.05", "0.97 0.26",
+                CUIClass.CreateButton(ref ui, $"owkit_claim_{i}", $"owkit_card_{i}", btn[1], $"<b>{btn[0]}</b>", 10, "0.33 0.05", "0.985 0.22",
                     $"octawelcome_kit_claim {kitname.Replace(" ", "%")} {page} 0", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
 
@@ -1504,9 +1521,16 @@ namespace Oxide.Plugins
             string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
             string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
             int cost = kit.SelectToken("Cost")?.Value<int>() ?? 0;
-            string costText = cost > 0 ? $"{cost}$" : "БЕСПЛАТНО";
+            string curLbl = "$";
+            try { curLbl = OctaKits.Call("GetCurrencyLabel") as string ?? "$"; } catch { }
+            string costText = cost > 0 ? $"{cost} {curLbl}" : "БЕСПЛАТНО";
             string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
-            string permStatus = string.IsNullOrEmpty(perm) || permission.UserHasPermission(player.UserIDString, perm)
+            bool hasPerm = string.IsNullOrEmpty(perm);
+            if (!hasPerm)
+            {
+                try { hasPerm = Convert.ToBoolean(OctaKits.Call("HasKitPermission", player, perm)); } catch { }
+            }
+            string permStatus = hasPerm
                 ? "<color=#A3E06C>Разрешён</color>" : "<color=#E05A47>Требуется привилегия</color>";
 
             string info = $"<color=#8E8777>• Кулдаун:</color>  <color=#FFD35C>{cdText}</color>\n" +

@@ -20,7 +20,7 @@ namespace Oxide.Plugins
     [Description("Самостоятельная система наборов Octavian: данные, выдача, редактор и API — без зависимости от плагина Kits")]
     public class OctaKits : RustPlugin
     {   
-        [PluginReference] Plugin ImageLibrary, Economics, ServerRewards, CopyPaste, PlayerDLCAPI;
+        [PluginReference] Plugin ImageLibrary, Economics, ServerRewards, CopyPaste, PlayerDLCAPI, OctVIP;
 
         // Фирменная палитра Octavian (золото на стекле, эталон OctaBoss)
         private const string GoldBright = "0.95 0.75 0.30 1";
@@ -114,6 +114,9 @@ namespace Oxide.Plugins
                 addonsData["addons"].RustKits_currencyName = "$";
                 SaveData();
             }
+
+            // Одноразовый сид стандартных наборов x5 (до инициализации — чтобы попали в кэш и картинки)
+            EnsureSeedKits();
 
             InitializeKits();
         }
@@ -510,7 +513,7 @@ namespace Oxide.Plugins
                     {
                         var ko = GetKitObject(kitname);
                         var reqPerm = ko?.SelectToken("RequiredPermission")?.ToString() ?? "";
-                        kitInfo.HasPermission = string.IsNullOrEmpty(reqPerm) || permission.UserHasPermission(player.UserIDString, reqPerm);
+                        kitInfo.HasPermission = HasKitPermission(player, reqPerm);
                     }
                     catch (Exception ex)
                     {
@@ -555,36 +558,46 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, $"kitpanel_{i}", "octakits_content", config?.ui?.colors?["Дополнительная панель"] ?? GlassBg, _anchors[0], _anchors[1], false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "0 0");
                     // Верхняя золотая полоска карточки
                     CUIClass.CreatePanel(ref ui, $"kit_goldline_{i}", $"kitpanel_{i}", Gold, "0 0.97", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
-                    //logo — квадратная иконка фиксированной ширины, чтобы не растягивалась
-                    CUIClass.CreatePanel(ref ui, $"kit_icon_panel_{i}", $"kitpanel_{i}", config?.ui?.colors?["Основная панель"] ?? GlassRow, "0.03 0.34", "0.03 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "84 0");
+
+                    // Иконка — жёсткий квадрат 96px в левом верхнем углу (анкоры+оффсеты: не тянется ни по одной оси)
+                    CUIClass.CreatePanel(ref ui, $"kit_icon_panel_{i}", $"kitpanel_{i}", config?.ui?.colors?["Основная панель"] ?? GlassRow, "0.035 0.94", "0.035 0.94", false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 -96", "96 0");
                         string imageUrl = Img(kitInfo?.ImageUrl ?? "");
                         if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit '{kitname}' image URL: '{kitInfo?.ImageUrl ?? "NULL"}'");
                         if (!string.IsNullOrEmpty(imageUrl))
-                            CUIClass.CreateImage(ref ui, "img", $"kit_icon_panel_{i}", imageUrl, "0.06 0.06", "0.94 0.94", 0.2f);
-                    //title
-                    CUIClass.CreatePanel(ref ui, $"kit_title_panel_{i}", $"kitpanel_{i}", "0 0 0 0", "0.33 0.33", "0.97 0.92", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
-                        string titleFormatted = $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>\n" +
-                                                $"<size=10><color=#9E9482>{kitDescr}</color></size>\n\n" +
-                                                $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cooldown}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesleft}</color></size>";
-                        CUIClass.CreateText(ref ui, "kitname", $"kit_title_panel_{i}", TWhite, titleFormatted, 13, "0.0 0.0", "1 1", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", 0.0f);
+                            CUIClass.CreateImage(ref ui, "img", $"kit_icon_panel_{i}", imageUrl, "0.07 0.07", "0.93 0.93", 0.2f);
 
-                    //view button
-                    CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}", GlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
-
-                    //admin buttons — только админам: редактирование (шестерёнка) и удаление (мусорка)
+                    // Админ-кнопки — квадраты 26px у правого верхнего угла (панель задаёт px-геометрию, кнопка внутри 0..1)
                     if (isAdmin)
                     {
-                        CUIClass.CreateButton(ref ui, $"kit_editbtn_{i}", $"kitpanel_{i}", GlassRow, "", 10, "0.815 0.935", "0.895 0.985", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
-                        CUIClass.PullFromAssets(ref ui, $"kit_editicon_{i}", $"kit_editbtn_{i}", GoldBright, "assets/icons/gear.png", 0f, 0f, "0.22 0.22", "0.78 0.78");
+                        CUIClass.CreatePanel(ref ui, $"kit_editp_{i}", $"kitpanel_{i}", "0 0 0 0", "1 0.94", "1 0.94", false, 0f, 0f, "assets/icons/iconmaterial.mat", "-58 -28", "-32 0");
+                        CUIClass.CreateButton(ref ui, $"kit_editbtn_{i}", $"kit_editp_{i}", GlassRow, "", 10, "0 0", "1 1", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                        CUIClass.PullFromAssets(ref ui, $"kit_editicon_{i}", $"kit_editbtn_{i}", GoldBright, "assets/icons/gear.png", 0f, 0f, "0.20 0.20", "0.80 0.80");
 
-                        CUIClass.CreateButton(ref ui, $"kit_delbtn_{i}", $"kitpanel_{i}", CRed, "", 10, "0.905 0.935", "0.985 0.985", $"octakits_admin_delete {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
-                        CUIClass.PullFromAssets(ref ui, $"kit_delicon_{i}", $"kit_delbtn_{i}", "1 1 1 0.9", "assets/icons/trash.png", 0f, 0f, "0.24 0.22", "0.76 0.78");
+                        CUIClass.CreatePanel(ref ui, $"kit_delp_{i}", $"kitpanel_{i}", "0 0 0 0", "1 0.94", "1 0.94", false, 0f, 0f, "assets/icons/iconmaterial.mat", "-30 -28", "-4 0");
+                        CUIClass.CreateButton(ref ui, $"kit_delbtn_{i}", $"kit_delp_{i}", CRed, "", 10, "0 0", "1 1", $"octakits_admin_delete {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                        CUIClass.PullFromAssets(ref ui, $"kit_delicon_{i}", $"kit_delbtn_{i}", "1 1 1 0.9", "assets/icons/trash.png", 0f, 0f, "0.22 0.22", "0.78 0.78");
                     }
+
+                    // Правая колонка текста: левый край задан в px (108px) — гарантированно правее 96px иконки
+                    // title
+                    CUIClass.CreatePanel(ref ui, $"kit_tp_{i}", $"kitpanel_{i}", "0 0 0 0", "0 0.68", "0.76 0.92", false, 0f, 0f, "assets/icons/iconmaterial.mat", "108 0", "0 0");
+                        CUIClass.CreateText(ref ui, "kitname", $"kit_tp_{i}", TWhite, $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>", 13, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", 0.0f);
+                    // description
+                    CUIClass.CreatePanel(ref ui, $"kit_dp_{i}", $"kitpanel_{i}", "0 0 0 0", "0 0.44", "0.985 0.66", false, 0f, 0f, "assets/icons/iconmaterial.mat", "108 0", "0 0");
+                        CUIClass.CreateText(ref ui, "kitdesc", $"kit_dp_{i}", TWhite, $"<size=10><color=#9E9482>{kitDescr}</color></size>", 10, "0 0", "1 1", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", 0.0f);
+                    // meta: кулдаун / лимит
+                    CUIClass.CreatePanel(ref ui, $"kit_mp_{i}", $"kitpanel_{i}", "0 0 0 0", "0 0.27", "0.985 0.42", false, 0f, 0f, "assets/icons/iconmaterial.mat", "108 0", "0 0");
+                        CUIClass.CreateText(ref ui, "kitmeta", $"kit_mp_{i}", TWhite,
+                            $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cooldown}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesleft}</color></size>",
+                            10, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", 0.0f);
+
+                    // Нижний ряд кнопок: ОБЗОР под иконкой, ПОЛУЧИТЬ — на оставшуюся ширину
+                    CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}", GlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.035 0.05", "0.29 0.24", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
                     string[] btn_props = Button_Cooldown_Text(player, kitname).Split('%');
                     if (btn_props.Length >= 2)
                     {
-                        CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.35 0.05", "0.97 0.26", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                        CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.31 0.05", "0.985 0.24", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                     }
                     else
                     {
@@ -645,7 +658,7 @@ namespace Oxide.Plugins
                 if (btn_props.Length >= 2)
                 {
                     // Обновляем кнопку получения кита
-                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.35 0.05", "0.97 0.26", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{i}", $"kitpanel_{i}", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.31 0.05", "0.985 0.24", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {i}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                     CuiHelper.DestroyUi(player, $"kit_claimbtn_{i}");
                 }
             }
@@ -812,11 +825,11 @@ namespace Oxide.Plugins
                 
                 string cost = gl("price_title_free");
                 if(Convert.ToInt32(kitObj.SelectToken("Cost")) != 0)
-                    cost = $"{kitObj.SelectToken("Cost")} {addonsData?["addons"]?.RustKits_currencyName ?? "$"}";
-                
+                    cost = $"{kitObj.SelectToken("Cost")} {CurrencyLabel}";
+
                 string permReq = (string)kitObj.SelectToken("RequiredPermission");
-                string permStatus = string.IsNullOrEmpty(permReq) ? "<color=#A3E06C>Разрешён</color>" : 
-                                    (permission.UserHasPermission(player.UserIDString, permReq) ? "<color=#A3E06C>Разрешён</color>" : "<color=#E05A47>Требуется привилегия</color>");
+                string permStatus = string.IsNullOrEmpty(permReq) ? "<color=#A3E06C>Разрешён</color>" :
+                                    (HasKitPermission(player, permReq) ? "<color=#A3E06C>Разрешён</color>" : "<color=#E05A47>Требуется привилегия</color>");
 
                 string infoText = $"<color=#8E8777>• Кулдаун:</color>  <color=#FFD35C>{cooldown}</color>\n" +
                                   $"<color=#8E8777>• Доступно:</color>  <color=#FFD35C>{usesleft}</color>\n" +
@@ -985,11 +998,8 @@ namespace Oxide.Plugins
                 }
                 else
                 {
-                    if (!string.IsNullOrEmpty(perm))
-                    {
-                        if (!permission.UserHasPermission(player.UserIDString, perm))
-                            return gl("no_perms_button") + $"%{config?.ui?.colors?["Кнопка без доступа"] ?? GlassLt}";
-                    }
+                    if (!HasKitPermission(player, perm))
+                        return gl("no_perms_button") + $"%{config?.ui?.colors?["Кнопка без доступа"] ?? GlassLt}";
 
                     if (kitUseLimit != 0)
                     {
@@ -998,7 +1008,7 @@ namespace Oxide.Plugins
                     }
 
                     if (cost != 0)
-                        return $"{cost} {addonsData?["addons"]?.RustKits_currencyName ?? "$"}" + $"%{config?.ui?.colors?["Кнопка забрать"] ?? CGreen}";
+                        return $"{cost} {CurrencyLabel}" + $"%{config?.ui?.colors?["Кнопка забрать"] ?? CGreen}";
                     else
                         return gl("claim_button") + $"%{config?.ui?.colors?["Кнопка забрать"] ?? CGreen}";
                 }
@@ -1078,7 +1088,7 @@ namespace Oxide.Plugins
                 var ui =  new CuiElementContainer();
 
                 if (args[1] == "0") {
-                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{args[2]}", $"kitpanel_{args[2]}",  btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.35 0.05", $"0.97 0.26", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {args[2]}", "", TWhite, 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{args[2]}", $"kitpanel_{args[2]}",  btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.31 0.05", $"0.985 0.24", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {args[2]}", "", TWhite, 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                     CuiHelper.DestroyUi(player, $"kit_claimbtn_{args[2]}");
                 }
                 else {
@@ -1442,9 +1452,10 @@ namespace Oxide.Plugins
         {    
             public string RustKits_claimCommand;
             public string RustKits_currencyName;
-            public List<string> importedKits = new List<string>{};  
+            public List<string> importedKits = new List<string>{};
+            public bool seededDefaults = false;
         }
-        
+
         private void LoadData()
         {
             if (Interface.Oxide.DataFileSystem.ExistsDatafile($"OctaKitsData"))
@@ -1502,6 +1513,9 @@ namespace Oxide.Plugins
 
                 [JsonProperty("Логировать выдачу наборов в файл")]
                 public bool logKitsGiven { get; set; } = false;
+
+                [JsonProperty("Заполнить стандартными наборами x5 (один раз, не перезаписывает свои)")]
+                public bool seedDefaultKits { get; set; } = true;
 
                 [JsonProperty("Выдавать только скины, которыми владеет игрок (нужен PlayerDLCAPI)")]
                 public bool ownedSkins { get; set; } = true;
@@ -1671,6 +1685,69 @@ namespace Oxide.Plugins
         // Админ-контролы: прокси к родному редактору Kits (там вся логика создания/редактирования)
         private bool IsKitsAdmin(BasePlayer player)
             => player != null && (player.IsAdmin || permission.UserHasPermission(player.UserIDString, "kits.admin"));
+
+        /// <summary>
+        /// Проверка права доступа к набору. Обычные пермишены — через oxide.
+        /// Пермишены вида "octavip.<уровень>" — через API OctVIP (HasVipLevel),
+        /// т.к. уровень VIP может быть задан записью в data/OctVIP без oxide-пермишена.
+        /// Уровни выше требуемого проходят автоматически (brilliant видит наборы gold и т.д.).
+        /// </summary>
+        private bool HasKitPermission(BasePlayer player, string requiredPermission)
+        {
+            if (player == null || string.IsNullOrEmpty(requiredPermission))
+                return true;
+
+            if (requiredPermission.StartsWith("octavip.", StringComparison.OrdinalIgnoreCase))
+            {
+                if (permission.UserHasPermission(player.UserIDString, requiredPermission))
+                    return true;
+
+                int level = VipLevelFromPerm(requiredPermission);
+                if (level > 0 && OctVIP != null)
+                {
+                    try { return Convert.ToBoolean(OctVIP.Call("HasVipLevel", (ulong)player.userID, level)); }
+                    catch { }
+                }
+                return false;
+            }
+
+            return permission.UserHasPermission(player.UserIDString, requiredPermission);
+        }
+
+        private static int VipLevelFromPerm(string perm)
+        {
+            switch (perm.ToLowerInvariant())
+            {
+                case "octavip.bronze":    return 1;
+                case "octavip.silver":    return 2;
+                case "octavip.gold":      return 3;
+                case "octavip.brilliant": return 4;
+                case "octavip.moderator": return 5;
+                case "octavip.admin":     return 6;
+                default:                  return 0;
+            }
+        }
+
+        /// <summary>Метка валюты для кнопок/текстов (скрап / RP / $)</summary>
+        private string CurrencyLabel
+        {
+            get
+            {
+                switch (_costType)
+                {
+                    case CostType.Scrap:         return "скрап";
+                    case CostType.ServerRewards: return "RP";
+                    default:                     return "$";
+                }
+            }
+        }
+
+        // API для внешних плагинов (OctaWelcome): та же логика доступа к наборам
+        [HookMethod("HasKitPermission")]
+        public bool API_HasKitPermission(BasePlayer player, string requiredPermission) => HasKitPermission(player, requiredPermission);
+
+        [HookMethod("GetCurrencyLabel")]
+        public string API_GetCurrencyLabel() => CurrencyLabel;
 
         #region Редактор наборов (наш дизайн поверх headless-API Kits)
 
@@ -2142,7 +2219,7 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            if (!string.IsNullOrEmpty(kit.RequiredPermission) && !permission.UserHasPermission(player.UserIDString, kit.RequiredPermission))
+            if (!HasKitPermission(player, kit.RequiredPermission))
                 return KitMsg("Error.CanClaim.Permission", player);
 
             if (config?.backend?.wipeCooldowns != null && config.backend.wipeCooldowns.TryGetValue(kit.Name, out int wipeCooldownTime))
@@ -2734,66 +2811,367 @@ namespace Oxide.Plugins
         private void LoadKitData()
         {
             kitsFile = Interface.Oxide.DataFileSystem.GetFile("OctaKits/kits_data");
-            kitData = kitsFile.ReadObject<KitData>();
+
+            // ReadObject по отсутствующему файлу возвращает пустой, но ВАЛИДНЫЙ объект —
+            // поэтому наличие собственного файла проверяем явно, иначе миграция не срабатывала
+            kitData = Interface.Oxide.DataFileSystem.ExistsDatafile("OctaKits/kits_data")
+                ? kitsFile.ReadObject<KitData>()
+                : null;
 
             if (!kitData?.IsValid ?? true)
+                kitData = null;
+
+            if (kitData == null && Interface.Oxide.DataFileSystem.ExistsDatafile("Kits/kits_data"))
             {
                 // Миграция: подхватываем наборы из данных старого плагина Kits (схема совместима)
-                kitData = null;
-                if (Interface.Oxide.DataFileSystem.ExistsDatafile("Kits/kits_data"))
+                try
                 {
-                    try
+                    kitData = Interface.Oxide.DataFileSystem.GetFile("Kits/kits_data").ReadObject<KitData>();
+                    if (kitData?.IsValid == true)
                     {
-                        kitData = Interface.Oxide.DataFileSystem.GetFile("Kits/kits_data").ReadObject<KitData>();
-                        if (kitData?.IsValid == true)
-                        {
-                            Puts($"Миграция: перенесено {kitData.Count} наборов из Kits/kits_data.json");
-                            SaveKitData();
-                        }
+                        Puts($"Миграция: перенесено {kitData.Count} наборов из Kits/kits_data.json");
+                        SaveKitData();
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        PrintWarning($"Ошибка миграции наборов из Kits: {ex.Message}");
                         kitData = null;
                     }
                 }
+                catch (Exception ex)
+                {
+                    PrintWarning($"Ошибка миграции наборов из Kits: {ex.Message}");
+                    kitData = null;
+                }
             }
 
-            if (!kitData?.IsValid ?? true)
+            if (kitData == null)
                 kitData = new KitData();
         }
 
         private void LoadPlayerData()
         {
             playersFile = Interface.Oxide.DataFileSystem.GetFile("OctaKits/player_data");
-            playerData = playersFile.ReadObject<PlayerData>();
+
+            playerData = Interface.Oxide.DataFileSystem.ExistsDatafile("OctaKits/player_data")
+                ? playersFile.ReadObject<PlayerData>()
+                : null;
 
             if (!playerData?.IsValid ?? true)
+                playerData = null;
+
+            if (playerData == null && Interface.Oxide.DataFileSystem.ExistsDatafile("Kits/player_data"))
             {
                 // Миграция статистики использований/кулдаунов из старого Kits
-                playerData = null;
-                if (Interface.Oxide.DataFileSystem.ExistsDatafile("Kits/player_data"))
+                try
                 {
-                    try
+                    playerData = Interface.Oxide.DataFileSystem.GetFile("Kits/player_data").ReadObject<PlayerData>();
+                    if (playerData?.IsValid == true)
                     {
-                        playerData = Interface.Oxide.DataFileSystem.GetFile("Kits/player_data").ReadObject<PlayerData>();
-                        if (playerData?.IsValid == true)
-                        {
-                            Puts("Миграция: перенесены данные игроков из Kits/player_data.json");
-                            SavePlayerData();
-                        }
+                        Puts("Миграция: перенесены данные игроков из Kits/player_data.json");
+                        SavePlayerData();
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        PrintWarning($"Ошибка миграции данных игроков из Kits: {ex.Message}");
                         playerData = null;
                     }
                 }
+                catch (Exception ex)
+                {
+                    PrintWarning($"Ошибка миграции данных игроков из Kits: {ex.Message}");
+                    playerData = null;
+                }
             }
 
-            if (!playerData?.IsValid ?? true)
+            if (playerData == null)
                 playerData = new PlayerData();
         }
+
+        #region Сид стандартных наборов x5
+
+        // Одноразовое заполнение каталога: добавляет отсутствующие стандартные наборы,
+        // никогда не перезаписывает существующие (имена сравниваются без регистра).
+        // Повторный запуск вручную — консольная команда octakits.reseed.
+        private void EnsureSeedKits(bool force = false)
+        {
+            if (kitData == null) return;
+            if (!force && config?.backend?.seedDefaultKits != true) return;
+            if (!force && addonsData != null && addonsData.TryGetValue("addons", out var ad) && ad.seededDefaults) return;
+
+            int added = 0;
+            foreach (KitData.Kit kit in BuildSeedKits())
+            {
+                if (kitData.Exists(kit.Name)) continue; // свой набор с таким именем — не трогаем
+                kitData[kit.Name] = kit;
+                added++;
+            }
+
+            if (added > 0)
+            {
+                SaveKitData();
+                kitData.RegisterPermissions(permission, this);
+                Puts($"Сид наборов x5: добавлено {added} стандартных наборов");
+            }
+            else
+            {
+                Puts("Сид наборов x5: все стандартные наборы уже существуют — ничего не добавлено");
+            }
+
+            if (addonsData != null && addonsData.TryGetValue("addons", out var addons))
+            {
+                addons.seededDefaults = true;
+                SaveData();
+            }
+        }
+
+        [ConsoleCommand("octakits.reseed")]
+        private void ccmdReseed(ConsoleSystem.Arg arg)
+        {
+            BasePlayer player = arg?.Player();
+            if (player != null && !IsKitsAdmin(player)) return;
+            EnsureSeedKits(force: true);
+            if (player != null)
+                player.ChatMessage("<color=#E8B84B>OctaKits</color>: ресид выполнен — детали в консоли сервера");
+        }
+
+        private static ItemData SeedItem(string shortname, int amount = 1, int position = 0, string ammoType = null, int ammo = 0)
+            => new ItemData { Shortname = shortname, Amount = amount, Position = position, Ammotype = ammoType, Ammo = ammo };
+
+        private const string SeedImgBase = "https://wiki.rustclash.com/img/items180/";
+
+        // Каталог x5: прогрессия по уровням OctVIP (default → bronze → silver → gold → brilliant)
+        private static List<KitData.Kit> BuildSeedKits()
+        {
+            const string P_BRONZE = "octavip.bronze";
+            const string P_SILVER = "octavip.silver";
+            const string P_GOLD = "octavip.gold";
+            const string P_BRILLIANT = "octavip.brilliant";
+
+            return new List<KitData.Kit>
+            {
+                // ── DEFAULT: два простых набора ─────────────────────────────
+                new KitData.Kit
+                {
+                    Name = "Стартовый",
+                    Description = "Базовый комплект выживания: инструменты, еда и стартовые ресурсы. Один раз за вайп.",
+                    MaximumUses = 1, Cooldown = 0,
+                    KitImage = SeedImgBase + "rock.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("rock"), SeedItem("stonehatchet"), SeedItem("stone.pickaxe"), SeedItem("torch"),
+                        SeedItem("sleepingbag"), SeedItem("building.planner"), SeedItem("hammer"),
+                        SeedItem("bandage", 10), SeedItem("can.tuna", 3), SeedItem("apple", 4),
+                        SeedItem("wood", 20000), SeedItem("stones", 12000), SeedItem("cloth", 300)
+                    }
+                },
+                new KitData.Kit
+                {
+                    Name = "Рабочий",
+                    Description = "Полный инструментарий и материалы на первую базу.",
+                    Cooldown = 21600,
+                    KitImage = SeedImgBase + "hatchet.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("hatchet"), SeedItem("pickaxe"), SeedItem("hammer"),
+                        SeedItem("wood", 30000), SeedItem("stones", 25000), SeedItem("metal.fragments", 4000),
+                        SeedItem("rope", 10), SeedItem("tarp", 5), SeedItem("can.beans", 3)
+                    }
+                },
+
+                // ── BRONZE ──────────────────────────────────────────────────
+                new KitData.Kit
+                {
+                    Name = "Охотник",
+                    Description = "Арбалет, револьвер и лёгкая экипировка для охоты и самообороны.",
+                    RequiredPermission = P_BRONZE, Cooldown = 21600,
+                    KitImage = SeedImgBase + "crossbow.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("crossbow"), SeedItem("arrow.bone", 40), SeedItem("arrow.wooden", 20),
+                        SeedItem("pistol.revolver"), SeedItem("ammo.pistol", 32), SeedItem("knife.bone"),
+                        SeedItem("bandage", 10), SeedItem("can.tuna", 3)
+                    },
+                    WearItems = new[]
+                    {
+                        SeedItem("hoodie", 1, 0), SeedItem("pants", 1, 1), SeedItem("burlap.shoes", 1, 2), SeedItem("hat.beenie", 1, 3)
+                    }
+                },
+                new KitData.Kit
+                {
+                    Name = "Медик",
+                    Description = "Полевой комплект медика: медкиты, шприцы и защитный костюм.",
+                    RequiredPermission = P_BRONZE, Cooldown = 21600,
+                    KitImage = SeedImgBase + "syringe.medical.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("largemedkit", 2), SeedItem("syringe.medical", 10), SeedItem("bandage", 15),
+                        SeedItem("antiradpills", 10), SeedItem("can.tuna", 2)
+                    },
+                    WearItems = new[] { SeedItem("hazmatsuit", 1, 0) }
+                },
+                new KitData.Kit
+                {
+                    Name = "Дайвер",
+                    Description = "Гарпун и полный комплект для подводных вылазок.",
+                    RequiredPermission = P_BRONZE, Cooldown = 21600,
+                    KitImage = SeedImgBase + "diving.tank.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("speargun"), SeedItem("speargun.spear", 12), SeedItem("flare", 5),
+                        SeedItem("knife.bone"), SeedItem("bandage", 8)
+                    },
+                    WearItems = new[]
+                    {
+                        SeedItem("diving.wetsuit", 1, 0), SeedItem("diving.mask", 1, 1),
+                        SeedItem("diving.tank", 1, 2), SeedItem("diving.fins", 1, 3)
+                    }
+                },
+
+                // ── SILVER ──────────────────────────────────────────────────
+                new KitData.Kit
+                {
+                    Name = "Строитель",
+                    Description = "Материалы, верстак и фурнитура для полноценной базы.",
+                    RequiredPermission = P_SILVER, Cooldown = 86400,
+                    KitImage = SeedImgBase + "building.planner.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("wood", 80000), SeedItem("stones", 60000), SeedItem("metal.fragments", 15000),
+                        SeedItem("metal.refined", 400), SeedItem("cupboard.tool"), SeedItem("box.wooden.large", 4),
+                        SeedItem("lock.code", 3), SeedItem("lock.key", 2), SeedItem("workbench1"),
+                        SeedItem("door.hinged.metal", 4), SeedItem("building.planner"), SeedItem("hammer"), SeedItem("furnace", 2)
+                    }
+                },
+                new KitData.Kit
+                {
+                    Name = "Фермер PRO",
+                    Description = "Отбойный молоток, бензопила и стартовая руда для промышленного фарма.",
+                    RequiredPermission = P_SILVER, Cooldown = 43200,
+                    KitImage = SeedImgBase + "jackhammer.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("jackhammer"), SeedItem("chainsaw"), SeedItem("lowgradefuel", 400),
+                        SeedItem("metal.ore", 6000), SeedItem("sulfur.ore", 5000), SeedItem("hq.metal.ore", 400),
+                        SeedItem("wood", 30000)
+                    }
+                },
+                new KitData.Kit
+                {
+                    Name = "Боец",
+                    Description = "Томпсон и кевларовая экипировка — боевой комплект среднего класса.",
+                    RequiredPermission = P_SILVER, Cooldown = 21600,
+                    KitImage = SeedImgBase + "smg.thompson.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("smg.thompson"), SeedItem("ammo.pistol.hv", 128),
+                        SeedItem("bandage", 10), SeedItem("syringe.medical", 5)
+                    },
+                    WearItems = new[]
+                    {
+                        SeedItem("coffeecan.helmet", 1, 0), SeedItem("roadsign.jacket", 1, 1), SeedItem("roadsign.kilt", 1, 2),
+                        SeedItem("tactical.gloves", 1, 3), SeedItem("boots.frog", 1, 4)
+                    }
+                },
+
+                // ── GOLD ────────────────────────────────────────────────────
+                new KitData.Kit
+                {
+                    Name = "Подрывник",
+                    Description = "Комплект подрывника: калаш с разрывными, сачели и молотовы.",
+                    RequiredPermission = P_GOLD, Cooldown = 86400,
+                    KitImage = SeedImgBase + "explosive.satchel.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("rifle.ak", 1, 0, "ammo.rifle.explosive", 30),
+                        SeedItem("ammo.rifle.explosive", 180), SeedItem("explosive.satchel", 4),
+                        SeedItem("grenade.molotov", 3), SeedItem("syringe.medical", 4)
+                    }
+                },
+                new KitData.Kit
+                {
+                    Name = "Снайпер",
+                    Description = "Болтовая снайперка, ПНВ и дымы для дальнобойной работы.",
+                    RequiredPermission = P_GOLD, Cooldown = 86400,
+                    KitImage = SeedImgBase + "rifle.l96.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("rifle.l96"), SeedItem("ammo.rifle.hv", 64), SeedItem("nightvisiongoggles"),
+                        SeedItem("tool.binoculars"), SeedItem("grenade.smoke", 4), SeedItem("syringe.medical", 4)
+                    },
+                    WearItems = new[]
+                    {
+                        SeedItem("hoodie", 1, 0), SeedItem("pants", 1, 1), SeedItem("boots.frog", 1, 2), SeedItem("tactical.gloves", 1, 3)
+                    }
+                },
+                new KitData.Kit
+                {
+                    Name = "Гренадёр",
+                    Description = "Револьвер-гранатомёт и запас гранат для огневой поддержки.",
+                    RequiredPermission = P_GOLD, Cooldown = 86400,
+                    KitImage = SeedImgBase + "grenade.f1.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("multiplegrenadelauncher"), SeedItem("ammo.grenadelauncher.he", 12),
+                        SeedItem("ammo.grenadelauncher.buckshot", 6), SeedItem("grenade.f1", 6),
+                        SeedItem("grenade.beancan", 8), SeedItem("syringe.medical", 4)
+                    },
+                    WearItems = new[]
+                    {
+                        SeedItem("coffeecan.helmet", 1, 0), SeedItem("roadsign.jacket", 1, 1), SeedItem("roadsign.kilt", 1, 2)
+                    }
+                },
+
+                // ── BRILLIANT ───────────────────────────────────────────────
+                new KitData.Kit
+                {
+                    Name = "Танк",
+                    Description = "Тяжёлая броня и M249 — ходячая крепость.",
+                    RequiredPermission = P_BRILLIANT, Cooldown = 172800,
+                    KitImage = SeedImgBase + "heavy.plate.jacket.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("lmg.m249"), SeedItem("ammo.rifle", 200), SeedItem("largemedkit", 3), SeedItem("syringe.medical", 6)
+                    },
+                    WearItems = new[]
+                    {
+                        SeedItem("heavy.plate.helmet", 1, 0), SeedItem("heavy.plate.jacket", 1, 1), SeedItem("heavy.plate.pants", 1, 2),
+                        SeedItem("tactical.gloves", 1, 3), SeedItem("boots.frog", 1, 4)
+                    }
+                },
+                new KitData.Kit
+                {
+                    Name = "Легенда",
+                    Description = "Полный топовый комплект: LR-300, металл-сет и сигналы снабжения.",
+                    RequiredPermission = P_BRILLIANT, Cooldown = 172800,
+                    KitImage = SeedImgBase + "rifle.lr300.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("rifle.lr300"), SeedItem("ammo.rifle.hv", 150), SeedItem("largemedkit", 5),
+                        SeedItem("syringe.medical", 8), SeedItem("supply.signal", 2), SeedItem("grenade.smoke", 4)
+                    },
+                    WearItems = new[]
+                    {
+                        SeedItem("metal.facemask", 1, 0), SeedItem("metal.plate.torso", 1, 1), SeedItem("pants", 1, 2),
+                        SeedItem("tactical.gloves", 1, 3), SeedItem("boots.frog", 1, 4)
+                    }
+                },
+                // Платный рейдерский набор: топ-ранг + списание валюты — двойной барьер самого мощного комплекта.
+                // 22 ракеты (12 обычных + 6 скоростных + 4 зажигательных) — хватает на бронированную базу «на один дом».
+                new KitData.Kit
+                {
+                    Name = "Рейдер",
+                    Description = "Платный рейдерский комплект: ракетница и 22 ракеты — хватит на целую базу.",
+                    RequiredPermission = P_BRILLIANT, Cooldown = 172800, Cost = 1500,
+                    KitImage = SeedImgBase + "rocket.launcher.png",
+                    MainItems = new[]
+                    {
+                        SeedItem("rocket.launcher"), SeedItem("ammo.rocket.basic", 12), SeedItem("ammo.rocket.hv", 6),
+                        SeedItem("ammo.rocket.fire", 4), SeedItem("syringe.medical", 4), SeedItem("grenade.smoke", 2)
+                    }
+                }
+            };
+        }
+
+        #endregion
 
         private void RegisterKitImage(string name, string url) => ImageLibrary?.Call("AddImage", url, name.Replace(" ", ""), 0UL, null);
 
