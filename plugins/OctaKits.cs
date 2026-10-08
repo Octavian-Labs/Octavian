@@ -38,6 +38,7 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, Timer> _cdTimers = new Dictionary<ulong, Timer>();
         private readonly Dictionary<ulong, bool> _editorOverwrite = new Dictionary<ulong, bool>();
         private readonly Dictionary<ulong, string> _editorToast = new Dictionary<ulong, string>();
+        private readonly Dictionary<ulong, (string kit, DateTime until)> _pendingDelete = new Dictionary<ulong, (string, DateTime)>();
         private bool isInitialized = false;
         private bool _initScheduled = false;
         private int _initRetries = 0;
@@ -387,7 +388,7 @@ namespace Oxide.Plugins
             var ui =  new CuiElementContainer();
             CreateStandaloneRoot(ref ui);
 
-            // Админам — кнопка создания набора в шапке (открывает родной редактор Kits)
+            // Админам — кнопка создания набора в шапке (открывает наш редактор)
             bool isAdmin = IsKitsAdmin(player);
             if (isAdmin)
                 CUIClass.CreateButton(ref ui, "octakits_adm_create", "octakits_header", GlassRow, "<color=#FFD35C><b>+ НОВЫЙ</b></color>", 11, "0.13 0.15", "0.245 0.85", "octakits_admin_create", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
@@ -575,9 +576,15 @@ namespace Oxide.Plugins
                     //view button
                     CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}", GlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
-                    //edit button — только админам, открывает родной редактор Kits
+                    //admin buttons — только админам: редактирование (шестерёнка) и удаление (мусорка)
                     if (isAdmin)
-                        CUIClass.CreateButton(ref ui, $"kit_editbtn_{i}", $"kitpanel_{i}", GlassRow, "<color=#FFD35C>⚙</color>", 10, "0.905 0.935", "0.985 0.985", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    {
+                        CUIClass.CreateButton(ref ui, $"kit_editbtn_{i}", $"kitpanel_{i}", GlassRow, "", 10, "0.815 0.935", "0.895 0.985", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                        CUIClass.PullFromAssets(ref ui, $"kit_editicon_{i}", $"kit_editbtn_{i}", GoldBright, "assets/icons/gear.png", 0f, 0f, "0.22 0.22", "0.78 0.78");
+
+                        CUIClass.CreateButton(ref ui, $"kit_delbtn_{i}", $"kitpanel_{i}", CRed, "", 10, "0.905 0.935", "0.985 0.985", $"octakits_admin_delete {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                        CUIClass.PullFromAssets(ref ui, $"kit_delicon_{i}", $"kit_delbtn_{i}", "1 1 1 0.9", "assets/icons/trash.png", 0f, 0f, "0.24 0.22", "0.76 0.78");
+                    }
 
                     string[] btn_props = Button_Cooldown_Text(player, kitname).Split('%');
                     if (btn_props.Length >= 2)
@@ -839,9 +846,16 @@ namespace Oxide.Plugins
 
                 CUIClass.CreateButton(ref ui, "octakits_btn_claim", "octakits_viewkit_info", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.49 0.06", "0.94 0.16", $"octakits_try_claim {kitname.Replace(" ", "%")} 1 0", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
-            // Админам — кнопка редактирования в шапке (место пагинации на экране просмотра свободно)
+            // Админам — кнопки редактирования и удаления в шапке (место пагинации на экране просмотра свободно)
             if (IsKitsAdmin(player))
-                CUIClass.CreateButton(ref ui, "octakits_adm_edit", "octakits_header", GlassRow, "<color=#FFD35C><b>⚙ ИЗМЕНИТЬ</b></color>", 11, "0.775 0.15", "0.935 0.85", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+            {
+                CUIClass.CreateButton(ref ui, "octakits_adm_edit", "octakits_header", GlassRow, "", 11, "0.62 0.15", "0.775 0.85", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.PullFromAssets(ref ui, "octakits_adm_edit_ic", "octakits_adm_edit", GoldBright, "assets/icons/gear.png", 0f, 0f, "0.04 0.22", "0.17 0.78");
+                CUIClass.CreateText(ref ui, "octakits_adm_edit_tx", "octakits_adm_edit", GoldBright, "<b>ИЗМЕНИТЬ</b>", 11, "0.18 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
+                CUIClass.CreateButton(ref ui, "octakits_adm_del", "octakits_header", CRed, "", 11, "0.785 0.15", "0.845 0.85", $"octakits_admin_delete {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.PullFromAssets(ref ui, "octakits_adm_del_ic", "octakits_adm_del", "1 1 1 0.9", "assets/icons/trash.png", 0f, 0f, "0.24 0.20", "0.76 0.80");
+            }
 
             // Сносим старое окно целиком — ViewKit отрисовал новый корень
             CuiHelper.DestroyUi(player, "octakits_root");
@@ -1840,6 +1854,38 @@ namespace Oxide.Plugins
             if (string.IsNullOrEmpty(name)) return;
 
             StartKitEditor(player, name);
+        }
+
+        // Удаление набора: первый клик по 🗑 — предупреждение, второй в течение 5 сек — удаляет
+        [ConsoleCommand("octakits_admin_delete")]
+        private void octakits_admin_delete(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player) || Kits == null) return;
+
+            string name = (arg?.FullString.ToString() ?? "").Replace("%", " ").Trim();
+            if (string.IsNullOrEmpty(name)) return;
+
+            ulong uid = (ulong)player.userID;
+            if (!_pendingDelete.TryGetValue(uid, out var pd) || pd.kit != name || DateTime.UtcNow > pd.until)
+            {
+                _pendingDelete[uid] = (name, DateTime.UtcNow.AddSeconds(5));
+                player.ChatMessage($"<color=#E8B84B>OctaKits</color>: нажми <color=#E05A4E>🗑</color> ещё раз, чтобы удалить набор «{name}»");
+                return;
+            }
+
+            _pendingDelete.Remove(uid);
+
+            object result = null;
+            try { result = Kits.Call("KitDelete", player, name); } catch { }
+
+            if ("ok".Equals(result as string))
+            {
+                player.ChatMessage($"<color=#E8B84B>OctaKits</color>: набор «{name}» удалён");
+                RefreshKitCache();
+                ShowKits(player);
+            }
+            else player.ChatMessage("<color=#E8B84B>OctaKits</color>: не удалось удалить набор");
         }
 
         [ConsoleCommand("octakits_editor_set")]

@@ -722,6 +722,20 @@ namespace Oxide.Plugins
                 _kitCreators.Remove(player.userID);
         }
 
+        [HookMethod("KitDelete")]
+        public object KitDelete(BasePlayer player, string kitName)
+        {
+            if (player == null || !(IsAdmin(player) || player.IsAdmin))
+                return "no-admin";
+
+            if (string.IsNullOrEmpty(kitName) || !kitData.Find(kitName, out KitData.Kit deleteKit))
+                return "not-found";
+
+            kitData.Remove(deleteKit);
+            SaveKitData();
+            return "ok";
+        }
+
         // Свежий снапшот черновика: Kit.ToJObject кэширует _jObject и после мутаций отдаёт устаревшие данные
         private static JObject EditorSnapshot(KitData.Kit kit)
         {
