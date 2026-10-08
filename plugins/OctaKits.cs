@@ -37,6 +37,8 @@ namespace Oxide.Plugins
         private Dictionary<string, KitCache> kitCache = new Dictionary<string, KitCache>();
         private readonly Dictionary<ulong, Timer> _cdTimers = new Dictionary<ulong, Timer>();
         private bool isInitialized = false;
+        private bool _initScheduled = false;
+        private int _initRetries = 0;
 
         private void Unload()
         {
@@ -85,14 +87,37 @@ namespace Oxide.Plugins
             timer.Once(3f, () => InitializeKits());
         }
 
+        // Хук загрузки плагинов: когда Kits поднимется после нас — инициализируемся заново
+        private void OnPluginLoaded(Plugin plugin)
+        {
+            if (plugin?.Name == "Kits" && !isInitialized)
+            {
+                _initRetries = 0;
+                timer.Once(1f, () => InitializeKits());
+            }
+        }
+
+        private void ScheduleInitRetry()
+        {
+            if (_initScheduled || _initRetries >= 24) return; // максимум ~2 минуты попыток
+            _initScheduled = true;
+            _initRetries++;
+            timer.Once(5f, () =>
+            {
+                _initScheduled = false;
+                if (!isInitialized) InitializeKits();
+            });
+        }
+
         private void InitializeKits()
         {
             if (config?.debugMode == true) PrintWarning("[OctaKits DEBUG] Starting InitializeKits");
 
             if (Kits == null)
             {
-                PrintWarning("Плагин Kits не найден — OctaKits не будет работать корректно");
+                PrintWarning("Плагин Kits не найден — повторим инициализацию позже");
                 if (config?.debugMode == true) PrintWarning("[OctaKits DEBUG] Kits plugin reference is null");
+                ScheduleInitRetry();
                 return;
             }
 
@@ -134,6 +159,7 @@ namespace Oxide.Plugins
                 if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Exception in InitializeKits: {ex.StackTrace}");
                 PrintWarning("OctaKits продолжит работу с ограниченным функционалом");
                 isInitialized = false; // Разрешаем работу даже при ошибках инициализации
+                ScheduleInitRetry();
             }
         }
 
@@ -267,19 +293,19 @@ namespace Oxide.Plugins
         private string[] anchors2 = {
 
             // Верхний ряд
-            "0.01 0.72-0.32 0.95",   // Кит 1 (верхний левый)
-            "0.34 0.72-0.65 0.95",   // Кит 2 (верхний средний)
-            "0.67 0.72-0.98 0.95",   // Кит 3 (верхний правый)
+            "0.01 0.70-0.32 0.93",   // Кит 1 (верхний левый)
+            "0.34 0.70-0.65 0.93",   // Кит 2 (верхний средний)
+            "0.67 0.70-0.98 0.93",   // Кит 3 (верхний правый)
 
             // Средний ряд
-            "0.01 0.39-0.32 0.62",   // Кит 4 (средний левый)
-            "0.34 0.39-0.65 0.62",   // Кит 5 (средний средний)
-            "0.67 0.39-0.98 0.62",   // Кит 6 (средний правый)
+            "0.01 0.375-0.32 0.605",   // Кит 4 (средний левый)
+            "0.34 0.375-0.65 0.605",   // Кит 5 (средний средний)
+            "0.67 0.375-0.98 0.605",   // Кит 6 (средний правый)
 
             // Нижний ряд
-            "0.01 0.06-0.32 0.29",   // Кит 7 (нижний левый)
-            "0.34 0.06-0.65 0.29",   // Кит 8 (нижний средний)
-            "0.67 0.06-0.98 0.29",   // Кит 9 (нижний правый)
+            "0.01 0.05-0.32 0.28",   // Кит 7 (нижний левый)
+            "0.34 0.05-0.65 0.28",   // Кит 8 (нижний средний)
+            "0.67 0.05-0.98 0.28",   // Кит 9 (нижний правый)
         };
 
         string[] mainA = {
@@ -301,17 +327,52 @@ namespace Oxide.Plugins
         };
 
 
+        // Список наборов, которые можно показывать игроку (скрытые и auth-only отфильтровываем)
+        private List<string> GetVisibleKits(BasePlayer player)
+        {
+            var list = new List<string>();
+            if (Kits == null) return list;
+
+            string[] all = null;
+            try { all = Kits.Call("GetAllKits") as string[]; } catch { }
+            if (all == null) return list;
+
+            bool isAdmin = player.IsAdmin;
+            foreach (string name in all)
+            {
+                JObject kit = null;
+                try { kit = Kits.Call("GetKitObject", name) as JObject; } catch { }
+                if (kit == null) continue;
+
+                if (!isAdmin && kit.SelectToken("IsHidden")?.Value<bool>() == true) continue;
+                int reqAuth = kit.SelectToken("RequiredAuth")?.Value<int>() ?? 0;
+                if (player.net.connection.authLevel < reqAuth) continue;
+
+                list.Add(name);
+            }
+            return list;
+        }
+
+        // Самостоятельное окно OctaKits: корневой оверлей + стеклянная панель с шапкой
+        private void CreateStandaloneRoot(ref CuiElementContainer ui)
+        {
+            CUIClass.CreatePanel(ref ui, "octakits_root", "Overlay", "0 0 0 0.85", "0 0", "1 1", true, 0f, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_content", "octakits_root", GlassBg, "0.14 0.10", "0.86 0.92", false, 0.2f, 0f, "assets/icons/iconmaterial.mat");
+            // золотая шапка
+            CUIClass.CreatePanel(ref ui, "octakits_header", "octakits_content", "0 0 0 0", "0 0.95", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_headline", "octakits_content", Gold, "0 0.945", "1 0.948", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreateText(ref ui, "octakits_title", "octakits_header", GoldBright, "◆ <b>НАБОРЫ</b>", 16, "0.02 0.1", "0.5 0.9", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "octakits_sub", "octakits_header", TMuted, "выбери набор — обзор покажет содержимое", 10, "0.5 0.1", "0.93 0.9", TextAnchor.MiddleRight, "robotocondensed-regular.ttf");
+            CUIClass.CreateButton(ref ui, "octakits_close", "octakits_header", CRed, "<b>✕</b>", 13, "0.945 0.15", "0.99 0.85", "octakits_close", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+        }
+
         private void ShowKits(BasePlayer player, int page = 0)
         {
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ShowKits called for player {player.displayName} (ID: {player.UserIDString}), page: {page}");
 
-            if (!isInitialized)
-            {
-                PrintWarning("OctaKits ещё не инициализирован, подождите...");
-                if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ShowKits called but isInitialized is false");
-                player.ChatMessage("<color=#E8B84B>OctaKits</color>: интерфейс ещё загружается, попробуйте через мгновение...");
-                return;
-            }
+            // Ленивая инициализация: если кэш ещё не готов — пробуем собрать прямо сейчас
+            if (!isInitialized && Kits != null)
+                InitializeKits();
 
             if (Kits == null)
             {
@@ -322,27 +383,18 @@ namespace Oxide.Plugins
             }
 
             var ui =  new CuiElementContainer();
-            var kitList = addonsData.ContainsKey("addons") ? addonsData["addons"].importedKits : null;
+            CreateStandaloneRoot(ref ui);
+
+            var kitList = GetVisibleKits(player);
             if (config?.debugMode == true)
             {
-                PrintWarning($"[OctaKits DEBUG] Kit list from addonsData: {kitList?.Count ?? 0} kits");
-                if (kitList != null) PrintWarning($"[OctaKits DEBUG] Imported kits: {string.Join(", ", kitList)}");
+                PrintWarning($"[OctaKits DEBUG] Visible kits for {player.displayName}: {kitList.Count}");
             }
 
-            if (kitList == null || kitList.Count == 0)
+            if (kitList.Count == 0)
             {
-                PrintWarning($"Kit list is empty or null. addonsData contains 'addons': {addonsData.ContainsKey("addons")}");
-                if (config?.debugMode == true)
-                {
-                    PrintWarning($"[OctaKits DEBUG] Kit list is empty, showing error message");
-                    PrintWarning($"[OctaKits DEBUG] addonsData keys: {string.Join(", ", addonsData.Keys)}");
-                    if (addonsData.ContainsKey("addons"))
-                    {
-                        PrintWarning($"[OctaKits DEBUG] Imported kits count: {addonsData["addons"].importedKits?.Count ?? 0}");
-                    }
-                }
-                CuiHelper.DestroyUi(player, "errortext");
-                CUIClass.CreateText(ref ui, "errortext", "imagePanel", "1 1 1 0.6", "Список импортированных наборов пуст. \nДобавьте наборы командой <color=#ffffff>/octa_importkits</color>.", 18, "0.0 0.00", "1 1", TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", 0.0f);
+                CUIClass.CreateText(ref ui, "errortext", "octakits_content", "1 1 1 0.6", "На сервере пока нет доступных наборов.", 18, "0.0 0.0", "1 0.94", TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", 0.0f);
+                CuiHelper.DestroyUi(player, "octakits_root");
                 CuiHelper.AddUi(player, ui);
                 return;
             }
@@ -459,7 +511,7 @@ namespace Oxide.Plugins
                 if (!isKitExists)
                 {
                     if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit '{kitname}' does not exist");
-                    CUIClass.CreateText(ref ui, $"kitpanel_{i}", "imagePanel", "1 1 1 0.6", $"Набор <b>'{kitname}'</b> не существует. Удалите его из списка в 'carbon/data/OctaKitsData.json'.", 10, "0.0 0.00", "1 1", TextAnchor.MiddleCenter, $"robotocondensed-regular.ttf", 0.0f);
+                    CUIClass.CreateText(ref ui, $"kitpanel_{i}", "octakits_content", "1 1 1 0.6", $"Набор <b>'{kitname}'</b> не существует.", 10, "0.0 0.00", "1 1", TextAnchor.MiddleCenter, $"robotocondensed-regular.ttf", 0.0f);
                     continue;
                 }
 
@@ -497,7 +549,7 @@ namespace Oxide.Plugins
 
                 if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Creating UI for kit '{kitname}' - Uses: {usesleft}, Cooldown: {cooldown}, HasPermission: {kitInfo.HasPermission}");
 
-                CUIClass.CreatePanel(ref ui, $"kitpanel_{i}", "imagePanel", config?.ui?.colors?["Дополнительная панель"] ?? GlassBg, _anchors[0], _anchors[1], false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "0 0");
+                CUIClass.CreatePanel(ref ui, $"kitpanel_{i}", "octakits_content", config?.ui?.colors?["Дополнительная панель"] ?? GlassBg, _anchors[0], _anchors[1], false, 0.0f, 0f, "assets/icons/iconmaterial.mat", "0 0", "0 0");
                     // Верхняя золотая полоска карточки
                     CUIClass.CreatePanel(ref ui, $"kit_goldline_{i}", $"kitpanel_{i}", Gold, "0 0.97", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
                     //logo
@@ -527,21 +579,15 @@ namespace Oxide.Plugins
                     }
                 }
             
-            for (var i = 0; i < 9; i++)
-            {
-                CuiHelper.DestroyUi(player, $"kitpanel_{i}");
-                CuiHelper.DestroyUi(player, $"kit_goldline_{i}");
-            }
-
-            CuiHelper.DestroyUi(player, "octakits_btn_next");
-            CuiHelper.DestroyUi(player, "octakits_btn_back");
+            // Сносим всё старое окно целиком (корень уносит и карточки, и детальный просмотр)
+            CuiHelper.DestroyUi(player, "octakits_root");
 
             if (page > 0) {
-                CUIClass.CreateButton(ref ui, "octakits_btn_back", "imagePanel", GlassRow, "<size=22><color=#FFD35C>‹</color></size>", 14, "0.02 0.45", "0.06 0.55", $"octakits_page {page - 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_btn_back", "octakits_content", GlassRow, "<size=22><color=#FFD35C>‹</color></size>", 14, "0.02 0.45", "0.06 0.55", $"octakits_page {page - 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             }
 
             if ((double) page + 1 < ((double) kitList.Count / 9)) {
-                CUIClass.CreateButton(ref ui, "octakits_btn_next", "imagePanel", GlassRow, "<size=22><color=#FFD35C>›</color></size>", 14, "0.94 0.45", "0.98 0.55", $"octakits_page {page + 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_btn_next", "octakits_content", GlassRow, "<size=22><color=#FFD35C>›</color></size>", 14, "0.94 0.45", "0.98 0.55", $"octakits_page {page + 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             }
 
             CuiHelper.AddUi(player, ui);
@@ -598,13 +644,15 @@ namespace Oxide.Plugins
         private void ViewKit(BasePlayer player, string kitname, int page = 0)
         {
             var ui =  new CuiElementContainer();
+            CreateStandaloneRoot(ref ui);
 
             JObject kitObj = (JObject) Kits.Call("GetKitObject", $"{kitname}");
             if (kitObj == null)
             {
                 if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit object is null for kit '{kitname}'");
-                CUIClass.CreateText(ref ui, "errortext", "kits_content", "1 1 1 0.6", $"Набор '{kitname}' не существует.", 18, "0.0 0.00", "1 1", TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", 0.0f);  
-                CuiHelper.AddUi(player, ui); 
+                CUIClass.CreateText(ref ui, "errortext", "octakits_content", "1 1 1 0.6", $"Набор '{kitname}' не существует.", 18, "0.0 0.00", "1 0.94", TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", 0.0f);
+                CuiHelper.DestroyUi(player, "octakits_root");
+                CuiHelper.AddUi(player, ui);
                 return;
             }
 
@@ -619,7 +667,7 @@ namespace Oxide.Plugins
                 PrintWarning($"[OctaKits DEBUG] Kit items loaded - Main: {main?.Count() ?? 0}, Belt: {belt?.Count() ?? 0}, Wear: {wear?.Count() ?? 0}");
             }
 
-            CUIClass.CreatePanel(ref ui, "octakits_viewkit_inventory", "imagePanel", GlassBg, "0.37 0.04", "0.99 0.96", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_viewkit_inventory", "octakits_content", GlassBg, "0.37 0.03", "0.99 0.94", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
                 // Золотая полоска сверху
                 CUIClass.CreatePanel(ref ui, "octakits_inv_goldline", "octakits_viewkit_inventory", Gold, "0 0.985", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
                 // Заголовок секции: основной инвентарь
@@ -732,7 +780,7 @@ namespace Oxide.Plugins
                 }
             
             
-            CUIClass.CreatePanel(ref ui, "octakits_viewkit_info", "imagePanel", GlassBg, "0.01 0.04", "0.35 0.96", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_viewkit_info", "octakits_content", GlassBg, "0.01 0.03", "0.35 0.94", false, 0.0f, 0f, "assets/icons/iconmaterial.mat");
                 // Верхняя золотая полоска
                 CUIClass.CreatePanel(ref ui, "octakits_v_goldline", "octakits_viewkit_info", Gold, "0 0.985", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
                 CUIClass.CreateText(ref ui, "kit_title", "octakits_viewkit_info", GoldBright, $"◆ <b>{kitname.ToUpper()}</b>", 18, "0.06 0.91", "0.94 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", 0.0f);  
@@ -777,11 +825,9 @@ namespace Oxide.Plugins
 
                 CUIClass.CreateButton(ref ui, "octakits_btn_claim", "octakits_viewkit_info", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.49 0.06", "0.94 0.16", $"octakits_try_claim {kitname.Replace(" ", "%")} 1 0", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
-            for (var i = 0; i < 9; i++)
-                CuiHelper.DestroyUi(player, $"kitpanel_{i}");
-            CuiHelper.DestroyUi(player, "octakits_viewkit_inventory"); 
-            CuiHelper.DestroyUi(player, "octakits_viewkit_info"); 
-            CuiHelper.AddUi(player, ui); 
+            // Сносим старое окно целиком — ViewKit отрисовал новый корень
+            CuiHelper.DestroyUi(player, "octakits_root");
+            CuiHelper.AddUi(player, ui);
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ViewKit completed successfully for kit '{kitname}' by player {player.displayName}");
         }
 
@@ -1017,18 +1063,17 @@ namespace Oxide.Plugins
                 var ui =  new CuiElementContainer();
 
                 if (args[1] == "0") {
-                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{args[2]}", $"kitpanel_{args[2]}",  btn_props[1], btn_props[0], 12, "0.34 0.06", $"0.96 0.28", $"octakits_try_claim {kitname} {args[2]}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
-                    CuiHelper.DestroyUi(player, $"kit_claimbtn_{args[2]}"); 
+                    CUIClass.CreateButton(ref ui, $"kit_claimbtn_{args[2]}", $"kitpanel_{args[2]}",  btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.35 0.05", $"0.97 0.26", $"octakits_try_claim {kitname.Replace(" ", "%")} 0 {args[2]}", "", TWhite, 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CuiHelper.DestroyUi(player, $"kit_claimbtn_{args[2]}");
                 }
                 else {
-                    CUIClass.CreateButton(ref ui, "octakits_btn_claim", $"octakits_viewkit_info", btn_props[1],  btn_props[0], 11, "0.45 0.15", "0.85 0.225", $"octakits_try_claim {kitname} {args[2]}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
-                    CuiHelper.DestroyUi(player, "octakits_btn_claim"); 
+                    CUIClass.CreateButton(ref ui, "octakits_btn_claim", $"octakits_viewkit_info", btn_props[1],  $"<b>{btn_props[0]}</b>", 11, "0.49 0.06", "0.94 0.16", $"octakits_try_claim {kitname.Replace(" ", "%")} 1 0", "", TWhite, 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CuiHelper.DestroyUi(player, "octakits_btn_claim");
                 }
                 CuiHelper.AddUi(player, ui); 
 
                 if (config?.ui?.closeAfterClaim == true) {
-                    CuiHelper.DestroyUi(player, "background"); 
-                    CuiHelper.DestroyUi(player, "background"); 
+                    CuiHelper.DestroyUi(player, "octakits_root");
                 }
 
                 /* if (Notifications != null)
@@ -1547,26 +1592,26 @@ namespace Oxide.Plugins
         object CloseKits_API(BasePlayer player)
         {
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] CloseKits_API called for player {player.displayName} (ID: {player.UserIDString})");
-            Puts($"[OctaKits] CloseKits_API -> {player.displayName}");
 
-            // Уничтожаем элементы UI, которые мог создать OctaKits
-            CuiHelper.DestroyUi(player, "errortext");
-            for (int i = 0; i < 6; i++)
+            // Корень самостоятельного окна — уносит за собой карточки, просмотр и шапку
+            CuiHelper.DestroyUi(player, "octakits_root");
+            // Панель импорта живёт отдельным корнем
+            CuiHelper.DestroyUi(player, "octakits_background");
+
+            if (_cdTimers.TryGetValue(player.userID, out var _t) && _t != null)
             {
-                CuiHelper.DestroyUi(player, $"kitpanel_{i}");
-                CuiHelper.DestroyUi(player, $"kit_image_{i}");
-                CuiHelper.DestroyUi(player, $"kit_name_{i}");
-                CuiHelper.DestroyUi(player, $"kit_desc_{i}");
-                CuiHelper.DestroyUi(player, $"kit_claimbtn_{i}");
-                CuiHelper.DestroyUi(player, $"kit_cd_{i}");
+                _t.Destroy();
+                _cdTimers.Remove(player.userID);
             }
-            // кнопки пагинации
-            CuiHelper.DestroyUi(player, "octakits_btn_next");
-            CuiHelper.DestroyUi(player, "octakits_btn_back");
-            // элементы детального просмотра кита
-            CuiHelper.DestroyUi(player, "octakits_viewkit_inventory");
-            CuiHelper.DestroyUi(player, "octakits_viewkit_info");
             return null;
+        }
+
+        [ConsoleCommand("octakits_close")]
+        private void octakits_close(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null) return;
+            CloseKits_API(player);
         }
 
 

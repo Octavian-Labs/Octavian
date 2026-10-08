@@ -19,7 +19,7 @@ namespace Oxide.Plugins
     {
         #region Fields
         [PluginReference]
-        private Plugin CopyPaste, ImageLibrary, ServerRewards, Economics, PlayerDLCAPI;
+        private Plugin CopyPaste, ImageLibrary, ServerRewards, Economics, PlayerDLCAPI, OctaKits;
 
         private DateTime _deprecatedHookTime = new DateTime(2021, 12, 31);
 
@@ -1602,7 +1602,13 @@ namespace Oxide.Plugins
             if (args.Length == 0)
             {
                 if (Configuration.UseUI)
-                    OpenKitGrid(player);
+                {
+                    // Если загружен самостоятельный интерфейс OctaKits — открываем его, иначе родной UI
+                    if (OctaKits != null && OctaKits.IsLoaded)
+                        OctaKits.CallHook("ShowKits_Page1_API", player);
+                    else
+                        OpenKitGrid(player);
+                }
                 else ReplyHelp(player);
 
                 return;

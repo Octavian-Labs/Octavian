@@ -21,7 +21,7 @@ namespace Oxide.Plugins
 
         #region [Dependencies]
 
-        [PluginReference] Plugin ImageLibrary, OctaKits;
+        [PluginReference] Plugin ImageLibrary, Kits;
 
         private void DependencyWarnings()
         {
@@ -29,7 +29,7 @@ namespace Oxide.Plugins
             {
                 if (ImageLibrary == null)
                     Puts("(!) ImageLibrary не найден — картинки будут грузиться медленнее.");
-                if (OctaKits != null) Puts("(АДДОН) OctaKits подключен.");
+                if (Kits == null) Puts("(!) Плагин Kits не найден — вкладка наборов будет пустой.");
             });
         }
 
@@ -37,12 +37,18 @@ namespace Oxide.Plugins
 
         private void OpenAddOn_API(BasePlayer player, string _apiName)
         {
-            if (_apiName == "OctaKits" && OctaKits != null) { OctaKits.CallHook("ShowKits_Page1_API", player); return; }
+            // Вкладка наборов — собственный рендер OctaWelcome, данные берутся напрямую из Kits.
+            if (_apiName == "OctaKits") { KitsTab_Show(player, 0); return; }
+
+            // Прочие аддоны (если появятся) — по-прежнему через CallHook.
+            var addon = plugins.Find(_apiName);
+            if (addon != null) addon.CallHook("ShowKits_Page1_API", player);
         }
 
         private void CloseAddOn_API(BasePlayer player)
         {
-            if (OctaKits != null) OctaKits.CallHook("CloseKits_API", player);
+            // Своих аддонов нет — просто добиваем элементы вкладки наборов.
+            KitsTab_Destroy(player);
         }
 
         #endregion
@@ -1222,6 +1228,365 @@ namespace Oxide.Plugins
         {
             CuiHelper.DestroyUi(player, "empty");
             CuiHelper.DestroyUi(player, "p_offsetContainer");
+        }
+
+        #endregion
+
+        #region [Kits Tab] — собственная вкладка наборов (данные напрямую из плагина Kits)
+
+        // Фирменная палитра Octavian (золото на стекле, эталон OctaBoss)
+        private const string KGold     = "0.82 0.61 0.20 1";
+        private const string KGoldDark = "0.48 0.32 0.10 1";
+        private const string KGlassBg  = "0.02 0.018 0.015 0.92";
+        private const string KGlassRow = "0.08 0.07 0.05 0.85";
+        private const string KGlassHov = "0.13 0.105 0.06 0.95";
+        private const string KGlassLt  = "0.05 0.045 0.035 0.92";
+        private const string KTWhite   = "1 0.98 0.90 1";
+        private const string KGreen    = "0.20 0.52 0.27 0.92";
+        private const string KRed      = "0.58 0.13 0.10 0.92";
+
+        // Сетка 3x3 внутри imagePanel
+        private static readonly string[] _kitCardAnchors =
+        {
+            "0.01 0.72-0.32 0.95", "0.34 0.72-0.65 0.95", "0.67 0.72-0.98 0.95",
+            "0.01 0.39-0.32 0.62", "0.34 0.39-0.65 0.62", "0.67 0.39-0.98 0.62",
+            "0.01 0.06-0.32 0.29", "0.34 0.06-0.65 0.29", "0.67 0.06-0.98 0.29"
+        };
+
+        // Ячейки предметов внутри секций детального просмотра
+        private static readonly string[] _kitMainA =
+        {
+            "0.01 0.75-0.165 0.98", "0.175 0.75-0.330 0.98", "0.340 0.75-0.495 0.98", "0.505 0.75-0.660 0.98", "0.670 0.75-0.825 0.98", "0.835 0.75-0.99 0.98",
+            "0.01 0.505-0.165 0.735", "0.175 0.505-0.330 0.735", "0.340 0.505-0.495 0.735", "0.505 0.505-0.660 0.735", "0.670 0.505-0.825 0.735", "0.835 0.505-0.99 0.735",
+            "0.01 0.265-0.165 0.495", "0.175 0.265-0.330 0.495", "0.340 0.265-0.495 0.495", "0.505 0.265-0.660 0.495", "0.670 0.265-0.825 0.495", "0.835 0.265-0.99 0.495",
+            "0.01 0.02-0.165 0.250", "0.175 0.02-0.330 0.250", "0.340 0.02-0.495 0.250", "0.505 0.02-0.660 0.250", "0.670 0.02-0.825 0.250", "0.835 0.02-0.99 0.250",
+        };
+
+        private static readonly string[] _kitBeltA =
+        {
+            "0.01 0.04-0.165 0.94", "0.175 0.04-0.330 0.94", "0.340 0.04-0.495 0.94", "0.505 0.04-0.660 0.94", "0.670 0.04-0.825 0.94", "0.835 0.04-0.99 0.94",
+        };
+
+        private static readonly string[] _kitClothA =
+        {
+            "0.01 0.04-0.14 0.96", "0.15 0.04-0.28 0.96", "0.29 0.04-0.42 0.96", "0.43 0.04-0.56 0.96", "0.57 0.04-0.70 0.96", "0.71 0.04-0.845 0.96", "0.855 0.04-0.99 0.96"
+        };
+
+        // Список наборов, которые можно показывать игроку (скрытые и auth-only отфильтровываем)
+        private List<string> KitsTab_List(BasePlayer player)
+        {
+            var list = new List<string>();
+            if (Kits == null) return list;
+
+            string[] all = null;
+            try { all = Kits.Call("GetAllKits") as string[]; } catch { }
+            if (all == null) return list;
+
+            bool isAdmin = player.IsAdmin;
+            foreach (string name in all)
+            {
+                JObject kit = null;
+                try { kit = Kits.Call("GetKitObject", name) as JObject; } catch { }
+                if (kit == null) continue;
+
+                if (!isAdmin && kit.SelectToken("IsHidden")?.Value<bool>() == true) continue;
+                int reqAuth = kit.SelectToken("RequiredAuth")?.Value<int>() ?? 0;
+                if (player.net.connection.authLevel < reqAuth) continue;
+
+                list.Add(name);
+            }
+            return list;
+        }
+
+        private string KitFmtTime(double seconds)
+        {
+            var ts = TimeSpan.FromSeconds(seconds);
+            if (ts.TotalDays >= 1) return $"{ts.Days} ДН {ts.Hours} Ч";
+            if (ts.TotalHours >= 1) return $"{(int)ts.TotalHours} Ч {ts.Minutes} МИН";
+            if (ts.TotalMinutes >= 1) return $"{(int)ts.TotalMinutes} МИН {ts.Seconds} СЕК";
+            return $"{ts.Seconds} СЕК";
+        }
+
+        // Текст и цвет кнопки набора: "ТЕКСТ%ЦВЕТ"
+        private string KitsTab_BtnState(BasePlayer player, string kitname)
+        {
+            JObject kit = null;
+            try { kit = Kits?.Call("GetKitObject", kitname) as JObject; } catch { }
+            if (kit == null) return $"НЕДОСТУПЕН%{KGlassLt}";
+
+            double cdLeft = 0;
+            try { cdLeft = Convert.ToDouble(Kits.Call("GetPlayerKitCooldown", player.userID, kitname)); } catch { }
+            if (cdLeft > 0) return $"⏱ {KitFmtTime(cdLeft)}%{KRed}";
+
+            string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
+            if (!string.IsNullOrEmpty(perm) && !permission.UserHasPermission(player.UserIDString, perm))
+                return $"НЕТ ДОСТУПА%{KGlassLt}";
+
+            int maxUses = kit.SelectToken("MaximumUses")?.Value<int>() ?? 0;
+            if (maxUses > 0)
+            {
+                int used = 0;
+                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", player.userID, kitname)); } catch { }
+                if (maxUses - used < 1) return $"ЛИМИТ ИСЧЕРПАН%{KGlassLt}";
+            }
+
+            int cost = kit.SelectToken("Cost")?.Value<int>() ?? 0;
+            return cost > 0 ? $"ЗАБРАТЬ • {cost}$%{KGreen}" : $"ЗАБРАТЬ%{KGreen}";
+        }
+
+        private void KitsTab_Show(BasePlayer player, int page = 0)
+        {
+            var ui = new CuiElementContainer();
+
+            if (Kits == null)
+            {
+                CUIClass.CreateText(ref ui, "owkit_err", "imagePanel", "1 1 1 0.6",
+                    "Система наборов сейчас недоступна.", 16, "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                KitsTab_Destroy(player);
+                CuiHelper.AddUi(player, ui);
+                return;
+            }
+
+            var kits = KitsTab_List(player);
+            if (kits.Count == 0)
+            {
+                CUIClass.CreateText(ref ui, "owkit_err", "imagePanel", "1 1 1 0.6",
+                    "На сервере пока нет доступных наборов.", 16, "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                KitsTab_Destroy(player);
+                CuiHelper.AddUi(player, ui);
+                return;
+            }
+
+            int start = page * 9;
+            for (int i = 0; i < 9; i++)
+            {
+                if (start + i >= kits.Count) break;
+                string kitname = kits[start + i];
+                string[] a = _kitCardAnchors[i].Split('-');
+                if (a.Length < 2) continue;
+
+                string descr = "";
+                try { descr = Kits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
+                if (descr.Length > 60) descr = descr.Substring(0, 60) + "...";
+
+                string image = "";
+                try { image = Kits.Call("GetKitImage", kitname) as string ?? ""; } catch { }
+
+                int cooldownSec = 0, maxUses = 0, used = 0;
+                try { cooldownSec = Convert.ToInt32(Kits.Call("GetKitCooldown", kitname)); } catch { }
+                try { maxUses = Convert.ToInt32(Kits.Call("GetKitMaxUses", kitname)); } catch { }
+                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", player.userID, kitname)); } catch { }
+
+                string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
+                string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
+
+                // карточка набора: тёмное стекло + золотая полоска сверху
+                CUIClass.CreatePanel(ref ui, $"owkit_card_{i}", "imagePanel", KGlassBg, a[0], a[1], false, 0f, "assets/icons/iconmaterial.mat");
+                CUIClass.CreatePanel(ref ui, $"owkit_gold_{i}", $"owkit_card_{i}", KGold, "0 0.97", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
+
+                CUIClass.CreatePanel(ref ui, $"owkit_icon_{i}", $"owkit_card_{i}", KGlassRow, "0.03 0.33", "0.32 0.92", false, 0f, "assets/icons/iconmaterial.mat");
+                if (!string.IsNullOrEmpty(image))
+                    CUIClass.CreateImage(ref ui, $"owkit_icon_{i}", Img3(image), "0.06 0.06", "0.94 0.94", 0.2f);
+
+                string title = $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>\n" +
+                               $"<size=10><color=#9E9482>{descr}</color></size>\n\n" +
+                               $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cdText}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesText}</color></size>";
+                CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_card_{i}", KTWhite, title, 13, "0.35 0.33", "0.97 0.92", TextAnchor.UpperLeft, "robotocondensed-bold.ttf");
+
+                CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26",
+                    $"octawelcome_kit_view {kitname.Replace(" ", "%")} {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
+                string[] btn = KitsTab_BtnState(player, kitname).Split('%');
+                CUIClass.CreateButton(ref ui, $"owkit_claim_{i}", $"owkit_card_{i}", btn[1], $"<b>{btn[0]}</b>", 11, "0.35 0.05", "0.97 0.26",
+                    $"octawelcome_kit_claim {kitname.Replace(" ", "%")} {page} 0", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            }
+
+            // пагинация
+            if (page > 0)
+                CUIClass.CreateButton(ref ui, "owkit_prev", "imagePanel", KGlassRow, "<size=22><color=#FFD35C>‹</color></size>", 14, "0.02 0.45", "0.06 0.55",
+                    $"octawelcome_kit_page {page - 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            if ((double)page + 1 < (double)kits.Count / 9)
+                CUIClass.CreateButton(ref ui, "owkit_next", "imagePanel", KGlassRow, "<size=22><color=#FFD35C>›</color></size>", 14, "0.94 0.45", "0.98 0.55",
+                    $"octawelcome_kit_page {page + 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
+            KitsTab_Destroy(player);
+            CuiHelper.AddUi(player, ui);
+        }
+
+        // Ячейки предметов секции детального просмотра
+        private void KitsTab_ItemCells(ref CuiElementContainer ui, string parent, string[] cellAnchors, JToken items, string prefix)
+        {
+            for (int i = 0; i < cellAnchors.Length; i++)
+            {
+                string[] a = cellAnchors[i].Split('-');
+                CUIClass.CreatePanel(ref ui, $"{prefix}{i}", parent, KGlassRow, a[0], a[1], false, 0.2f, "assets/icons/iconmaterial.mat");
+
+                JToken item = items != null && i < items.Count() ? items[i] : null;
+                if (item == null) continue;
+
+                try
+                {
+                    string shortname = item.SelectToken("Shortname")?.ToString();
+                    var def = string.IsNullOrEmpty(shortname) ? null : ItemManager.FindItemDefinition(shortname);
+                    if (def == null) continue; // битый shortname — пустая ячейка, без падения
+
+                    ulong skin = 0;
+                    try { skin = item.SelectToken("SkinID")?.Value<ulong>() ?? 0UL; } catch { }
+
+                    ui.Add(new CuiElement
+                    {
+                        Parent = $"{prefix}{i}",
+                        Name = $"{prefix}{i}_img",
+                        Components =
+                        {
+                            new CuiImageComponent { ItemId = def.itemid, SkinId = skin, FadeIn = 0.2f },
+                            new CuiRectTransformComponent { AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90" }
+                        }
+                    });
+                    CUIClass.CreateText(ref ui, $"{prefix}{i}_am", $"{prefix}{i}", "0.95 0.75 0.30 1",
+                        $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, "robotocondensed-bold.ttf");
+                }
+                catch { }
+            }
+        }
+
+        private void KitsTab_ViewKit(BasePlayer player, string kitname, int page)
+        {
+            var ui = new CuiElementContainer();
+
+            JObject kit = null;
+            try { kit = Kits?.Call("GetKitObject", kitname) as JObject; } catch { }
+            if (kit == null) { KitsTab_Show(player, page); return; }
+
+            var belt = kit.SelectToken("BeltItems");
+            var main = kit.SelectToken("MainItems");
+            var wear = kit.SelectToken("WearItems");
+
+            // правая часть — содержимое набора
+            CUIClass.CreatePanel(ref ui, "owkit_view_inv", "imagePanel", KGlassBg, "0.37 0.04", "0.99 0.96", false, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "owkit_inv_gold", "owkit_view_inv", KGold, "0 0.985", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
+
+            CUIClass.CreateText(ref ui, "owkit_sec_main", "owkit_view_inv", KGold, "◆ <b>ОСНОВНОЙ ИНВЕНТАРЬ</b>", 11, "0.03 0.93", "0.97 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "owkit_div_main", "owkit_view_inv", KGoldDark, "0.03 0.925", "0.97 0.928", false, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "owkit_inv_main", "owkit_view_inv", "0 0 0 0", "0.02 0.44", "0.98 0.91", false, 0f, "assets/icons/iconmaterial.mat");
+            KitsTab_ItemCells(ref ui, "owkit_inv_main", _kitMainA, main, "owkit_mitem_");
+
+            CUIClass.CreateText(ref ui, "owkit_sec_belt", "owkit_view_inv", KGold, "◆ <b>БЫСТРЫЙ ДОСТУП</b>", 11, "0.03 0.38", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "owkit_div_belt", "owkit_view_inv", KGoldDark, "0.03 0.375", "0.97 0.378", false, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "owkit_inv_belt", "owkit_view_inv", "0 0 0 0", "0.02 0.24", "0.98 0.36", false, 0f, "assets/icons/iconmaterial.mat");
+            KitsTab_ItemCells(ref ui, "owkit_inv_belt", _kitBeltA, belt, "owkit_bitem_");
+
+            CUIClass.CreateText(ref ui, "owkit_sec_wear", "owkit_view_inv", KGold, "◆ <b>ЭКИПИРОВКА</b>", 11, "0.03 0.19", "0.97 0.23", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "owkit_div_wear", "owkit_view_inv", KGoldDark, "0.03 0.185", "0.97 0.188", false, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "owkit_inv_wear", "owkit_view_inv", "0 0 0 0", "0.02 0.05", "0.98 0.17", false, 0f, "assets/icons/iconmaterial.mat");
+            KitsTab_ItemCells(ref ui, "owkit_inv_wear", _kitClothA, wear, "owkit_witem_");
+
+            // левая часть — информация о наборе
+            CUIClass.CreatePanel(ref ui, "owkit_view_info", "imagePanel", KGlassBg, "0.01 0.04", "0.35 0.96", false, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "owkit_v_gold", "owkit_view_info", KGold, "0 0.985", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreateText(ref ui, "owkit_v_title", "owkit_view_info", "0.95 0.75 0.30 1", $"◆ <b>{kitname.ToUpper()}</b>", 18, "0.06 0.91", "0.94 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "owkit_v_div1", "owkit_view_info", KGoldDark, "0.06 0.895", "0.94 0.898", false, 0f, "assets/icons/iconmaterial.mat");
+
+            int cooldownSec = 0, maxUses = 0, used = 0;
+            try { cooldownSec = Convert.ToInt32(Kits.Call("GetKitCooldown", kitname)); } catch { }
+            try { maxUses = Convert.ToInt32(Kits.Call("GetKitMaxUses", kitname)); } catch { }
+            try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", player.userID, kitname)); } catch { }
+
+            string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
+            string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
+            int cost = kit.SelectToken("Cost")?.Value<int>() ?? 0;
+            string costText = cost > 0 ? $"{cost}$" : "БЕСПЛАТНО";
+            string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
+            string permStatus = string.IsNullOrEmpty(perm) || permission.UserHasPermission(player.UserIDString, perm)
+                ? "<color=#A3E06C>Разрешён</color>" : "<color=#E05A47>Требуется привилегия</color>";
+
+            string info = $"<color=#8E8777>• Кулдаун:</color>  <color=#FFD35C>{cdText}</color>\n" +
+                          $"<color=#8E8777>• Доступно:</color>  <color=#FFD35C>{usesText}</color>\n" +
+                          $"<color=#8E8777>• Стоимость:</color> <color=#FFD35C>{costText}</color>\n" +
+                          $"<color=#8E8777>• Статус:</color>    {permStatus}";
+            CUIClass.CreateText(ref ui, "owkit_v_info", "owkit_view_info", KTWhite, info, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "owkit_v_div2", "owkit_view_info", KGoldDark, "0.06 0.635", "0.94 0.638", false, 0f, "assets/icons/iconmaterial.mat");
+
+            string descr = "";
+            try { descr = Kits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
+            if (string.IsNullOrEmpty(descr)) descr = "Описание набора не указано.";
+            CUIClass.CreateText(ref ui, "owkit_v_descr", "owkit_view_info", "0.58 0.53 0.43 1", descr, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf");
+
+            CUIClass.CreateButton(ref ui, "owkit_v_back", "owkit_view_info", KGlassRow, "<color=#FFD35C>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16",
+                $"octawelcome_kit_page {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
+            string[] btn = KitsTab_BtnState(player, kitname).Split('%');
+            CUIClass.CreateButton(ref ui, "owkit_v_claim", "owkit_view_info", btn[1], $"<b>{btn[0]}</b>", 11, "0.49 0.06", "0.94 0.16",
+                $"octawelcome_kit_claim {kitname.Replace(" ", "%")} {page} 1", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
+            // добиваем сетку карточек и старые панели, рисуем новое
+            KitsTab_Destroy(player);
+            CuiHelper.AddUi(player, ui);
+        }
+
+        private void KitsTab_Destroy(BasePlayer player)
+        {
+            // карточки тянут за собой дочерние элементы
+            for (int i = 0; i < 9; i++)
+                CuiHelper.DestroyUi(player, $"owkit_card_{i}");
+
+            CuiHelper.DestroyUi(player, "owkit_prev");
+            CuiHelper.DestroyUi(player, "owkit_next");
+            CuiHelper.DestroyUi(player, "owkit_err");
+            CuiHelper.DestroyUi(player, "owkit_view_inv");
+            CuiHelper.DestroyUi(player, "owkit_view_info");
+        }
+
+        [ConsoleCommand("octawelcome_kit_page")]
+        private void octawelcome_kit_page(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null) return;
+            var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
+            if (args.Length < 1) return;
+
+            int page = 0;
+            int.TryParse(args[0], out page);
+            CuiHelper.DestroyUi(player, "owkit_view_inv");
+            CuiHelper.DestroyUi(player, "owkit_view_info");
+            KitsTab_Show(player, page);
+        }
+
+        [ConsoleCommand("octawelcome_kit_view")]
+        private void octawelcome_kit_view(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null) return;
+            var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
+            if (args.Length < 2) return;
+
+            string kitname = args[0].Replace("%", " ");
+            int page = 0;
+            int.TryParse(args[1], out page);
+            KitsTab_ViewKit(player, kitname, page);
+        }
+
+        [ConsoleCommand("octawelcome_kit_claim")]
+        private void octawelcome_kit_claim(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null || Kits == null) return;
+            var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
+            if (args.Length < 3) return;
+
+            string kitname = args[0].Replace("%", " ");
+            int page = 0;
+            int.TryParse(args[1], out page);
+            bool inView = args[2] == "1";
+
+            object ok = null;
+            try { ok = Kits.Call("TryClaimKit", player, kitname, false); } catch { }
+            if (ok is bool && (bool)ok)
+            {
+                // перерисовываем — кнопка уходит в кулдаун/лимит
+                if (inView) KitsTab_ViewKit(player, kitname, page);
+                else KitsTab_Show(player, page);
+            }
         }
 
         #endregion
