@@ -385,6 +385,11 @@ namespace Oxide.Plugins
             var ui =  new CuiElementContainer();
             CreateStandaloneRoot(ref ui);
 
+            // Админам — кнопка создания набора в шапке (открывает родной редактор Kits)
+            bool isAdmin = IsKitsAdmin(player);
+            if (isAdmin)
+                CUIClass.CreateButton(ref ui, "octakits_adm_create", "octakits_header", GlassRow, "<color=#FFD35C><b>+ НОВЫЙ</b></color>", 11, "0.13 0.15", "0.245 0.85", "octakits_admin_create", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+
             var kitList = GetVisibleKits(player);
             if (config?.debugMode == true)
             {
@@ -567,6 +572,10 @@ namespace Oxide.Plugins
 
                     //view button
                     CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}", GlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+
+                    //edit button — только админам, открывает родной редактор Kits
+                    if (isAdmin)
+                        CUIClass.CreateButton(ref ui, $"kit_editbtn_{i}", $"kitpanel_{i}", GlassRow, "<color=#FFD35C>⚙</color>", 10, "0.905 0.935", "0.985 0.985", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
                     string[] btn_props = Button_Cooldown_Text(player, kitname).Split('%');
                     if (btn_props.Length >= 2)
@@ -827,6 +836,10 @@ namespace Oxide.Plugins
                 }
 
                 CUIClass.CreateButton(ref ui, "octakits_btn_claim", "octakits_viewkit_info", btn_props[1], $"<b>{btn_props[0]}</b>", 11, "0.49 0.06", "0.94 0.16", $"octakits_try_claim {kitname.Replace(" ", "%")} 1 0", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+
+            // Админам — кнопка редактирования в шапке (место пагинации на экране просмотра свободно)
+            if (IsKitsAdmin(player))
+                CUIClass.CreateButton(ref ui, "octakits_adm_edit", "octakits_header", GlassRow, "<color=#FFD35C><b>⚙ ИЗМЕНИТЬ</b></color>", 11, "0.775 0.15", "0.935 0.85", $"octakits_admin_edit {kitname.Replace(" ", "%")}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
             // Сносим старое окно целиком — ViewKit отрисовал новый корень
             CuiHelper.DestroyUi(player, "octakits_root");
@@ -1617,6 +1630,39 @@ namespace Oxide.Plugins
             var player = arg?.Player();
             if (player == null) return;
             CloseKits_API(player);
+        }
+
+        // Админ-контролы: прокси к родному редактору Kits (там вся логика создания/редактирования)
+        private bool IsKitsAdmin(BasePlayer player)
+            => player != null && (player.IsAdmin || permission.UserHasPermission(player.UserIDString, "kits.admin"));
+
+        private void OpenKitsEditor(BasePlayer player, string consoleCmd)
+        {
+            // Редактор Kits — полноэкранный интерфейс, окно витрины закрываем
+            CuiHelper.DestroyUi(player, "octakits_root");
+            if (_cdTimers.TryGetValue(player.userID, out var _t) && _t != null) { _t.Destroy(); _cdTimers.Remove(player.userID); }
+            player.SendConsoleCommand(consoleCmd);
+        }
+
+        [ConsoleCommand("octakits_admin_create")]
+        private void octakits_admin_create(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player)) return;
+            OpenKitsEditor(player, "kits.create");
+        }
+
+        [ConsoleCommand("octakits_admin_edit")]
+        private void octakits_admin_edit(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player)) return;
+
+            string name = (arg?.FullString.ToString() ?? "").Replace("%", " ").Trim();
+            if (string.IsNullOrEmpty(name)) return;
+
+            // Kits ожидает имена с пробелами в собственной кодировке ▊▊
+            OpenKitsEditor(player, $"kits.edit {name.Replace(" ", "▊▊")}");
         }
 
 
