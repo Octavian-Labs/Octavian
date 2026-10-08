@@ -2469,7 +2469,8 @@ namespace Oxide.Plugins
 
             _kitCreators.Remove((ulong)player.userID);
 
-            if (!string.IsNullOrEmpty(kit.RequiredPermission) && !permission.PermissionExists(kit.RequiredPermission))
+            if (!string.IsNullOrEmpty(kit.RequiredPermission) && !kit.RequiredPermission.StartsWith("octavip.")
+                && !permission.PermissionExists(kit.RequiredPermission))
                 permission.RegisterPermission(kit.RequiredPermission, this);
 
             if (!string.IsNullOrEmpty(kit.KitImage))
@@ -3296,7 +3297,11 @@ namespace Oxide.Plugins
                 {
                     if (!string.IsNullOrEmpty(kit.RequiredPermission))
                     {
-                        if (!permission.PermissionExists(kit.RequiredPermission, plugin))
+                        // octavip.* принадлежат OctVIP — регистрируем только свои пермишены,
+                        // иначе Carbon ворнит "already used by another plugin"
+                        if (kit.RequiredPermission.StartsWith("octavip."))
+                            continue;
+                        if (!permission.PermissionExists(kit.RequiredPermission))
                             permission.RegisterPermission(kit.RequiredPermission, plugin);
                     }
                 }
@@ -3729,7 +3734,10 @@ namespace Oxide.Plugins
         private static Item CreateItem(ItemData itemData, BasePlayer player = null)
         {
             int itemId = itemData.ItemID;
-            if (itemId <= 0)
+            // ItemID вернёт -1 при промахе в словаре; 0 — если не резолвился.
+            // ВАЖНО: в новых сборках Rust itemid бывают отрицательными (напр. -1758372725 у thompson),
+            // поэтому проверять надо именно на служебные значения, а не на <= 0.
+            if (itemId == 0 || itemId == -1)
             {
                 Debug.LogWarning($"[OctaKits] Предмет '{itemData.Shortname}' не найден в ItemDictionary — пропускаем");
                 return null;
@@ -3766,7 +3774,7 @@ namespace Oxide.Plugins
                     (BaseNetworkable.serverEntities.Find(item.instanceData.subEntity) as PagerEntity)?.ChangeFrequency(itemData.Frequency);
             }
 
-            if (itemData.BlueprintItemID > 0)
+            if (itemData.BlueprintItemID != 0 && itemData.BlueprintItemID != -1)
             {
                 if (item.instanceData == null)
                     item.instanceData = new ProtoBuf.Item.InstanceData();
@@ -3938,7 +3946,7 @@ namespace Oxide.Plugins
                             ["Amount"] = Amount,
                             ["Condition"] = Condition,
                             ["MaxCondition"] = MaxCondition,
-                            ["IsBlueprint"] = BlueprintItemID != 0,
+                            ["IsBlueprint"] = BlueprintItemID != 0 && BlueprintItemID != -1,
                             ["Ammo"] = Ammo,
                             ["AmmoType"] = Ammotype,
                             ["Text"] = Text,
