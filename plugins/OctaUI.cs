@@ -133,7 +133,9 @@ namespace Oxide.Plugins
 
         private string ResolveMat(string v)
         {
-            if (string.IsNullOrEmpty(v)) return _cfg.Theme.Mat;
+            // null — параметр не задан → тематический материал; "" — явно без материала
+            if (v == null) return _cfg.Theme.Mat;
+            if (v.Length == 0) return "";
             var tok = TokenValue(v);
             return tok ?? v;
         }
