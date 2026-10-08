@@ -17,25 +17,26 @@ using System.Reflection;
 namespace Oxide.Plugins
 {
     [Info("OctaKits", "Octavian", "2.0.0")]
-    [Description("Самостоятельная система наборов Octavian: данные, выдача, редактор и API — без зависимости от плагина Kits")]
+    [Description("Самостоятельная система наборов Octavian: данные, выдача, редактор и API; отрисовка — фреймворк OctaUI")]
     public class OctaKits : RustPlugin
     {   
-        [PluginReference] Plugin ImageLibrary, Economics, ServerRewards, CopyPaste, PlayerDLCAPI, OctVIP;
+        [PluginReference] Plugin ImageLibrary, Economics, ServerRewards, CopyPaste, PlayerDLCAPI, OctVIP, OctaUI;
 
-        // Фирменная палитра Octavian (золото на стекле, эталон OctaBoss)
-        private const string GoldBright = "0.95 0.75 0.30 1";
-        private const string Gold       = "0.82 0.61 0.20 1";
-        private const string GoldDark   = "0.48 0.32 0.10 1";
-        private const string GoldGlass  = "0.82 0.61 0.20 0.18";
-        private const string GlassBg    = "0.02 0.018 0.015 0.92";
-        private const string GlassLt    = "0.05 0.045 0.035 0.92";
-        private const string GlassRow   = "0.08 0.07 0.05 0.85";
-        private const string GlassHov   = "0.13 0.105 0.06 0.95";
-        private const string TMain      = "0.93 0.88 0.75 1";
-        private const string TMuted     = "0.58 0.53 0.43 1";
-        private const string TWhite     = "1 0.98 0.90 1";
-        private const string CGreen     = "0.20 0.52 0.27 0.92";
-        private const string CRed       = "0.58 0.13 0.10 0.92";
+        // Палитра — токены темы OctaUI (золото на стекле, эталон OctaBoss).
+        // Значения резолвятся фреймворком из configs/OctaUI.json — цвет меняется для всех плагинов разом.
+        private const string GoldBright = "accent";
+        private const string Gold       = "accent.dim";
+        private const string GoldDark   = "accent.dark";
+        private const string GoldGlass  = "accent.glass";
+        private const string GlassBg    = "bg";
+        private const string GlassLt    = "panel";
+        private const string GlassRow   = "row";
+        private const string GlassHov   = "hover";
+        private const string TMain      = "text";
+        private const string TMuted     = "muted";
+        private const string TWhite     = "white";
+        private const string CGreen     = "green";
+        private const string CRed       = "red";
 
         private Dictionary<string, KitCache> kitCache = new Dictionary<string, KitCache>();
         private readonly Dictionary<ulong, Timer> _cdTimers = new Dictionary<ulong, Timer>();
@@ -77,6 +78,9 @@ namespace Oxide.Plugins
         {
             _canUseSkin = CanUseSkin;
             _getRedirectedIfNotOwned = GetRedirectedShortnameIfNotOwned;
+            CUIClass.Ui = OctaUI; // подключаем фреймворк, если загружен
+            if (OctaUI == null)
+                PrintWarning("OctaUI не загружен — интерфейс наборов не отрисуется (c.reload OctaUI)");
 
             LoadKitData();
             LoadPlayerData();
@@ -126,6 +130,15 @@ namespace Oxide.Plugins
         {
             if (plugin?.Name == "ImageLibrary")
                 timer.Once(2f, () => kitData?.RegisterImages(ImageLibrary));
+            if (plugin?.Name == "OctaUI")
+                CUIClass.Ui = plugin;
+        }
+
+        // OctaUI выгрузили/перезагрузили — сбрасываем ссылку, чтобы не звать в мёртвую сборку
+        private void OnPluginUnloaded(Plugin plugin)
+        {
+            if (plugin?.Name == "OctaUI")
+                CUIClass.Ui = null;
         }
 
         private void OnServerSave() => SavePlayerData();
@@ -256,10 +269,9 @@ namespace Oxide.Plugins
 
                     kitCache[kitName] = cache;
 
-                    PrintWarning($"Loaded cache for kit '{kitName}': Image='{cache.ImageUrl}', Uses={cache.MaxUses}, Cooldown={cache.Cooldown}");
                     if (config?.debugMode == true)
                     {
-                        PrintWarning($"[OctaKits DEBUG] Kit '{kitName}' - Description: '{cache.Description}', HasPermission: {cache.HasPermission}, Price: {cache.Price}");
+                        PrintWarning($"[OctaKits DEBUG] Kit '{kitName}' - Image='{cache.ImageUrl}', Uses={cache.MaxUses}, Cooldown={cache.Cooldown}, Desc='{cache.Description}'");
                     }
                 }
                 catch (Exception ex)
@@ -311,41 +323,6 @@ namespace Oxide.Plugins
             }
             else return url;
         }
-
-        private void SetImageList (string imagedata)
-        {   
-            if (ImageLibrary == null) 
-            {
-                Puts("ImageLibrary не найден!");
-                return;
-            }
-
-            if (kitData != null) 
-            {
-                foreach (string kit in GetAllKits())
-                {   
-                    string url = GetKitImage(kit);
-                    bool saved = (bool) ImageLibrary.Call("HasImage", url);
-                    if (!saved)
-                        ImageLibrary.Call("AddImage", url, url);
-                }
-                Puts("Загрузка изображений наборов...");
-            }
-        }
-
-        private Dictionary<string, string> octakits_colors = new Dictionary<string, string>()
-        {   
-            //buttons
-            {"claim", "0.91 0.72 0.29 0.85"},
-            {"cooldown", "0.80 0.25 0.16 0.85"},
-            {"noPerms", "0.14 0.14 0.14 0.9"},
-            {"noUses", "0.14 0.14 0.14 0.6"},
-            {"back", "0 0 0 0.6"},
-            //panels
-            {"main_panel", "0 0 0 0.5"},
-            {"secondary_panel", "0 0 0 0.5"},
-            {"inventory", "0 0 0 0.6"}
-        };
 
         //kits import grid
         string[] anchors = {
@@ -718,16 +695,8 @@ namespace Oxide.Plugins
                             if (item != null)
                             {
                                 string shortname = $"{item.SelectToken("Shortname")}";
-                                var iDef = ItemManager.FindItemDefinition(shortname);
-
-                                ui.Add(new CuiElement
-                                {
-                                    Parent = $"octakits_imain_item{i}",
-                                    Name = $"{shortname}_{i}",
-                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90"}},
-                                    FadeOut = 0f
-                                });
-                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
+                                CUIClass.CreateItemIcon(ref ui, $"{shortname}_{i}", $"octakits_imain_item{i}", shortname,
+                                    (ulong)(item.SelectToken("SkinID") ?? 0), (int)(item.SelectToken("Amount") ?? 0));
                             }
                         }
                     
@@ -754,16 +723,8 @@ namespace Oxide.Plugins
                             if (item != null)
                             {
                                 string shortname = $"{item.SelectToken("Shortname")}";
-                                var iDef = ItemManager.FindItemDefinition(shortname);
-
-                                ui.Add(new CuiElement
-                                {
-                                    Parent = $"octakits_imain_item{i}",
-                                    Name = $"{shortname}_{i}",
-                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90"}},
-                                    FadeOut = 0f
-                                });
-                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
+                                CUIClass.CreateItemIcon(ref ui, $"{shortname}_{i}", $"octakits_imain_item{i}", shortname,
+                                    (ulong)(item.SelectToken("SkinID") ?? 0), (int)(item.SelectToken("Amount") ?? 0));
                             }
                         }
                     
@@ -790,16 +751,8 @@ namespace Oxide.Plugins
                             if (item != null)
                             {
                                 string shortname = $"{item.SelectToken("Shortname")}";
-                                var iDef = ItemManager.FindItemDefinition(shortname);
-
-                                ui.Add(new CuiElement
-                                {
-                                    Parent = $"octakits_imain_item{i}",
-                                    Name = $"{shortname}_{i}",
-                                    Components ={ new CuiImageComponent { ItemId = iDef.itemid, SkinId = (ulong) item.SelectToken("SkinID"), FadeIn = 0.2f}, new CuiRectTransformComponent {AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90"}},
-                                    FadeOut = 0f
-                                });
-                                CUIClass.CreateText(ref ui, "amount", $"octakits_imain_item{i}", GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, $"robotocondensed-bold.ttf", 0.0f);  
+                                CUIClass.CreateItemIcon(ref ui, $"{shortname}_{i}", $"octakits_imain_item{i}", shortname,
+                                    (ulong)(item.SelectToken("SkinID") ?? 0), (int)(item.SelectToken("Amount") ?? 0));
                             }
                         }
                     
@@ -922,7 +875,7 @@ namespace Oxide.Plugins
 
             string topOffset = "0";
             string leftOffset = "0";
-            string btnColor = "0.91 0.72 0.29 0.85";
+            string btnColor = "accent";
             string btnText = "ИМПОРТ";
 
             if (index == 0 || index == 5 || index == 10) 
@@ -933,7 +886,7 @@ namespace Oxide.Plugins
 
             if (alreadyImported)
             {
-                btnColor = "0.80 0.25 0.16 0.85";
+                btnColor = "red";
                 btnText = "<size=10>ИМПОРТИРОВАНО</size>";
             }
             
@@ -1278,166 +1231,92 @@ namespace Oxide.Plugins
 
         public class CUIClass
         {
+            // Ссылка на фреймворк OctaUI — вся отрисовка идёт через него
+            internal static Plugin Ui;
+
+            private static string AlignStr(TextAnchor a) => a.ToString().ToLowerInvariant();
+            private static string Off(string oMin, string oMax) =>
+                string.IsNullOrEmpty(oMin) && string.IsNullOrEmpty(oMax) ? null : (oMin + " " + oMax).Trim();
+
             public static CuiElementContainer CreateOverlay(string _name, string _color, string _anchorMin, string _anchorMax, bool _cursorOn = false, float _fade = 0f, string _mat = "")
             {
-                var _element = new CuiElementContainer()
+                var c = new CuiElementContainer();
+                Ui?.Call("Panel", c, "Overlay", _name, new JObject
                 {
-                    {
-                        new CuiPanel
-                        {
-                            Image = { Color = _color, Material = _mat, FadeIn = _fade},
-                            RectTransform = { AnchorMin = _anchorMin, AnchorMax = _anchorMax },
-                            CursorEnabled = _cursorOn
-                        },
-                        new CuiElement().Parent = "Overlay",
-                        _name
-                    }
-                };
-                return _element;
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
+                    ["cursor"] = _cursorOn, ["fadeIn"] = _fade, ["mat"] = _mat
+                });
+                return c;
             }
 
             public static void CreatePanel(ref CuiElementContainer _container, string _name, string _parent, string _color, string _anchorMin, string _anchorMax, bool _cursorOn = false, float _fadeIn = 0f, float _fadeOut = 0f, string _mat2 = "", string _OffsetMin = "", string _OffsetMax = "", bool keyboard = false)
             {
-                _container.Add(new CuiPanel
+                Ui?.Call("Panel", _container, _parent, _name, new JObject
                 {
-                    Image = { Color = _color, Material = _mat2, FadeIn = _fadeIn },
-                    RectTransform = { AnchorMin = _anchorMin, AnchorMax = _anchorMax, OffsetMin = _OffsetMin, OffsetMax = _OffsetMax },
-                    FadeOut = _fadeOut,
-                    CursorEnabled = _cursorOn,
-                    KeyboardEnabled = keyboard
-                },
-                _parent,
-                _name);
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["offset"] = Off(_OffsetMin, _OffsetMax),
+                    ["color"] = _color, ["cursor"] = _cursorOn, ["fadeIn"] = _fadeIn,
+                    ["fadeOut"] = _fadeOut, ["mat"] = _mat2, ["keyboard"] = keyboard
+                });
             }
 
             public static void CreateImage(ref CuiElementContainer _container, string _name, string _parent, string _image, string _anchorMin, string _anchorMax, float _fadeIn = 0f, float _fadeOut = 0f, string _OffsetMin = "", string _OffsetMax = "")
             {
-                if (_image.StartsWith("http") || _image.StartsWith("www"))
+                Ui?.Call("Image", _container, _parent, _name, new JObject
                 {
-                    _container.Add(new CuiElement
-                    {
-                        Name = _name,
-                        Parent = _parent,
-                        FadeOut = _fadeOut,
-                        Components =
-                        {
-                            new CuiRawImageComponent { Url = _image, Sprite = "assets/content/textures/generic/fulltransparent.tga", FadeIn = _fadeIn},
-                            new CuiRectTransformComponent { AnchorMin = _anchorMin, AnchorMax = _anchorMax, OffsetMin = _OffsetMin, OffsetMax = _OffsetMax }
-                        }
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["offset"] = Off(_OffsetMin, _OffsetMax),
+                    ["src"] = _image, ["fadeIn"] = _fadeIn, ["fadeOut"] = _fadeOut
+                });
+            }
 
-                    });
-                }
-                else
+            // ItemIcon: иконка предмета + опциональная подпись xN в углу (заменяет пару RawImage+Text)
+            public static void CreateItemIcon(ref CuiElementContainer _container, string _name, string _parent, string _shortname, ulong _skin = 0UL, int _amount = 0, string _anchorMin = "0.10 0.10", string _anchorMax = "0.90 0.90", float _fadeIn = 0.2f)
+            {
+                Ui?.Call("ItemIcon", _container, _parent, _name, new JObject
                 {
-                    _container.Add(new CuiElement
-                    {
-                        Parent = _parent,
-                        Components =
-                        {
-                            new CuiRawImageComponent { Png = _image, Sprite = "assets/content/textures/generic/fulltransparent.tga", FadeIn = _fadeIn},
-                            new CuiRectTransformComponent { AnchorMin = _anchorMin, AnchorMax = _anchorMax }
-                        }
-                    });
-                }
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["item"] = _shortname,
+                    ["skin"] = _skin, ["amount"] = _amount, ["fadeIn"] = _fadeIn
+                });
             }
 
             public static void PullFromAssets(ref CuiElementContainer _container, string _name, string _parent, string _color, string _sprite, float _fadeIn = 0f, float _fadeOut = 0f, string _anchorMin = "0 0", string _anchorMax = "1 1", string _material = "assets/icons/iconmaterial.mat")
             {
-                //assets/content/textures/generic/fulltransparent.tga MAT
-                _container.Add(new CuiElement
+                Ui?.Call("Sprite", _container, _parent, _name, new JObject
                 {
-                    Parent = _parent,
-                    Name = _name,
-                    Components =
-                            {
-                                new CuiImageComponent { Material = _material, Sprite = _sprite, Color = _color, FadeIn = _fadeIn},
-                                new CuiRectTransformComponent {AnchorMin = _anchorMin, AnchorMax = _anchorMax}
-                            },
-                    FadeOut = _fadeOut
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["sprite"] = _sprite,
+                    ["color"] = _color, ["fadeIn"] = _fadeIn, ["fadeOut"] = _fadeOut, ["mat"] = _material
                 });
             }
 
             public static void CreateInput(ref CuiElementContainer _container, string _name, string _parent, string _color, int _size, string _anchorMin, string _anchorMax, string _defaultText, string _font = "permanentmarker.ttf", string _command = "command.processinput", TextAnchor _align = TextAnchor.MiddleCenter, int _charsLimit = 200, bool _readOnly = false)
             {
-                _container.Add(new CuiElement
+                Ui?.Call("Input", _container, _parent, _name, new JObject
                 {
-                    Parent = _parent,
-                    Name = _name,
-
-                    Components =
-                    {
-                        new CuiInputFieldComponent
-                        {
-
-                            Text = _defaultText,
-                            CharsLimit = _charsLimit,
-                            Color = _color,
-                            IsPassword = false,
-                            Command = _command,
-                            Font = _font,
-                            FontSize = _size,
-                            Align = _align,
-                            ReadOnly = _readOnly,
-                        },
-
-                        new CuiRectTransformComponent
-                        {
-                            AnchorMin = _anchorMin,
-                            AnchorMax = _anchorMax
-
-                        }
-
-                    },
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
+                    ["text"] = _defaultText, ["size"] = _size, ["align"] = AlignStr(_align),
+                    ["font"] = _font, ["cmd"] = _command, ["limit"] = _charsLimit, ["readOnly"] = _readOnly
                 });
             }
 
             public static void CreateText(ref CuiElementContainer _container, string _name, string _parent, string _color, string _text, int _size, string _anchorMin, string _anchorMax, TextAnchor _align = TextAnchor.MiddleCenter, string _font = "robotocondensed-bold.ttf", float _fadeIn = 0f, float _fadeOut = 0f, string _outlineColor = "0 0 0 0", string _outlineScale = "0 0")
             {
-                _container.Add(new CuiElement
+                Ui?.Call("Text", _container, _parent, _name, new JObject
                 {
-                    Parent = _parent,
-                    Name = _name,
-                    Components =
-                    {
-                        new CuiTextComponent
-                        {
-                            Text = _text,
-                            FontSize = _size,
-                            Font = _font,
-                            Align = _align,
-                            Color = _color,
-                            FadeIn = _fadeIn,
-                        },
-
-                        new CuiOutlineComponent
-                        {
-
-                            Color = _outlineColor,
-                            Distance = _outlineScale
-
-                        },
-
-                        new CuiRectTransformComponent
-                        {
-                             AnchorMin = _anchorMin,
-                             AnchorMax = _anchorMax
-                        }
-                    },
-                    FadeOut = _fadeOut
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
+                    ["text"] = _text, ["size"] = _size, ["align"] = AlignStr(_align),
+                    ["font"] = _font, ["fadeIn"] = _fadeIn, ["fadeOut"] = _fadeOut,
+                    ["outline"] = _outlineColor, ["outlineScale"] = _outlineScale
                 });
             }
 
             public static void CreateButton(ref CuiElementContainer _container, string _name, string _parent, string _color, string _text, int _size, string _anchorMin, string _anchorMax, string _command = "", string _close = "", string _textColor = "0.843 0.816 0.78 1", float _fade = 1f, TextAnchor _align = TextAnchor.MiddleCenter, string _font = "", string _material = "assets/content/ui/uibackgroundblur-ingamemenu.mat")
             {
-
-                _container.Add(new CuiButton
+                Ui?.Call("Button", _container, _parent, _name, new JObject
                 {
-                    Button = { Close = _close, Command = _command, Color = _color, Material = _material, FadeIn = _fade },
-                    RectTransform = { AnchorMin = _anchorMin, AnchorMax = _anchorMax },
-                    Text = { Text = _text, FontSize = _size, Align = _align, Color = _textColor, Font = _font, FadeIn = _fade }
-                },
-                _parent,
-                _name);
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
+                    ["text"] = _text, ["size"] = _size, ["align"] = AlignStr(_align),
+                    ["font"] = _font, ["cmd"] = _command, ["close"] = _close,
+                    ["textColor"] = _textColor, ["fadeIn"] = _fade, ["mat"] = _material
+                });
             }
         }
         private void SaveData()
@@ -1652,7 +1531,6 @@ namespace Oxide.Plugins
             CloseKits_API(player);
 
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ShowKits_Page1_API called for player {player.displayName} (ID: {player.UserIDString})");
-            Puts($"[OctaKits] ShowKits_Page1_API -> {player.displayName}");
             ShowKits(player, 0); // показываем первую страницу китов
             return null;
         }
@@ -1911,21 +1789,14 @@ namespace Oxide.Plugins
                 if (item == null) return;
 
                 string shortname = $"{item.SelectToken("Shortname")}";
-                var iDef = ItemManager.FindItemDefinition(shortname);
-                if (iDef == null) return;
+                if (string.IsNullOrEmpty(shortname)) return;
 
                 ulong skin = 0;
                 var skinTok = item.SelectToken("SkinID");
                 if (skinTok != null) skin = skinTok.ToObject<ulong>();
 
-                ui.Add(new CuiElement
-                {
-                    Parent = cellName,
-                    Name = $"{shortname}_{index}",
-                    Components = { new CuiImageComponent { ItemId = iDef.itemid, SkinId = skin, FadeIn = 0.1f }, new CuiRectTransformComponent { AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90" } },
-                    FadeOut = 0f
-                });
-                CUIClass.CreateText(ref ui, "amount", cellName, GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, "robotocondensed-bold.ttf", 0f);
+                CUIClass.CreateItemIcon(ref ui, $"{shortname}_{index}", cellName, shortname, skin,
+                    item.SelectToken("Amount")?.ToObject<int>() ?? 0, "0.10 0.10", "0.90 0.90", 0.1f);
             }
             catch { }
         }
