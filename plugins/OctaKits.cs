@@ -1699,14 +1699,31 @@ namespace Oxide.Plugins
 
             if (requiredPermission.StartsWith("octavip.", StringComparison.OrdinalIgnoreCase))
             {
+                int level = VipLevelFromPerm(requiredPermission);
+                if (level <= 0)
+                    return permission.UserHasPermission(player.UserIDString, requiredPermission);
+
+                // Путь 1: уровень из данных OctVIP (запись в players.json или octavip.*-пермишен)
+                if (OctVIP != null)
+                {
+                    try
+                    {
+                        if (Convert.ToBoolean(OctVIP.Call("HasVipLevel", (ulong)player.userID, level)))
+                            return true;
+                    }
+                    catch { }
+                }
+
+                // Путь 2: пермишен напрямую (вручную или выдан другим плагином)
                 if (permission.UserHasPermission(player.UserIDString, requiredPermission))
                     return true;
 
-                int level = VipLevelFromPerm(requiredPermission);
-                if (level > 0 && OctVIP != null)
+                // Путь 3: oxide-группа vip_* уровня не ниже требуемого
+                // (VIP мог быть выдан добавлением в группу в обход octavip.set)
+                foreach (string g in permission.GetUserGroups(player.UserIDString))
                 {
-                    try { return Convert.ToBoolean(OctVIP.Call("HasVipLevel", (ulong)player.userID, level)); }
-                    catch { }
+                    if (VipLevelFromGroup(g) >= level)
+                        return true;
                 }
                 return false;
             }
@@ -1725,6 +1742,20 @@ namespace Oxide.Plugins
                 case "octavip.moderator": return 5;
                 case "octavip.admin":     return 6;
                 default:                  return 0;
+            }
+        }
+
+        private static int VipLevelFromGroup(string group)
+        {
+            switch (group.ToLowerInvariant())
+            {
+                case "vip_bronze":    return 1;
+                case "vip_silver":    return 2;
+                case "vip_gold":      return 3;
+                case "vip_brilliant": return 4;
+                case "vip_moderator": return 5;
+                case "vip_admin":     return 6;
+                default:              return 0;
             }
         }
 
