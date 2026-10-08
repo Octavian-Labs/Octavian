@@ -78,6 +78,8 @@ namespace Oxide.Plugins
             _canUseSkin = CanUseSkin;
             _getRedirectedIfNotOwned = GetRedirectedShortnameIfNotOwned;
             CUIClass.Ui = OctaUI; // подключаем фреймворк, если загружен
+            if (OctaUI == null)
+                PrintWarning("OctaUI не загружен — интерфейс наборов не отрисуется (c.reload OctaUI)");
 
             LoadKitData();
             LoadPlayerData();
@@ -129,6 +131,13 @@ namespace Oxide.Plugins
                 timer.Once(2f, () => kitData?.RegisterImages(ImageLibrary));
             if (plugin?.Name == "OctaUI")
                 CUIClass.Ui = plugin;
+        }
+
+        // OctaUI выгрузили/перезагрузили — сбрасываем ссылку, чтобы не звать в мёртвую сборку
+        private void OnPluginUnloaded(Plugin plugin)
+        {
+            if (plugin?.Name == "OctaUI")
+                CUIClass.Ui = null;
         }
 
         private void OnServerSave() => SavePlayerData();
@@ -259,10 +268,9 @@ namespace Oxide.Plugins
 
                     kitCache[kitName] = cache;
 
-                    PrintWarning($"Loaded cache for kit '{kitName}': Image='{cache.ImageUrl}', Uses={cache.MaxUses}, Cooldown={cache.Cooldown}");
                     if (config?.debugMode == true)
                     {
-                        PrintWarning($"[OctaKits DEBUG] Kit '{kitName}' - Description: '{cache.Description}', HasPermission: {cache.HasPermission}, Price: {cache.Price}");
+                        PrintWarning($"[OctaKits DEBUG] Kit '{kitName}' - Image='{cache.ImageUrl}', Uses={cache.MaxUses}, Cooldown={cache.Cooldown}, Desc='{cache.Description}'");
                     }
                 }
                 catch (Exception ex)
@@ -314,41 +322,6 @@ namespace Oxide.Plugins
             }
             else return url;
         }
-
-        private void SetImageList (string imagedata)
-        {   
-            if (ImageLibrary == null) 
-            {
-                Puts("ImageLibrary не найден!");
-                return;
-            }
-
-            if (kitData != null) 
-            {
-                foreach (string kit in GetAllKits())
-                {   
-                    string url = GetKitImage(kit);
-                    bool saved = (bool) ImageLibrary.Call("HasImage", url);
-                    if (!saved)
-                        ImageLibrary.Call("AddImage", url, url);
-                }
-                Puts("Загрузка изображений наборов...");
-            }
-        }
-
-        private Dictionary<string, string> octakits_colors = new Dictionary<string, string>()
-        {   
-            //buttons
-            {"claim", "0.91 0.72 0.29 0.85"},
-            {"cooldown", "0.80 0.25 0.16 0.85"},
-            {"noPerms", "0.14 0.14 0.14 0.9"},
-            {"noUses", "0.14 0.14 0.14 0.6"},
-            {"back", "0 0 0 0.6"},
-            //panels
-            {"main_panel", "0 0 0 0.5"},
-            {"secondary_panel", "0 0 0 0.5"},
-            {"inventory", "0 0 0 0.6"}
-        };
 
         //kits import grid
         string[] anchors = {
@@ -1557,7 +1530,6 @@ namespace Oxide.Plugins
             CloseKits_API(player);
 
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ShowKits_Page1_API called for player {player.displayName} (ID: {player.UserIDString})");
-            Puts($"[OctaKits] ShowKits_Page1_API -> {player.displayName}");
             ShowKits(player, 0); // показываем первую страницу китов
             return null;
         }
