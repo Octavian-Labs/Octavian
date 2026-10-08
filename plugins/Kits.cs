@@ -3359,8 +3359,13 @@ namespace Oxide.Plugins
             if (!string.IsNullOrEmpty(itemData.Text))
                 item.text = itemData.Text;
             
-            item._condition = itemData.Condition;
-            item._maxCondition = itemData.MaxCondition;
+            // Прочность применяем только если она задана в данных набора (MaxCondition > 0);
+            // иначе непрописанные в редакторе значения 0/0 выдавали бы сломанные предметы
+            if (itemData.MaxCondition > 0f && item.info.condition.enabled)
+            {
+                item._maxCondition = itemData.MaxCondition;
+                item._condition = itemData.Condition > 0f ? itemData.Condition : itemData.MaxCondition;
+            }
             
             if (itemData.Frequency > 0)
             {
