@@ -21,7 +21,7 @@ namespace Oxide.Plugins
 
         #region [Dependencies]
 
-        [PluginReference] Plugin ImageLibrary, Kits;
+        [PluginReference] Plugin ImageLibrary, OctaKits;
 
         private void DependencyWarnings()
         {
@@ -29,7 +29,7 @@ namespace Oxide.Plugins
             {
                 if (ImageLibrary == null)
                     Puts("(!) ImageLibrary не найден — картинки будут грузиться медленнее.");
-                if (Kits == null) Puts("(!) Плагин Kits не найден — вкладка наборов будет пустой.");
+                if (OctaKits == null) Puts("(!) Плагин OctaKits не найден — вкладка наборов будет пустой.");
             });
         }
 
@@ -1276,17 +1276,17 @@ namespace Oxide.Plugins
         private List<string> KitsTab_List(BasePlayer player)
         {
             var list = new List<string>();
-            if (Kits == null) return list;
+            if (OctaKits == null) return list;
 
             string[] all = null;
-            try { all = Kits.Call("GetAllKits") as string[]; } catch { }
+            try { all = OctaKits.Call("GetAllKits") as string[]; } catch { }
             if (all == null) return list;
 
             bool isAdmin = player.IsAdmin;
             foreach (string name in all)
             {
                 JObject kit = null;
-                try { kit = Kits.Call("GetKitObject", name) as JObject; } catch { }
+                try { kit = OctaKits.Call("GetKitObject", name) as JObject; } catch { }
                 if (kit == null) continue;
 
                 if (!isAdmin && kit.SelectToken("IsHidden")?.Value<bool>() == true) continue;
@@ -1311,11 +1311,11 @@ namespace Oxide.Plugins
         private string KitsTab_BtnState(BasePlayer player, string kitname)
         {
             JObject kit = null;
-            try { kit = Kits?.Call("GetKitObject", kitname) as JObject; } catch { }
+            try { kit = OctaKits?.Call("GetKitObject", kitname) as JObject; } catch { }
             if (kit == null) return $"НЕДОСТУПЕН%{KGlassLt}";
 
             double cdLeft = 0;
-            try { cdLeft = Convert.ToDouble(Kits.Call("GetPlayerKitCooldown", (ulong)player.userID, kitname)); } catch { }
+            try { cdLeft = Convert.ToDouble(OctaKits.Call("GetPlayerKitCooldown", (ulong)player.userID, kitname)); } catch { }
             if (cdLeft > 0) return $"⏱ {KitFmtTime(cdLeft)}%{KRed}";
 
             string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
@@ -1326,7 +1326,7 @@ namespace Oxide.Plugins
             if (maxUses > 0)
             {
                 int used = 0;
-                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
+                try { used = Convert.ToInt32(OctaKits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
                 if (maxUses - used < 1) return $"ЛИМИТ ИСЧЕРПАН%{KGlassLt}";
             }
 
@@ -1338,7 +1338,7 @@ namespace Oxide.Plugins
         {
             var ui = new CuiElementContainer();
 
-            if (Kits == null)
+            if (OctaKits == null)
             {
                 CUIClass.CreateText(ref ui, "owkit_err", "imagePanel", "1 1 1 0.6",
                     "Система наборов сейчас недоступна.", 16, "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
@@ -1366,16 +1366,16 @@ namespace Oxide.Plugins
                 if (a.Length < 2) continue;
 
                 string descr = "";
-                try { descr = Kits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
+                try { descr = OctaKits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
                 if (descr.Length > 60) descr = descr.Substring(0, 60) + "...";
 
                 string image = "";
-                try { image = Kits.Call("GetKitImage", kitname) as string ?? ""; } catch { }
+                try { image = OctaKits.Call("GetKitImage", kitname) as string ?? ""; } catch { }
 
                 int cooldownSec = 0, maxUses = 0, used = 0;
-                try { cooldownSec = Convert.ToInt32(Kits.Call("GetKitCooldown", kitname)); } catch { }
-                try { maxUses = Convert.ToInt32(Kits.Call("GetKitMaxUses", kitname)); } catch { }
-                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
+                try { cooldownSec = Convert.ToInt32(OctaKits.Call("GetKitCooldown", kitname)); } catch { }
+                try { maxUses = Convert.ToInt32(OctaKits.Call("GetKitMaxUses", kitname)); } catch { }
+                try { used = Convert.ToInt32(OctaKits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
 
                 string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
                 string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
@@ -1384,15 +1384,18 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, $"owkit_card_{i}", "imagePanel", KGlassBg, a[0], a[1], false, 0f, "assets/icons/iconmaterial.mat");
                 CUIClass.CreatePanel(ref ui, $"owkit_gold_{i}", $"owkit_card_{i}", KGold, "0 0.97", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
 
-                // иконка — квадрат фиксированной ширины, чтобы картинка не растягивалась
-                CUIClass.CreatePanel(ref ui, $"owkit_icon_{i}", $"owkit_card_{i}", KGlassRow, "0.03 0.34", "0.03 0.92", false, 0f, "assets/icons/iconmaterial.mat", "", "0 0", "80 0");
+                // иконка — квадрат по обеим осям через оффсеты: иначе на широкой карточке растягивалась
+                CUIClass.CreatePanel(ref ui, $"owkit_icon_{i}", $"owkit_card_{i}", KGlassRow, "0.035 0.94", "0.035 0.94", false, 0f, "assets/icons/iconmaterial.mat", "", "0 -76", "76 0");
                 if (!string.IsNullOrEmpty(image))
                     CUIClass.CreateImage(ref ui, $"owkit_icon_{i}", Img3(image), "0.06 0.06", "0.94 0.94", 0.2f);
 
+                // название и описание — справа от иконки; строка КД/лимит — отдельной линией под иконкой
                 string title = $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>\n" +
-                               $"<size=10><color=#9E9482>{descr}</color></size>\n\n" +
-                               $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cdText}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesText}</color></size>";
-                CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_card_{i}", KTWhite, title, 13, "0.33 0.33", "0.97 0.92", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                               $"<size=10><color=#9E9482>{descr}</color></size>";
+                CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_card_{i}", KTWhite, title, 13, "0.31 0.44", "0.97 0.92", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, $"owkit_meta_{i}", $"owkit_card_{i}", KTWhite,
+                    $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cdText}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesText}</color></size>",
+                    11, "0.035 0.28", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
                 CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.03 0.05", "0.32 0.26",
                     $"octawelcome_kit_view {kitname.Replace(" ", "%")} {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
@@ -1461,7 +1464,7 @@ namespace Oxide.Plugins
             var ui = new CuiElementContainer();
 
             JObject kit = null;
-            try { kit = Kits?.Call("GetKitObject", kitname) as JObject; } catch { }
+            try { kit = OctaKits?.Call("GetKitObject", kitname) as JObject; } catch { }
             if (kit == null) { KitsTab_Show(player, page); return; }
 
             var belt = kit.SelectToken("BeltItems");
@@ -1494,9 +1497,9 @@ namespace Oxide.Plugins
             CUIClass.CreatePanel(ref ui, "owkit_v_div1", "owkit_view_info", KGoldDark, "0.06 0.895", "0.94 0.898", false, 0f, "assets/icons/iconmaterial.mat");
 
             int cooldownSec = 0, maxUses = 0, used = 0;
-            try { cooldownSec = Convert.ToInt32(Kits.Call("GetKitCooldown", kitname)); } catch { }
-            try { maxUses = Convert.ToInt32(Kits.Call("GetKitMaxUses", kitname)); } catch { }
-            try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
+            try { cooldownSec = Convert.ToInt32(OctaKits.Call("GetKitCooldown", kitname)); } catch { }
+            try { maxUses = Convert.ToInt32(OctaKits.Call("GetKitMaxUses", kitname)); } catch { }
+            try { used = Convert.ToInt32(OctaKits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
 
             string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
             string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
@@ -1514,7 +1517,7 @@ namespace Oxide.Plugins
             CUIClass.CreatePanel(ref ui, "owkit_v_div2", "owkit_view_info", KGoldDark, "0.06 0.635", "0.94 0.638", false, 0f, "assets/icons/iconmaterial.mat");
 
             string descr = "";
-            try { descr = Kits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
+            try { descr = OctaKits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
             if (string.IsNullOrEmpty(descr)) descr = "Описание набора не указано.";
             CUIClass.CreateText(ref ui, "owkit_v_descr", "owkit_view_info", "0.58 0.53 0.43 1", descr, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
@@ -1578,7 +1581,7 @@ namespace Oxide.Plugins
         private void octawelcome_kit_claim(ConsoleSystem.Arg arg)
         {
             var player = arg?.Player();
-            if (player == null || Kits == null) return;
+            if (player == null || OctaKits == null) return;
             var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
             if (args.Length < 3) return;
 
@@ -1588,7 +1591,7 @@ namespace Oxide.Plugins
             bool inView = args[2] == "1";
 
             object ok = null;
-            try { ok = Kits.Call("TryClaimKit", player, kitname, false); } catch { }
+            try { ok = OctaKits.Call("TryClaimKit", player, kitname, false); } catch { }
             if (ok is bool && (bool)ok)
             {
                 // перерисовываем — кнопка уходит в кулдаун/лимит

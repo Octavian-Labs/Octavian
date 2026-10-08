@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Facepunch;
 using Oxide.Core;
+using Oxide.Core.Configuration;
 using Oxide.Core.Libraries;
 using Oxide.Core.Plugins;
 using UnityEngine;
@@ -10,14 +12,15 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
 using Network;
+using System.Reflection;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaKits", "Octavian", "1.1.0")]
-    [Description("Интерфейс наборов Octavian поверх плагина Kits — стиль золото на стекле")]
+    [Info("OctaKits", "Octavian", "2.0.0")]
+    [Description("Самостоятельная система наборов Octavian: данные, выдача, редактор и API — без зависимости от плагина Kits")]
     public class OctaKits : RustPlugin
     {   
-        [PluginReference] Plugin ImageLibrary, Kits;
+        [PluginReference] Plugin ImageLibrary, Economics, ServerRewards, CopyPaste, PlayerDLCAPI;
 
         // Фирменная палитра Octavian (золото на стекле, эталон OctaBoss)
         private const string GoldBright = "0.95 0.75 0.30 1";
@@ -45,12 +48,16 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
+            if (!Interface.Oxide.IsShuttingDown)
+                SavePlayerData();
+
             foreach (var t in _cdTimers.Values) t?.Destroy();
             _cdTimers.Clear();
             foreach (var p in BasePlayer.activePlayerList)
             {
                 CloseKits_API(p);
                 CuiHelper.DestroyUi(p, "octakits_background");
+                CuiHelper.DestroyUi(p, "octakits_root");
             }
         }
 
@@ -66,9 +73,31 @@ namespace Oxide.Plugins
 
         // Интеграция с WelcomePanel через API хуки удалена - используем только API методы
 
+        private void Loaded()
+        {
+            _canUseSkin = CanUseSkin;
+            _getRedirectedIfNotOwned = GetRedirectedShortnameIfNotOwned;
+
+            LoadKitData();
+            LoadPlayerData();
+
+            permission.RegisterPermission(ADMIN_PERMISSION, this);
+            kitData?.RegisterPermissions(permission, this);
+
+            _costType = ParseType<CostType>(config?.backend?.currency ?? "Scrap");
+        }
+
         void OnServerInitialized()
         {
             LoadData();
+
+            // Время создания карты — база для вайп-кулдаунов наборов
+            LastWipeTime = SaveRestore.SaveCreatedTime.Subtract(Epoch).TotalSeconds;
+
+            CheckForShortnameUpdates();
+
+            // Картинки наборов регистрируем с задержкой — ImageLibrary может подняться позже
+            timer.Once(2f, () => kitData?.RegisterImages(ImageLibrary));
 
             if (ImageLibrary != null)
                 ImageLibrary.Call("AddImage","https://rustplugins.net/products/welcomepanel/new/file-find.png", "https://rustplugins.net/products/welcomepanel/new/file-find.png");
@@ -86,17 +115,55 @@ namespace Oxide.Plugins
                 SaveData();
             }
 
-            // Асинхронная инициализация китов с задержкой
-            timer.Once(3f, () => InitializeKits());
+            InitializeKits();
         }
 
-        // Хук загрузки плагинов: когда Kits поднимется после нас — инициализируемся заново
+        // Хук загрузки плагинов: когда ImageLibrary поднимется после нас — догружаем картинки
         private void OnPluginLoaded(Plugin plugin)
         {
-            if (plugin?.Name == "Kits" && !isInitialized)
+            if (plugin?.Name == "ImageLibrary")
+                timer.Once(2f, () => kitData?.RegisterImages(ImageLibrary));
+        }
+
+        private void OnServerSave() => SavePlayerData();
+
+        private void OnNewSave(string filename)
+        {
+            // Вайп карты: чистим статистику использований/кулдаунов, если включено в конфиге
+            if (config?.backend?.wipeData == true)
+                playerData?.Wipe();
+
+            LastWipeTime = SaveRestore.SaveCreatedTime.Subtract(Epoch).TotalSeconds;
+        }
+
+        // Автовыдача наборов при спавне (список в конфиге, по приоритету)
+        private void OnPlayerRespawned(BasePlayer player)
+        {
+            var autoKits = config?.backend?.autoKits;
+            if (!player || autoKits == null || autoKits.Count == 0)
+                return;
+
+            if (Interface.Oxide.CallHook("CanRedeemKit", player) != null)
+                return;
+
+            if (Interface.Oxide.CallHook("CanRedeemAutoKit", player) != null)
+                return;
+
+            for (int i = 0; i < autoKits.Count; i++)
             {
-                _initRetries = 0;
-                timer.Once(1f, () => InitializeKits());
+                if (!kitData.Find(autoKits[i], out KitData.Kit kit))
+                    continue;
+
+                if (CanClaimKit(player, kit, true) != null)
+                    continue;
+
+                player.inventory.Strip();
+
+                if (GiveKit(player, kit) is string)
+                    continue;
+
+                OnKitReceived(player, kit);
+                return;
             }
         }
 
@@ -116,10 +183,9 @@ namespace Oxide.Plugins
         {
             if (config?.debugMode == true) PrintWarning("[OctaKits DEBUG] Starting InitializeKits");
 
-            if (Kits == null)
+            if (kitData == null)
             {
-                PrintWarning("Плагин Kits не найден — повторим инициализацию позже");
-                if (config?.debugMode == true) PrintWarning("[OctaKits DEBUG] Kits plugin reference is null");
+                PrintWarning("Данные наборов не загружены — повторим инициализацию позже");
                 ScheduleInitRetry();
                 return;
             }
@@ -133,7 +199,7 @@ namespace Oxide.Plugins
             try
             {
                 // Предзагрузка данных всех китов
-                string[] allKits = (string[])Kits.Call("GetAllKits");
+                string[] allKits = GetAllKits();
                 if (allKits != null && allKits.Length > 0)
                 {
                     PrintWarning($"Инициализация {allKits.Length} наборов для OctaKits");
@@ -176,18 +242,11 @@ namespace Oxide.Plugins
                 {
                     KitCache cache = new KitCache();
 
-                    // Безопасное получение данных кита с обработкой типов
-                    object imageResult = Kits.Call("GetKitImage", kitName);
-                    cache.ImageUrl = imageResult is string ? (string)imageResult : "";
-
-                    object descResult = Kits.Call("GetKitDescription", kitName);
-                    cache.Description = descResult is string ? (string)descResult : "";
-
-                    object maxUsesResult = Kits.Call("GetKitMaxUses", kitName);
-                    cache.MaxUses = maxUsesResult is int ? (int)maxUsesResult : 0;
-
-                    object cooldownResult = Kits.Call("GetKitCooldown", kitName);
-                    cache.Cooldown = cooldownResult != null ? Convert.ToSingle(cooldownResult) : 0f;
+                    // Данные кита теперь локальные — бэкенд внутри этого плагина
+                    cache.ImageUrl = GetKitImage(kitName) ?? "";
+                    cache.Description = GetKitDescription(kitName) ?? "";
+                    cache.MaxUses = GetKitMaxUses(kitName);
+                    cache.Cooldown = GetKitCooldown(kitName);
 
                     cache.HasPermission = true; // Будет проверяться при использовании
                     cache.Price = 0f; // Будет заполняться при необходимости
@@ -258,12 +317,11 @@ namespace Oxide.Plugins
                 return;
             }
 
-            if(Kits != null) 
+            if (kitData != null) 
             {
-                string[] allKits = (string[]) Kits.Call("GetAllKits");
-                foreach (string kit in allKits)
+                foreach (string kit in GetAllKits())
                 {   
-                    string url = (string) Kits.Call("GetKitImage", kit);
+                    string url = GetKitImage(kit);
                     bool saved = (bool) ImageLibrary.Call("HasImage", url);
                     if (!saved)
                         ImageLibrary.Call("AddImage", url, url);
@@ -334,17 +392,14 @@ namespace Oxide.Plugins
         private List<string> GetVisibleKits(BasePlayer player)
         {
             var list = new List<string>();
-            if (Kits == null) return list;
+            if (kitData == null) return list;
 
-            string[] all = null;
-            try { all = Kits.Call("GetAllKits") as string[]; } catch { }
-            if (all == null) return list;
+            string[] all = GetAllKits();
 
-            bool isAdmin = player.IsAdmin;
+            bool isAdmin = IsKitsAdmin(player);
             foreach (string name in all)
             {
-                JObject kit = null;
-                try { kit = Kits.Call("GetKitObject", name) as JObject; } catch { }
+                JObject kit = GetKitObject(name);
                 if (kit == null) continue;
 
                 if (!isAdmin && kit.SelectToken("IsHidden")?.Value<bool>() == true) continue;
@@ -374,13 +429,13 @@ namespace Oxide.Plugins
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ShowKits called for player {player.displayName} (ID: {player.UserIDString}), page: {page}");
 
             // Ленивая инициализация: если кэш ещё не готов — пробуем собрать прямо сейчас
-            if (!isInitialized && Kits != null)
+            if (!isInitialized)
                 InitializeKits();
 
-            if (Kits == null)
+            if (kitData == null)
             {
-                PrintWarning("Плагин Kits недоступен");
-                if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ShowKits called but Kits plugin is null");
+                PrintWarning("Данные наборов недоступны");
+                if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] ShowKits called but kitData is null");
                 player.ChatMessage("<color=#E8B84B>OctaKits</color>: система наборов сейчас недоступна");
                 return;
             }
@@ -426,50 +481,11 @@ namespace Oxide.Plugins
                     {
                         kitInfo = new KitCache();
 
-                        // Безопасное получение данных кита
-                        try
-                        {
-                            object imageResult = Kits?.Call("GetKitImage", kitname);
-                            kitInfo.ImageUrl = imageResult is string ? (string)imageResult : "";
-                        }
-                        catch (Exception ex)
-                        {
-                            PrintWarning($"Error getting kit image for '{kitname}': {ex.Message}");
-                            kitInfo.ImageUrl = "";
-                        }
-
-                        try
-                        {
-                            object descResult = Kits?.Call("GetKitDescription", kitname);
-                            kitInfo.Description = descResult is string ? (string)descResult : "";
-                        }
-                        catch (Exception ex)
-                        {
-                            PrintWarning($"Error getting kit description for '{kitname}': {ex.Message}");
-                            kitInfo.Description = "";
-                        }
-
-                        try
-                        {
-                            object maxUsesResult = Kits?.Call("GetKitMaxUses", kitname);
-                            kitInfo.MaxUses = maxUsesResult is int ? (int)maxUsesResult : 0;
-                        }
-                        catch (Exception ex)
-                        {
-                            PrintWarning($"Error getting kit max uses for '{kitname}': {ex.Message}");
-                            kitInfo.MaxUses = 0;
-                        }
-
-                        try
-                        {
-                            object cooldownResult = Kits?.Call("GetKitCooldown", kitname);
-                            kitInfo.Cooldown = cooldownResult != null ? Convert.ToSingle(cooldownResult) : 0f;
-                        }
-                        catch (Exception ex)
-                        {
-                            PrintWarning($"Error getting kit cooldown for '{kitname}': {ex.Message}");
-                            kitInfo.Cooldown = 0f;
-                        }
+                        // Данные кита — локальный бэкенд
+                        kitInfo.ImageUrl = GetKitImage(kitname) ?? "";
+                        kitInfo.Description = GetKitDescription(kitname) ?? "";
+                        kitInfo.MaxUses = GetKitMaxUses(kitname);
+                        kitInfo.Cooldown = GetKitCooldown(kitname);
 
                         kitInfo.HasPermission = true; // Будет проверяться при использовании
                         kitInfo.Price = 0f;
@@ -492,7 +508,7 @@ namespace Oxide.Plugins
                     // Обновляем только динамические данные
                     try
                     {
-                        var ko = Kits?.Call("GetKitObject", kitname) as JObject;
+                        var ko = GetKitObject(kitname);
                         var reqPerm = ko?.SelectToken("RequiredPermission")?.ToString() ?? "";
                         kitInfo.HasPermission = string.IsNullOrEmpty(reqPerm) || permission.UserHasPermission(player.UserIDString, reqPerm);
                     }
@@ -503,18 +519,8 @@ namespace Oxide.Plugins
                     }
                 }
 
-                // Безопасная проверка существования кита
-                bool isKitExists = false;
-                try
-                {
-                    object isKitResult = Kits?.Call("IsKit", kitname);
-                    isKitExists = isKitResult is bool ? (bool)isKitResult : false;
-                }
-                catch (Exception ex)
-                {
-                    PrintWarning($"Error checking if kit exists '{kitname}': {ex.Message}");
-                    isKitExists = false;
-                }
+                // Проверка существования набора — локальный бэкенд
+                bool isKitExists = IsKit(kitname);
 
                 if (!isKitExists)
                 {
@@ -529,19 +535,8 @@ namespace Oxide.Plugins
                 string usesleft = gl("uses_title_unlimited");
                 if (kitInfo.MaxUses != 0)
                 {
-                    try
-                    {
-                        // Безопасный вызов метода получения использований кита
-                        object usesResult = Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname);
-                        int usedCount = usesResult is int ? (int)usesResult : 0;
-                        int remaining = Math.Max(0, kitInfo.MaxUses - usedCount);
-                        usesleft = remaining.ToString();
-                    }
-                    catch (Exception ex)
-                    {
-                        PrintWarning($"Error getting kit uses for '{kitname}' player '{player.UserIDString}': {ex.Message}");
-                        usesleft = kitInfo.MaxUses.ToString();
-                    }
+                    int usedCount = GetPlayerKitUses((ulong)player.userID, kitname);
+                    usesleft = Math.Max(0, kitInfo.MaxUses - usedCount).ToString();
                 }
 
                 string cooldown = gl("cooldown_title_none");
@@ -667,7 +662,7 @@ namespace Oxide.Plugins
             var ui =  new CuiElementContainer();
             CreateStandaloneRoot(ref ui);
 
-            JObject kitObj = (JObject) Kits.Call("GetKitObject", $"{kitname}");
+            JObject kitObj = GetKitObject(kitname);
             if (kitObj == null)
             {
                 if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit object is null for kit '{kitname}'");
@@ -808,12 +803,12 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, "octakits_v_div1", "octakits_viewkit_info", GoldDark, "0.06 0.895", "0.94 0.898", false, 0f, 0f, "assets/icons/iconmaterial.mat");
                 
                 string cooldown = gl("cooldown_title_none");
-                if ((int) Kits.Call<int>("GetKitCooldown", kitname) != 0)
-                    cooldown = $"{TimeFormated(Convert.ToDouble(Kits.Call<int>("GetKitCooldown", kitname)))}";
+                if (GetKitCooldown(kitname) != 0)
+                    cooldown = $"{TimeFormated(GetKitCooldown(kitname))}";
                 
                 string usesleft = gl("uses_title_unlimited");
-                if ((int) Kits.Call<int>("GetKitMaxUses", kitname) != 0)
-                    usesleft = $"{(int) Kits.Call("GetKitMaxUses", kitname) - (int) Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)}";
+                if (GetKitMaxUses(kitname) != 0)
+                    usesleft = $"{GetKitMaxUses(kitname) - GetPlayerKitUses((ulong)player.userID, kitname)}";
                 
                 string cost = gl("price_title_free");
                 if(Convert.ToInt32(kitObj.SelectToken("Cost")) != 0)
@@ -831,7 +826,7 @@ namespace Oxide.Plugins
                 CUIClass.CreateText(ref ui, "kit_info_block", "octakits_viewkit_info", TWhite, infoText, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", 0.0f);
                 CUIClass.CreatePanel(ref ui, "octakits_v_div2", "octakits_viewkit_info", GoldDark, "0.06 0.635", "0.94 0.638", false, 0f, 0f, "assets/icons/iconmaterial.mat");
 
-                string descText = (string)Kits.Call("GetKitDescription", kitname);
+                string descText = GetKitDescription(kitname);
                 if (string.IsNullOrEmpty(descText)) descText = "Описание набора не указано.";
                 CUIClass.CreateText(ref ui, "kit_description", "octakits_viewkit_info", TMuted, descText, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", 0.0f);  
                 
@@ -865,7 +860,7 @@ namespace Oxide.Plugins
 
         private void KitsImportCui(BasePlayer player, int page = 0)
         {   
-            string[] allKits = (string[]) Kits.Call("GetAllKits");
+            string[] allKits = GetAllKits();
             int windowHeight = 0;
             string text = "";
             foreach (var item in allKits)
@@ -930,7 +925,7 @@ namespace Oxide.Plugins
             }
             
             CUIClass.CreatePanel(ref ui2, $"octakits_kit_FI{index}", "octakits_main", "0 0 0 0.8", anchors[index], anchors[index], false, 0.0f, 0f, "assets/icons/iconmaterial.mat", $"{leftOffset} -65", $"195 {topOffset}");
-                CUIClass.CreateImage(ref ui2, "img", $"octakits_kit_FI{index}", $"{Img((string)Kits.Call("GetKitImage", kitname))}", "0.02 0.12", "0.27 0.95", 0.5f);
+                CUIClass.CreateImage(ref ui2, "img", $"octakits_kit_FI{index}", $"{Img(GetKitImage(kitname))}", "0.02 0.12", "0.27 0.95", 0.5f);
                 CUIClass.CreateText(ref ui2, "kitname", $"octakits_kit_FI{index}", "1 1 1 0.6", kitname, 15, "0.30 0.5", "1 1", TextAnchor.MiddleLeft, $"robotocondensed-bold.ttf", 0.0f);  
                 CUIClass.CreateButton(ref ui2, $"octakits_btnimport_{index}", $"octakits_kit_FI{index}", btnColor, btnText, 11, "0.29 0.08", "0.775 0.45", $"octakits_import {kitname.Replace(" ", "%")} {index}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                 CUIClass.CreateButton(ref ui2, $"octakits_btn_viewkit", $"octakits_kit_FI{index}", "0.11 0.11 0.11 1", "", 11, "0.80 0.08", "0.97 0.45", $"octakits_lookupkit {kitname.Replace(" ", "%")}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
@@ -966,14 +961,9 @@ namespace Oxide.Plugins
 
         private string Button_Cooldown_Text(BasePlayer player, string kitname)
         {
-            if (Kits == null)
-            {
-                return gl("no_perms_button") + $"%{config?.ui?.colors?["Кнопка без доступа"] ?? "0.14 0.14 0.14 0.9"}";
-            }
-
             try
             {
-                var kit = Kits.Call("GetKitObject", kitname) as JObject;
+                var kit = GetKitObject(kitname);
                 if (kit == null)
                 {
                     PrintWarning($"Failed to get kit object for '{kitname}'");
@@ -986,11 +976,8 @@ namespace Oxide.Plugins
                 object permToken = kit.SelectToken("RequiredPermission");
                 string perm = permToken as string ?? "";
 
-                object maxUsesResult = Kits?.Call("GetKitMaxUses", kitname);
-                int kitUseLimit = maxUsesResult is int ? (int)maxUsesResult : 0;
-
-                object timesUsedResult = Kits?.Call("GetPlayerKitUses", (ulong)player.userID, kitname);
-                int kitTimesUsed = timesUsedResult is int ? (int)timesUsedResult : 0;
+                int kitUseLimit = GetKitMaxUses(kitname);
+                int kitTimesUsed = GetPlayerKitUses((ulong)player.userID, kitname);
 
                 if (IsKitOnCd(player, kitname))
                 {
@@ -1025,25 +1012,20 @@ namespace Oxide.Plugins
 
         private string KitUsesLeft(BasePlayer player, string _kitName) 
         {   
-            int _kitMaxUses = Convert.ToInt32(Kits?.CallHook("GetKitMaxUses", _kitName));
-            int _kitTimesUsed = Convert.ToInt32(Kits?.CallHook("GetPlayerKitUses", (ulong)player.userID, _kitName));
+            int _kitMaxUses = GetKitMaxUses(_kitName);
+            int _kitTimesUsed = GetPlayerKitUses((ulong)player.userID, _kitName);
             string _kitUsesLeft = Convert.ToString(_kitMaxUses - _kitTimesUsed);
             return _kitUsesLeft;
         }
 
         private bool IsKitOnCd(BasePlayer player, string _kitName) 
         {
-            double _currentCd = Convert.ToDouble(Kits?.CallHook("GetPlayerKitCooldown", (ulong)player.userID, _kitName));
-            if ( _currentCd == 0)
-            {
-                return false;
-            }
-            return true;
+            return GetPlayerKitCooldown((ulong)player.userID, _kitName) > 0;
         }
 
         private string GetKitCd(string _kitName) 
         {
-            int _kitCdInt = Convert.ToInt32(Kits?.Call<int>("GetKitCooldown", _kitName)); 
+            int _kitCdInt = GetKitCooldown(_kitName); 
         
             TimeSpan cooldownTS = TimeSpan.FromSeconds(_kitCdInt); 
             string cooldownFormated = string.Format("{0:D1}D {1:D2}:{2:D2}:{3:D2}", cooldownTS.Days, cooldownTS.Hours, cooldownTS.Minutes, cooldownTS.Seconds);
@@ -1055,7 +1037,7 @@ namespace Oxide.Plugins
 
         private string GetCurrentKitCd(BasePlayer player, string _kitName) 
         { 
-            int _currentCdInt = Convert.ToInt32(Kits?.CallHook("GetPlayerKitCooldown", (ulong)player.userID, _kitName));
+            int _currentCdInt = Convert.ToInt32(GetPlayerKitCooldown((ulong)player.userID, _kitName));
             
             TimeSpan cooldownTS = TimeSpan.FromSeconds(_currentCdInt); 
             string cooldownFormated = string.Format("{0:D1}D {1:D2}:{2:D2}:{3:D2}", cooldownTS.Days, cooldownTS.Hours, cooldownTS.Minutes, cooldownTS.Seconds);
@@ -1081,8 +1063,8 @@ namespace Oxide.Plugins
 
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] octakits_try_claim called for kit '{kitname}' by player {player.displayName}");
 
-            object claimResult = Kits.Call("TryClaimKit", player, kitname, false);
-            if (claimResult is bool && (bool)claimResult)
+            bool claimResult = TryClaimKit(player, kitname, false);
+            if (claimResult)
             {   
                 if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit '{kitname}' successfully claimed by {player.displayName}");
 
@@ -1115,7 +1097,7 @@ namespace Oxide.Plugins
                         5,
                         gl("notification_kitclaim_success").Replace("{kitname}", kitname),
                         gl("notification_success_stripe_color"),
-                        Img((string)Kits.Call("GetKitImage", kitname)),
+                        Img(GetKitImage(kitname)),
                         true
                     ); */
 
@@ -1174,10 +1156,9 @@ namespace Oxide.Plugins
                 return;
             }
 
-            // Проверка готовности плагинов
-            if (Kits == null)
+            if (kitData == null)
             {
-                Puts("Плагин Kits не найден");
+                Puts("Данные наборов не загружены");
                 return;
             }
 
@@ -1209,9 +1190,8 @@ namespace Oxide.Plugins
             }
 
             string kitname = args[0].Replace("%", " ");
-            CuiHelper.DestroyUi(player, "octakits_background"); 
-            string[] _args = {"edit", kitname};
-            Kits.Call("cmdKit", player, addonsData["addons"].RustKits_claimCommand, _args);
+            CuiHelper.DestroyUi(player, "octakits_background");
+            StartKitEditor(player, kitname);
 
         }
 
@@ -1483,6 +1463,11 @@ namespace Oxide.Plugins
         {
             base.LoadConfig();
             config = Config.ReadObject<Configuration>();
+            if (config?.backend == null)
+            {
+                if (config == null) config = Configuration.CreateConfig();
+                else config.backend = new Configuration.Backend();
+            }
             SaveConfig();
         }
         
@@ -1497,6 +1482,39 @@ namespace Oxide.Plugins
 
             [JsonProperty("Режим отладки")]
             public bool debugMode { get; set; }
+
+            [JsonProperty("Бэкенд наборов")]
+            public Backend backend { get; set; }
+
+            public class Backend
+            {
+                [JsonProperty("Валюта платных наборов (Scrap, ServerRewards, Economics)")]
+                public string currency { get; set; } = "Scrap";
+
+                [JsonProperty("Авто-наборы при спавне (по приоритету)")]
+                public List<string> autoKits { get; set; } = new List<string>();
+
+                [JsonProperty("Сбрасывать данные игроков при вайпе")]
+                public bool wipeData { get; set; } = false;
+
+                [JsonProperty("Админы игнорируют ограничения (кулдаун/лимит/цена)")]
+                public bool adminIgnoreRestrictions { get; set; } = false;
+
+                [JsonProperty("Логировать выдачу наборов в файл")]
+                public bool logKitsGiven { get; set; } = false;
+
+                [JsonProperty("Выдавать только скины, которыми владеет игрок (нужен PlayerDLCAPI)")]
+                public bool ownedSkins { get; set; } = true;
+
+                [JsonProperty("Разрешить NPC использовать скины из наборов")]
+                public bool npcSkins { get; set; } = true;
+
+                [JsonProperty("Кулдаун набора от момента вайпа (название | секунды)")]
+                public Dictionary<string, int> wipeCooldowns { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+                [JsonProperty("Параметры CopyPaste при выдаче постройки")]
+                public string[] copyPasteParams { get; set; } = new[] { "deployables", "true", "inventories", "true" };
+            }
 
             public class Ui
             {   
@@ -1570,7 +1588,8 @@ namespace Oxide.Plugins
                             image = ""
                         }
                     },
-                    debugMode = false
+                    debugMode = false,
+                    backend = new Backend()
                 };
             }
         }
@@ -1657,14 +1676,13 @@ namespace Oxide.Plugins
 
         private void StartKitEditor(BasePlayer player, string kitName)
         {
-            if (Kits == null)
+            if (kitData == null)
             {
                 player.ChatMessage("<color=#E8B84B>OctaKits</color>: система наборов недоступна");
                 return;
             }
 
-            object result = null;
-            try { result = Kits.Call("KitEditorStart", player, kitName ?? ""); } catch { }
+            object result = KitEditorStart(player, kitName ?? "");
 
             if (!(result is JObject draft))
             {
@@ -1807,17 +1825,13 @@ namespace Oxide.Plugins
         private void EditorToast(BasePlayer player, string text)
         {
             _editorToast[(ulong)player.userID] = text;
-            object result = null;
-            try { result = Kits?.Call("KitEditorGet", player); } catch { }
-            if (result is JObject draft)
+            if (KitEditorGet(player) is JObject draft)
                 DrawKitEditor(player, draft);
         }
 
         private void RefreshKitCache()
         {
-            if (Kits == null) return;
-            string[] all = null;
-            try { all = Kits.Call("GetAllKits") as string[]; } catch { }
+            string[] all = GetAllKits();
             if (all == null) return;
             LoadKitCache(all);
             PreloadKitImages(all);
@@ -1861,7 +1875,7 @@ namespace Oxide.Plugins
         private void octakits_admin_delete(ConsoleSystem.Arg arg)
         {
             var player = arg?.Player();
-            if (!IsKitsAdmin(player) || Kits == null) return;
+            if (!IsKitsAdmin(player)) return;
 
             string name = (arg?.FullString.ToString() ?? "").Replace("%", " ").Trim();
             if (string.IsNullOrEmpty(name)) return;
@@ -1876,8 +1890,7 @@ namespace Oxide.Plugins
 
             _pendingDelete.Remove(uid);
 
-            object result = null;
-            try { result = Kits.Call("KitDelete", player, name); } catch { }
+            object result = KitDelete(player, name);
 
             if ("ok".Equals(result as string))
             {
@@ -1892,14 +1905,13 @@ namespace Oxide.Plugins
         private void octakits_editor_set(ConsoleSystem.Arg arg)
         {
             var player = arg?.Player();
-            if (!IsKitsAdmin(player) || Kits == null) return;
+            if (!IsKitsAdmin(player)) return;
             if (arg == null || arg.Args == null || arg.Args.Length < 1) return;
 
             string field = arg.GetString(0);
             string value = arg.Args.Length > 1 ? string.Join(" ", arg.Args.Skip(1).Select(x => x.ToString())) : "";
 
-            object result = null;
-            try { result = Kits.Call("KitEditorSetField", player, field, value); } catch { }
+            object result = KitEditorSetField(player, field, value);
 
             if (result is JObject draft)
                 DrawKitEditor(player, draft);
@@ -1911,17 +1923,14 @@ namespace Oxide.Plugins
         private void octakits_editor_toggle(ConsoleSystem.Arg arg)
         {
             var player = arg?.Player();
-            if (!IsKitsAdmin(player) || Kits == null) return;
+            if (!IsKitsAdmin(player)) return;
 
-            object draftObj = null;
-            try { draftObj = Kits.Call("KitEditorGet", player); } catch { }
-            if (!(draftObj is JObject draft)) return;
+            if (!(KitEditorGet(player) is JObject draft)) return;
 
             string field = arg?.GetString(0) ?? "isHidden";
             bool cur = draft.SelectToken("IsHidden")?.ToObject<bool>() ?? false;
 
-            object result = null;
-            try { result = Kits.Call("KitEditorSetField", player, field, (!cur).ToString()); } catch { }
+            object result = KitEditorSetField(player, field, (!cur).ToString());
             if (result is JObject snap)
                 DrawKitEditor(player, snap);
             else
@@ -1936,20 +1945,17 @@ namespace Oxide.Plugins
             ulong uid = (ulong)player.userID;
             _editorOverwrite[uid] = !(_editorOverwrite.TryGetValue(uid, out bool o) && o);
 
-            object result = null;
-            try { result = Kits?.Call("KitEditorGet", player); } catch { }
-            if (result is JObject draft)
-                DrawKitEditor(player, draft);
+            if (KitEditorGet(player) is JObject draft2)
+                DrawKitEditor(player, draft2);
         }
 
         [ConsoleCommand("octakits_editor_copyinv")]
         private void octakits_editor_copyinv(ConsoleSystem.Arg arg)
         {
             var player = arg?.Player();
-            if (!IsKitsAdmin(player) || Kits == null) return;
+            if (!IsKitsAdmin(player)) return;
 
-            object result = null;
-            try { result = Kits.Call("KitEditorCopyInventory", player); } catch { }
+            object result = KitEditorCopyInventory(player);
             if (result is JObject draft)
             {
                 _editorToast[(ulong)player.userID] = "Инвентарь скопирован в набор";
@@ -1962,10 +1968,9 @@ namespace Oxide.Plugins
         private void octakits_editor_clearitems(ConsoleSystem.Arg arg)
         {
             var player = arg?.Player();
-            if (!IsKitsAdmin(player) || Kits == null) return;
+            if (!IsKitsAdmin(player)) return;
 
-            object result = null;
-            try { result = Kits.Call("KitEditorClearItems", player); } catch { }
+            object result = KitEditorClearItems(player);
             if (result is JObject draft)
             {
                 _editorToast[(ulong)player.userID] = "Предметы набора очищены";
@@ -1978,13 +1983,12 @@ namespace Oxide.Plugins
         private void octakits_editor_save(ConsoleSystem.Arg arg)
         {
             var player = arg?.Player();
-            if (!IsKitsAdmin(player) || Kits == null) return;
+            if (!IsKitsAdmin(player)) return;
 
             ulong uid = (ulong)player.userID;
             bool overwrite = _editorOverwrite.TryGetValue(uid, out bool o) && o;
 
-            object result = null;
-            try { result = Kits.Call("KitEditorSave", player, overwrite); } catch { }
+            object result = KitEditorSave(player, overwrite);
 
             if ("ok".Equals(result as string))
             {
@@ -2003,10 +2007,1691 @@ namespace Oxide.Plugins
             var player = arg?.Player();
             if (player == null) return;
 
-            try { Kits?.Call("KitEditorCancel", player); } catch { }
+            KitEditorCancel(player);
             _editorOverwrite.Remove((ulong)player.userID);
             _editorToast.Remove((ulong)player.userID);
             ShowKits(player);
+        }
+
+        #endregion
+
+        #region Команды игрока
+
+        // /kit — открыть витрину; /kit <имя> — забрать набор; /kit edit <имя> — редактор (админ)
+        [ChatCommand("kit")]
+        private void cmdKit(BasePlayer player, string command, string[] args)
+        {
+            if (args != null && args.Length > 0 && !string.IsNullOrEmpty(args[0]))
+            {
+                if (args[0].Equals("edit", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+                {
+                    if (IsKitsAdmin(player))
+                        StartKitEditor(player, string.Join(" ", args.Skip(1)));
+                    else
+                        player.ChatMessage(KitMsg("Error.CanClaim.Permission", player));
+                    return;
+                }
+
+                TryClaimKit(player, string.Join(" ", args), false);
+                return;
+            }
+
+            ShowKits(player);
+        }
+
+        [ConsoleCommand("kit")]
+        private void ccmdKit(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null) return;
+            ShowKits(player);
+        }
+
+        #endregion
+
+        #region Получение набора (автономный бэкенд)
+
+        private const string ADMIN_PERMISSION = "kits.admin";
+        private const string BLUEPRINT_BASE = "blueprintbase";
+        private const int SCRAP_ITEM_ID = -932201673;
+
+        private static Func<BasePlayer, ulong, bool> _canUseSkin;
+        private static Func<BasePlayer, int, int> _getRedirectedIfNotOwned;
+
+        private static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0);
+        private static double LastWipeTime;
+        private static double CurrentTime => DateTime.UtcNow.Subtract(Epoch).TotalSeconds;
+
+        private CostType _costType;
+        private enum CostType { Scrap, ServerRewards, Economics }
+
+        // Локальные сообщения бэкенда (вместо lang-файла Kits)
+        private string KitMsg(string key, BasePlayer player = null)
+        {
+            switch (key)
+            {
+                case "Error.EmptyKitName": return "Название набора не указано";
+                case "Error.InvalidKitName": return "Такого набора не существует";
+                case "Error.CantClaimNow": return "Набор сейчас недоступен";
+                case "Error.CanClaim.Auth": return "Недостаточный уровень авторизации";
+                case "Error.CanClaim.Permission": return "Нет доступа к этому набору";
+                case "Error.CanClaim.WipeCooldown": return "Набор станет доступен через {0}";
+                case "Error.CanClaim.Cooldown": return "Перезарядка — подожди ещё {0}";
+                case "Error.CanClaim.MaxUses": return "Лимит использований набора исчерпан";
+                case "Error.CanClaim.InventorySpace": return "Недостаточно места в инвентаре";
+                case "Error.CanClaim.InsufficientFunds": return "Недостаточно средств — нужно {0} {1}";
+                case "Cost.Scrap": return "металлолом";
+                case "Cost.ServerRewards": return "RP";
+                case "Cost.Economics": return "$";
+                case "EditKit.PermissionPrefix": return "Право доступа должно начинаться с «kits.»";
+                case "EditKit.Number": return "Нужно целое число";
+                case "EditKit.Bool": return "Нужно true или false";
+                default: return key;
+            }
+        }
+
+        private void KitReply(BasePlayer player, string message)
+        {
+            player.ChatMessage($"<color=#E8B84B>OctaKits</color>: {message}");
+        }
+
+        [HookMethod("TryClaimKit")]
+        public bool TryClaimKit(BasePlayer player, string name, bool usingUI)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                KitReply(player, KitMsg("Error.EmptyKitName", player));
+                return false;
+            }
+
+            if (!kitData.Find(name, out KitData.Kit kit))
+            {
+                KitReply(player, KitMsg("Error.InvalidKitName", player));
+                return false;
+            }
+
+            object success = CanClaimKit(player, kit) ?? GiveKit(player, kit);
+            if (success is string s)
+            {
+                KitReply(player, s);
+                return false;
+            }
+
+            OnKitReceived(player, kit);
+            return true;
+        }
+
+        private object CanClaimKit(BasePlayer player, KitData.Kit kit, bool ignoreAuthCost = false)
+        {
+            object success = Interface.Oxide.CallHook("CanRedeemKit", player);
+            if (success != null)
+            {
+                if (success is string s)
+                    return s;
+                return KitMsg("Error.CantClaimNow", player);
+            }
+
+            if (!ignoreAuthCost && kit.RequiredAuth > 0 && player.net.connection.authLevel < kit.RequiredAuth)
+                return KitMsg("Error.CanClaim.Auth", player);
+
+            if (config?.backend?.adminIgnoreRestrictions == true && IsKitsAdmin(player))
+            {
+                if (!kit.HasSpaceForItems(player))
+                    return KitMsg("Error.CanClaim.InventorySpace", player);
+
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(kit.RequiredPermission) && !permission.UserHasPermission(player.UserIDString, kit.RequiredPermission))
+                return KitMsg("Error.CanClaim.Permission", player);
+
+            if (config?.backend?.wipeCooldowns != null && config.backend.wipeCooldowns.TryGetValue(kit.Name, out int wipeCooldownTime))
+            {
+                if (kitData.IsOnWipeCooldown(wipeCooldownTime, out wipeCooldownTime))
+                    return string.Format(KitMsg("Error.CanClaim.WipeCooldown", player), TimeFormated(wipeCooldownTime));
+            }
+
+            if (playerData.Find((ulong)player.userID, out PlayerData.PlayerUsageData playerUsageData))
+            {
+                if (kit.Cooldown > 0)
+                {
+                    double cooldownRemaining = playerUsageData.GetCooldownRemaining(kit.Name);
+                    if (cooldownRemaining > 0)
+                        return string.Format(KitMsg("Error.CanClaim.Cooldown", player), TimeFormated(cooldownRemaining));
+                }
+
+                if (kit.MaximumUses > 0)
+                {
+                    int currentUses = playerUsageData.GetKitUses(kit.Name);
+                    if (currentUses >= kit.MaximumUses)
+                        return KitMsg("Error.CanClaim.MaxUses", player);
+                }
+            }
+
+            if (!kit.HasSpaceForItems(player))
+                return KitMsg("Error.CanClaim.InventorySpace", player);
+
+            if (!ignoreAuthCost && kit.Cost > 0)
+            {
+                if (!ChargePlayer(player, kit.Cost))
+                    return string.Format(KitMsg("Error.CanClaim.InsufficientFunds", player), kit.Cost, KitMsg($"Cost.{_costType}", player));
+            }
+
+            return null;
+        }
+
+        private object GiveKit(BasePlayer player, KitData.Kit kit)
+        {
+            if (!string.IsNullOrEmpty(kit.CopyPasteFile))
+            {
+                object success = CopyPaste?.CallHook("TryPasteFromSteamId", player.userID, kit.CopyPasteFile, config?.backend?.copyPasteParams, null);
+                if (success != null)
+                    return success;
+            }
+
+            kit.GiveItemsTo(player);
+            return true;
+        }
+
+        private void OnKitReceived(BasePlayer player, KitData.Kit kit)
+        {
+            playerData[(ulong)player.userID].OnKitClaimed(kit);
+            SavePlayerData();
+
+            Interface.CallHook("OnKitRedeemed", player, kit.Name);
+
+            if (config?.backend?.logKitsGiven == true)
+                LogToFile("Kits_Received", $"{player.displayName} ({player.userID}) — получил набор {kit.Name}", this);
+        }
+
+        private bool ChargePlayer(BasePlayer player, int amount)
+        {
+            if (amount == 0)
+                return true;
+
+            switch (_costType)
+            {
+                case CostType.Scrap:
+                    if (amount <= player.inventory.GetAmount(SCRAP_ITEM_ID))
+                    {
+                        player.inventory.Take(null, SCRAP_ITEM_ID, amount);
+                        return true;
+                    }
+                    return false;
+                case CostType.ServerRewards:
+                    {
+                        if ((int)(ServerRewards?.Call("CheckPoints", (ulong)player.userID) ?? 0) < amount)
+                            return false;
+
+                        return ServerRewards?.Call("TakePoints", (ulong)player.userID, amount) is bool ok && ok;
+                    }
+                case CostType.Economics:
+                    return Economics?.Call("Withdraw", (ulong)player.userID, (double)amount) is bool ok2 && ok2;
+            }
+            return false;
+        }
+
+        private bool CanUseSkin(BasePlayer player, ulong skinID)
+        {
+            if (skinID == 0UL)
+                return true;
+
+            if (config?.backend?.npcSkins == true && (player.IsNpc || !player.userID.IsSteamId()))
+                return true;
+
+            if (PlayerDLCAPI != null && config?.backend?.ownedSkins == true)
+                return PlayerDLCAPI.Call<bool>("IsOwnedOrFreeSkin", player, skinID);
+
+            return true;
+        }
+
+        private int GetRedirectedShortnameIfNotOwned(BasePlayer player, int itemId)
+        {
+            if (config?.backend?.npcSkins == true && (player.IsNpc || !player.userID.IsSteamId()))
+                return itemId;
+
+            if (PlayerDLCAPI != null && config?.backend?.ownedSkins == true)
+                return PlayerDLCAPI.Call<int>("GetRedirectedItemIdIfNotOwned", player, itemId);
+
+            return itemId;
+        }
+
+        private T ParseType<T>(string type)
+        {
+            try
+            {
+                return (T)Enum.Parse(typeof(T), type, true);
+            }
+            catch
+            {
+                return default(T);
+            }
+        }
+
+        #endregion
+
+        #region Бэкенд редактора наборов
+
+        private Hash<ulong, KitData.Kit> _kitCreators = new Hash<ulong, KitData.Kit>();
+
+        [HookMethod("KitEditorStart")]
+        public object KitEditorStart(BasePlayer player, string kitName)
+        {
+            if (player == null || !IsKitsAdmin(player))
+                return null;
+
+            if (string.IsNullOrEmpty(kitName))
+                _kitCreators[(ulong)player.userID] = new KitData.Kit();
+            else
+            {
+                if (!kitData.Find(kitName, out KitData.Kit editKit))
+                    return null;
+
+                _kitCreators[(ulong)player.userID] = KitData.Kit.CloneOf(editKit);
+            }
+
+            return EditorSnapshot(_kitCreators[(ulong)player.userID]);
+        }
+
+        [HookMethod("KitEditorGet")]
+        public object KitEditorGet(BasePlayer player)
+            => player != null && _kitCreators.TryGetValue((ulong)player.userID, out KitData.Kit kit) ? EditorSnapshot(kit) : (object)null;
+
+        [HookMethod("KitEditorSetField")]
+        public object KitEditorSetField(BasePlayer player, string field, string value)
+        {
+            if (player == null || !IsKitsAdmin(player))
+                return "no-admin";
+
+            if (!_kitCreators.TryGetValue((ulong)player.userID, out KitData.Kit kit))
+                return "no-session";
+
+            if (string.IsNullOrEmpty(value))
+                ClearField(kit, field);
+            else
+            {
+                string error = TrySetParameter(player, kit, field, value);
+                if (error != null)
+                    return error;
+            }
+
+            return EditorSnapshot(kit);
+        }
+
+        [HookMethod("KitEditorCopyInventory")]
+        public object KitEditorCopyInventory(BasePlayer player)
+        {
+            if (player == null || !IsKitsAdmin(player) || !_kitCreators.TryGetValue((ulong)player.userID, out KitData.Kit kit))
+                return null;
+
+            kit.CopyItemsFrom(player);
+            return EditorSnapshot(kit);
+        }
+
+        [HookMethod("KitEditorClearItems")]
+        public object KitEditorClearItems(BasePlayer player)
+        {
+            if (player == null || !IsKitsAdmin(player) || !_kitCreators.TryGetValue((ulong)player.userID, out KitData.Kit kit))
+                return null;
+
+            kit.ClearItems();
+            return EditorSnapshot(kit);
+        }
+
+        [HookMethod("KitEditorSave")]
+        public object KitEditorSave(BasePlayer player, bool overwrite)
+        {
+            if (player == null || !IsKitsAdmin(player))
+                return "no-admin";
+
+            if (!_kitCreators.TryGetValue((ulong)player.userID, out KitData.Kit kit))
+                return "no-session";
+
+            if (string.IsNullOrEmpty(kit.Name))
+                return "no-name";
+
+            if (kit.ItemCount == 0 && string.IsNullOrEmpty(kit.CopyPasteFile))
+                return "no-contents";
+
+            if (kitData.Exists(kit.Name) && !overwrite)
+                return "exists";
+
+            kitData[kit.Name] = kit;
+            SaveKitData();
+
+            _kitCreators.Remove((ulong)player.userID);
+
+            if (!string.IsNullOrEmpty(kit.RequiredPermission) && !permission.PermissionExists(kit.RequiredPermission))
+                permission.RegisterPermission(kit.RequiredPermission, this);
+
+            if (!string.IsNullOrEmpty(kit.KitImage))
+                RegisterKitImage(kit.Name, kit.KitImage);
+
+            return "ok";
+        }
+
+        [HookMethod("KitEditorCancel")]
+        public void KitEditorCancel(BasePlayer player)
+        {
+            if (player != null)
+                _kitCreators.Remove((ulong)player.userID);
+        }
+
+        [HookMethod("KitDelete")]
+        public object KitDelete(BasePlayer player, string kitName)
+        {
+            if (player == null || !IsKitsAdmin(player))
+                return "no-admin";
+
+            if (string.IsNullOrEmpty(kitName) || !kitData.Find(kitName, out KitData.Kit deleteKit))
+                return "not-found";
+
+            kitData.Remove(deleteKit);
+            SaveKitData();
+            return "ok";
+        }
+
+        // Свежий снапшот черновика: Kit.ToJObject кэширует JObject и после мутаций отдавал бы устаревшие данные
+        private static JObject EditorSnapshot(KitData.Kit kit)
+        {
+            JObject obj = new JObject
+            {
+                ["Name"] = kit.Name,
+                ["Description"] = kit.Description,
+                ["RequiredPermission"] = kit.RequiredPermission,
+                ["MaximumUses"] = kit.MaximumUses,
+                ["RequiredAuth"] = kit.RequiredAuth,
+                ["Cooldown"] = kit.Cooldown,
+                ["Cost"] = kit.Cost,
+                ["IsHidden"] = kit.IsHidden,
+                ["CopyPasteFile"] = kit.CopyPasteFile,
+                ["KitImage"] = kit.KitImage,
+                ["MainItems"] = new JArray(),
+                ["WearItems"] = new JArray(),
+                ["BeltItems"] = new JArray()
+            };
+
+            for (int i = 0; i < kit.MainItems.Length; i++)
+                ((JArray)obj["MainItems"]).Add(kit.MainItems[i].ToJObject);
+            for (int i = 0; i < kit.WearItems.Length; i++)
+                ((JArray)obj["WearItems"]).Add(kit.WearItems[i].ToJObject);
+            for (int i = 0; i < kit.BeltItems.Length; i++)
+                ((JArray)obj["BeltItems"]).Add(kit.BeltItems[i].ToJObject);
+
+            return obj;
+        }
+
+        private void ClearField(KitData.Kit kit, string fieldName)
+        {
+            switch (fieldName)
+            {
+                case "name": kit.Name = string.Empty; break;
+                case "description": kit.Description = string.Empty; break;
+                case "copyPaste": kit.CopyPasteFile = string.Empty; break;
+                case "permission": kit.RequiredPermission = string.Empty; break;
+                case "image": kit.KitImage = string.Empty; break;
+                case "cost": kit.Cost = 0; break;
+                case "cooldown": kit.Cooldown = 0; break;
+                case "maximumUses": kit.MaximumUses = 0; break;
+                case "authLevel": kit.RequiredAuth = 0; break;
+                case "isHidden": kit.IsHidden = false; break;
+            }
+        }
+
+        // Возвращает текст ошибки или null
+        private string TrySetParameter(BasePlayer player, KitData.Kit kit, string fieldName, object value)
+        {
+            if (value == null)
+                return null;
+
+            switch (fieldName)
+            {
+                case "name":
+                    kit.Name = (string)value;
+                    return null;
+                case "description":
+                    kit.Description = (string)value;
+                    return null;
+                case "copyPaste":
+                    kit.CopyPasteFile = (string)value;
+                    return null;
+                case "permission":
+                    if (!((string)value).StartsWith("kits."))
+                        return KitMsg("EditKit.PermissionPrefix", player);
+                    kit.RequiredPermission = (string)value;
+                    return null;
+                case "image":
+                    kit.KitImage = (string)value;
+                    return null;
+                case "cost":
+                    {
+                        if (!TryConvertValue(value, out int intValue))
+                            return KitMsg("EditKit.Number", player);
+                        kit.Cost = intValue;
+                        return null;
+                    }
+                case "cooldown":
+                    {
+                        if (!TryConvertValue(value, out int intValue))
+                            return KitMsg("EditKit.Number", player);
+                        kit.Cooldown = intValue;
+                        return null;
+                    }
+                case "maximumUses":
+                    {
+                        if (!TryConvertValue(value, out int intValue))
+                            return KitMsg("EditKit.Number", player);
+                        kit.MaximumUses = intValue;
+                        return null;
+                    }
+                case "authLevel":
+                    {
+                        if (!TryConvertValue(value, out int intValue))
+                            return KitMsg("EditKit.Number", player);
+                        kit.RequiredAuth = Mathf.Clamp(intValue, 0, 2);
+                        return null;
+                    }
+                case "isHidden":
+                    {
+                        if (!TryConvertValue(value, out bool boolValue))
+                            return KitMsg("EditKit.Bool", player);
+                        kit.IsHidden = boolValue;
+                        return null;
+                    }
+                default:
+                    return null;
+            }
+        }
+
+        private bool TryConvertValue<T>(object value, out T result)
+        {
+            try
+            {
+                result = (T)Convert.ChangeType(value, typeof(T));
+                return true;
+            }
+            catch
+            {
+                result = default(T);
+                return false;
+            }
+        }
+
+        #endregion
+
+        #region Публичное API (совместимо с хуками Kits)
+
+        [HookMethod("isKit")]
+        public bool isKit(string name) => IsKit(name);
+
+        [HookMethod("IsKit")]
+        public bool IsKit(string name) => !string.IsNullOrEmpty(name) && kitData != null && kitData.Exists(name);
+
+        [HookMethod("GetAllKits")]
+        public string[] GetAllKits() => kitData?.Keys.ToArray() ?? new string[0];
+
+        [HookMethod("GetKitNames")]
+        public void GetKitNames(List<string> list) { if (kitData != null) list.AddRange(kitData.Keys); }
+
+        [HookMethod("GetKitImage")]
+        public string GetKitImage(string name) => kitData?[name]?.KitImage ?? string.Empty;
+
+        [HookMethod("GetKitDescription")]
+        public string GetKitDescription(string name) => kitData?[name]?.Description ?? string.Empty;
+
+        [HookMethod("GetKitMaxUses")]
+        public int GetKitMaxUses(string name) => kitData?[name]?.MaximumUses ?? 0;
+
+        [HookMethod("GetKitCooldown")]
+        public int GetKitCooldown(string name) => kitData?[name]?.Cooldown ?? 0;
+
+        [HookMethod("GetPlayerKitUses")]
+        public int GetPlayerKitUses(ulong playerId, string name) => playerData != null && playerData.Exists(playerId) ? playerData[playerId].GetKitUses(name) : 0;
+
+        [HookMethod("SetPlayerKitUses")]
+        public void SetPlayerKitUses(ulong playerId, string name, int amount)
+        {
+            if (playerData != null && playerData.Exists(playerId))
+                playerData[playerId].SetKitUses(name, amount);
+        }
+
+        [HookMethod("GetPlayerKitCooldown")]
+        public double GetPlayerKitCooldown(ulong playerId, string name) => playerData != null && playerData.Exists(playerId) ? playerData[playerId].GetCooldownRemaining(name) : 0;
+
+        [HookMethod("SetPlayerKitCooldown")]
+        public void SetPlayerCooldown(ulong playerId, string name, double seconds)
+        {
+            if (playerData != null && playerData.Exists(playerId))
+                playerData[playerId].SetCooldownRemaining(name, seconds);
+        }
+
+        [HookMethod("GetKitObject")]
+        public JObject GetKitObject(string name)
+        {
+            if (kitData == null || !kitData.Find(name, out KitData.Kit kit))
+                return null;
+
+            return kit.ToJObject;
+        }
+
+        [HookMethod("GiveKit")]
+        public object GiveKit(BasePlayer player, string name)
+        {
+            if (!player)
+                return null;
+
+            if (string.IsNullOrEmpty(name))
+                return KitMsg("Error.EmptyKitName", player);
+
+            if (!kitData.Find(name, out KitData.Kit kit))
+                return KitMsg("Error.InvalidKitName", player);
+
+            return GiveKit(player, kit);
+        }
+
+        [HookMethod("CreateKitItems")]
+        public IEnumerable<Item> CreateKitItems(string name)
+        {
+            if (kitData == null || !kitData.Find(name, out KitData.Kit kit))
+                yield break;
+
+            foreach (Item item in kit.CreateItems())
+                yield return item;
+        }
+
+        // Алиасы для совместимости со старыми вызовами
+        [HookMethod("KitImage")]
+        public string KitImage(string name) => GetKitImage(name);
+
+        [HookMethod("KitDescription")]
+        public string KitDescription(string name) => GetKitDescription(name);
+
+        [HookMethod("KitMax")]
+        public int KitMax(string name) => GetKitMaxUses(name);
+
+        [HookMethod("KitCooldown")]
+        public double KitCooldown(string name) => GetKitCooldown(name);
+
+        [HookMethod("PlayerKitMax")]
+        public int PlayerKitMax(ulong playerId, string name) => GetPlayerKitUses(playerId, name);
+
+        [HookMethod("PlayerKitCooldown")]
+        public double PlayerKitCooldown(ulong playerId, string name) => GetPlayerKitCooldown(playerId, name);
+
+        [HookMethod("GetKitContents")]
+        public string[] GetKitContents(string name)
+        {
+            if (kitData == null || !kitData.Find(name, out KitData.Kit kit))
+                return null;
+
+            List<string> items = Pool.Get<List<string>>();
+
+            void Append(List<string> list, ItemData[] itemData)
+            {
+                for (int i = 0; i < itemData.Length; i++)
+                {
+                    ItemData item = itemData[i];
+                    string itemstring = $"{item.ItemID}_{item.Amount}";
+
+                    if (item.Contents is { Length: > 0 })
+                    {
+                        for (int j = 0; j < item.Contents.Length; j++)
+                            itemstring += $"_{item.Contents[j].ItemID}";
+                    }
+
+                    if (item.Container != null && item.Container.contents.Count > 0)
+                    {
+                        for (int j = 0; j < item.Container.contents.Count; j++)
+                            itemstring += $"_{item.Container.contents[j].ItemID}";
+                    }
+
+                    list.Add(itemstring);
+                }
+            }
+
+            Append(items, kit.BeltItems);
+            Append(items, kit.MainItems);
+            Append(items, kit.WearItems);
+
+            string[] array = items.ToArray();
+            Pool.FreeUnmanaged(ref items);
+            return array;
+        }
+
+        [HookMethod("GetKitInfo")]
+        public object GetKitInfo(string name)
+        {
+            if (kitData == null || !kitData.Find(name, out KitData.Kit kit))
+                return null;
+
+            JObject obj = new JObject
+            {
+                ["name"] = kit.Name,
+                ["permission"] = kit.RequiredPermission,
+                ["max"] = kit.MaximumUses,
+                ["image"] = kit.KitImage,
+                ["hide"] = kit.IsHidden,
+                ["description"] = kit.Description,
+                ["cooldown"] = kit.Cooldown,
+                ["building"] = kit.CopyPasteFile,
+                ["authlevel"] = kit.RequiredAuth
+            };
+
+            JArray array = new JArray();
+            GetItemObject_Old(ref array, kit.BeltItems, "belt");
+            GetItemObject_Old(ref array, kit.MainItems, "main");
+            GetItemObject_Old(ref array, kit.WearItems, "wear");
+
+            obj["items"] = array;
+            return obj;
+        }
+
+        private void GetItemObject_Old(ref JArray array, ItemData[] items, string container)
+        {
+            for (int i = 0; i < items.Length; i++)
+            {
+                ItemData itemData = items[i];
+                JObject item = new JObject
+                {
+                    ["amount"] = itemData.Amount,
+                    ["container"] = container,
+                    ["itemid"] = itemData.ItemID,
+                    ["skinid"] = itemData.Skin,
+                    ["weapon"] = !string.IsNullOrEmpty(itemData.Ammotype),
+                    ["blueprint"] = itemData.BlueprintItemID,
+                    ["mods"] = new JArray()
+                };
+
+                if (itemData.Contents is { Length: > 0 })
+                {
+                    for (int i1 = 0; i1 < itemData.Contents.Length; i1++)
+                        (item["mods"] as JArray).Add(itemData.Contents[i1].ItemID);
+                }
+
+                if (itemData.Container != null && itemData.Container.contents.Count > 0)
+                {
+                    for (int i3 = 0; i3 < itemData.Container.contents.Count; i3++)
+                        (item["mods"] as JArray).Add(itemData.Container.contents[i3].ItemID);
+                }
+
+                array.Add(item);
+            }
+        }
+
+        #endregion
+
+        #region Хранение данных и миграция из Kits
+
+        private KitData kitData;
+        private PlayerData playerData;
+
+        private DynamicConfigFile kitsFile;
+        private DynamicConfigFile playersFile;
+
+        private void SaveKitData() => kitsFile?.WriteObject(kitData);
+        private void SavePlayerData() => playersFile?.WriteObject(playerData);
+
+        private void LoadKitData()
+        {
+            kitsFile = Interface.Oxide.DataFileSystem.GetFile("OctaKits/kits_data");
+            kitData = kitsFile.ReadObject<KitData>();
+
+            if (!kitData?.IsValid ?? true)
+            {
+                // Миграция: подхватываем наборы из данных старого плагина Kits (схема совместима)
+                kitData = null;
+                if (Interface.Oxide.DataFileSystem.ExistsDatafile("Kits/kits_data"))
+                {
+                    try
+                    {
+                        kitData = Interface.Oxide.DataFileSystem.GetFile("Kits/kits_data").ReadObject<KitData>();
+                        if (kitData?.IsValid == true)
+                        {
+                            Puts($"Миграция: перенесено {kitData.Count} наборов из Kits/kits_data.json");
+                            SaveKitData();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        PrintWarning($"Ошибка миграции наборов из Kits: {ex.Message}");
+                        kitData = null;
+                    }
+                }
+            }
+
+            if (!kitData?.IsValid ?? true)
+                kitData = new KitData();
+        }
+
+        private void LoadPlayerData()
+        {
+            playersFile = Interface.Oxide.DataFileSystem.GetFile("OctaKits/player_data");
+            playerData = playersFile.ReadObject<PlayerData>();
+
+            if (!playerData?.IsValid ?? true)
+            {
+                // Миграция статистики использований/кулдаунов из старого Kits
+                playerData = null;
+                if (Interface.Oxide.DataFileSystem.ExistsDatafile("Kits/player_data"))
+                {
+                    try
+                    {
+                        playerData = Interface.Oxide.DataFileSystem.GetFile("Kits/player_data").ReadObject<PlayerData>();
+                        if (playerData?.IsValid == true)
+                        {
+                            Puts("Миграция: перенесены данные игроков из Kits/player_data.json");
+                            SavePlayerData();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        PrintWarning($"Ошибка миграции данных игроков из Kits: {ex.Message}");
+                        playerData = null;
+                    }
+                }
+            }
+
+            if (!playerData?.IsValid ?? true)
+                playerData = new PlayerData();
+        }
+
+        private void RegisterKitImage(string name, string url) => ImageLibrary?.Call("AddImage", url, name.Replace(" ", ""), 0UL, null);
+
+        // Поправки устаревших shortname в данных наборов — чтобы старые наборы не ломались после обновлений Rust
+        private void CheckForShortnameUpdates()
+        {
+            bool hasChanges = false;
+
+            kitData.ForEach(kit =>
+            {
+                Action<ItemData[]> action = (items =>
+                {
+                    for (int i = 0; i < items.Length; i++)
+                    {
+                        ItemData kitItem = items[i];
+
+                        if (!string.IsNullOrEmpty(kitItem.Shortname) && _itemShortnameReplacements.TryGetValue(kitItem.Shortname, out string replacement))
+                        {
+                            kitItem.Shortname = replacement;
+                            hasChanges = true;
+                        }
+                    }
+                });
+
+                action(kit.BeltItems);
+                action(kit.WearItems);
+                action(kit.MainItems);
+            });
+
+            if (hasChanges)
+                SaveKitData();
+        }
+
+        private readonly Dictionary<string, string> _itemShortnameReplacements = new Dictionary<string, string>
+        {
+            ["chocholate"] = "chocolate",
+            ["medsyringe"] = "syringe.medical",
+            ["key.lock"] = "lock.key"
+        };
+
+        #endregion
+
+        #region Модель данных (порт из Kits — схема JSON совместима)
+
+        private class KitData
+        {
+            [JsonProperty]
+            private Dictionary<string, Kit> _kits = new Dictionary<string, Kit>(StringComparer.OrdinalIgnoreCase);
+
+            internal Kit this[string key]
+            {
+                get
+                {
+                    if (_kits.TryGetValue(key, out Kit tValue))
+                        return tValue;
+
+                    return null;
+                }
+                set
+                {
+                    if (value == null)
+                    {
+                        _kits.Remove(key);
+                        return;
+                    }
+                    _kits[key] = value;
+                }
+            }
+
+            internal int Count => _kits.Count;
+
+            internal bool Find(string name, out Kit kit) => _kits.TryGetValue(name, out kit);
+
+            internal bool Exists(string name) => _kits.ContainsKey(name);
+
+            internal ICollection<string> Keys => _kits.Keys;
+
+            internal ICollection<Kit> Values => _kits.Values;
+
+            internal void ForEach(Action<Kit> action)
+            {
+                foreach (Kit kit in Values)
+                {
+                    action.Invoke(kit);
+                }
+            }
+
+            internal void RegisterPermissions(Permission permission, Plugin plugin)
+            {
+                foreach (Kit kit in _kits.Values)
+                {
+                    if (!string.IsNullOrEmpty(kit.RequiredPermission))
+                    {
+                        if (!permission.PermissionExists(kit.RequiredPermission, plugin))
+                            permission.RegisterPermission(kit.RequiredPermission, plugin);
+                    }
+                }
+            }
+
+            internal void RegisterImages(Plugin plugin)
+            {
+                Dictionary<string, string> loadOrder = new Dictionary<string, string>();
+
+                foreach (Kit kit in _kits.Values)
+                {
+                    if (!string.IsNullOrEmpty(kit.KitImage))
+                        loadOrder[kit.Name.Replace(" ", "")] = kit.KitImage;
+                }
+
+                if (loadOrder.Count > 0)
+                    plugin?.CallHook("ImportImageList", "OctaKits", loadOrder, 0UL, true, null);
+            }
+
+            internal bool IsOnWipeCooldown(int seconds, out int remaining)
+            {
+                double currentTime = CurrentTime;
+                double nextUseTime = LastWipeTime + seconds;
+
+                if (currentTime < nextUseTime)
+                {
+                    remaining = Mathf.RoundToInt((float)nextUseTime - (float)currentTime);
+                    return true;
+                }
+
+                remaining = 0;
+                return false;
+            }
+
+            internal void Remove(Kit kit) => _kits.Remove(kit.Name);
+
+            internal bool IsValid => _kits != null;
+
+            public class Kit
+            {
+                public string Name { get; set; } = string.Empty;
+                public string Description { get; set; } = string.Empty;
+                public string RequiredPermission { get; set; } = string.Empty;
+
+                public int MaximumUses { get; set; }
+                public int RequiredAuth { get; set; }
+                public int Cooldown { get; set; }
+                public int Cost { get; set; }
+
+                public bool IsHidden { get; set; }
+
+                public string CopyPasteFile { get; set; } = string.Empty;
+                public string KitImage { get; set; } = string.Empty;
+
+                public ItemData[] MainItems { get; set; } = new ItemData[0];
+                public ItemData[] WearItems { get; set; } = new ItemData[0];
+                public ItemData[] BeltItems { get; set; } = new ItemData[0];
+
+                [JsonIgnore]
+                internal int ItemCount => MainItems.Length + WearItems.Length + BeltItems.Length;
+
+                [JsonIgnore]
+                private JObject _jObject;
+
+                [JsonIgnore]
+                internal JObject ToJObject
+                {
+                    get
+                    {
+                        if (_jObject == null)
+                        {
+                            _jObject = new JObject
+                            {
+                                ["Name"] = Name,
+                                ["Description"] = Description,
+                                ["RequiredPermission"] = RequiredPermission,
+                                ["MaximumUses"] = MaximumUses,
+                                ["RequiredAuth"] = RequiredAuth,
+                                ["Cooldown"] = Cooldown,
+                                ["Cost"] = Cost,
+                                ["IsHidden"] = IsHidden,
+                                ["CopyPasteFile"] = CopyPasteFile,
+                                ["KitImage"] = KitImage,
+                                ["MainItems"] = new JArray(),
+                                ["WearItems"] = new JArray(),
+                                ["BeltItems"] = new JArray()
+                            };
+
+                            for (int i = 0; i < MainItems.Length; i++)
+                                (_jObject["MainItems"] as JArray).Add(MainItems[i].ToJObject);
+
+                            for (int i = 0; i < WearItems.Length; i++)
+                                (_jObject["WearItems"] as JArray).Add(WearItems[i].ToJObject);
+
+                            for (int i = 0; i < BeltItems.Length; i++)
+                                (_jObject["BeltItems"] as JArray).Add(BeltItems[i].ToJObject);
+                        }
+
+                        return _jObject;
+                    }
+                }
+
+                internal static Kit CloneOf(Kit other)
+                {
+                    Kit kit = new Kit();
+
+                    kit.Name = other.Name;
+                    kit.Description = other.Description;
+                    kit.RequiredPermission = other.RequiredPermission;
+
+                    kit.MaximumUses = other.MaximumUses;
+                    kit.RequiredAuth = other.RequiredAuth;
+                    kit.Cooldown = other.Cooldown;
+                    kit.Cost = other.Cost;
+
+                    kit.IsHidden = other.IsHidden;
+
+                    kit.CopyPasteFile = other.CopyPasteFile;
+                    kit.KitImage = other.KitImage;
+
+                    kit.MainItems = new ItemData[other.MainItems.Length];
+                    Array.Copy(other.MainItems, kit.MainItems, other.MainItems.Length);
+
+                    kit.WearItems = new ItemData[other.WearItems.Length];
+                    Array.Copy(other.WearItems, kit.WearItems, other.WearItems.Length);
+
+                    kit.BeltItems = new ItemData[other.BeltItems.Length];
+                    Array.Copy(other.BeltItems, kit.BeltItems, other.BeltItems.Length);
+
+                    return kit;
+                }
+
+                internal bool HasSpaceForItems(BasePlayer player)
+                {
+                    int wearSpacesFree = 8 - player.inventory.containerWear.itemList.Count;
+                    int mainSpacesFree = 24 - player.inventory.containerMain.itemList.Count;
+                    int beltSpacesFree = 6 - player.inventory.containerBelt.itemList.Count;
+
+                    return (wearSpacesFree >= WearItems.Length &&
+                            beltSpacesFree >= BeltItems.Length &&
+                            mainSpacesFree >= MainItems.Length) || ItemCount <= mainSpacesFree + beltSpacesFree;
+                }
+
+                internal void GiveItemsTo(BasePlayer player)
+                {
+                    List<ItemData> list = Pool.Get<List<ItemData>>();
+
+                    GiveItems(player, MainItems, player.inventory.containerMain, ref list);
+                    GiveItems(player, WearItems, player.inventory.containerWear, ref list, true);
+                    GiveItems(player, BeltItems, player.inventory.containerBelt, ref list);
+
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        Item item = CreateItem(list[i], player);
+                        if (item == null) continue;
+
+                        if (!MoveToIdealContainer(player.inventory, item) && !item.MoveToContainer(player.inventory.containerMain) && !item.MoveToContainer(player.inventory.containerBelt))
+                            item.Drop(player.GetDropPosition(), player.GetDropVelocity());
+                    }
+
+                    Pool.FreeUnmanaged(ref list);
+                }
+
+                private void GiveItems(BasePlayer player, ItemData[] items, ItemContainer container, ref List<ItemData> leftOverItems, bool isWearContainer = false)
+                {
+                    for (int i = 0; i < items.Length; i++)
+                    {
+                        ItemData itemData = items[i];
+                        if (itemData.Amount < 1)
+                            continue;
+
+                        if (container.GetSlot(itemData.Position) != null)
+                            leftOverItems.Add(itemData);
+                        else
+                        {
+                            Item item = CreateItem(itemData, player);
+                            if (item == null) continue;
+                            if (!isWearContainer || (item.info.isWearable && CanWearItem(container, item)))
+                            {
+                                item.position = itemData.Position;
+                                item.SetParent(container);
+                            }
+                            else
+                            {
+                                leftOverItems.Add(itemData);
+                                item.Remove();
+                            }
+                        }
+                    }
+                }
+
+                internal IEnumerable<Item> CreateItems()
+                {
+                    for (int i = 0; i < MainItems.Length; i++)
+                    {
+                        ItemData itemData = MainItems[i];
+                        if (itemData.Amount > 0)
+                        {
+                            Item item = CreateItem(itemData);
+                            if (item != null) yield return item;
+                        }
+                    }
+
+                    for (int i = 0; i < WearItems.Length; i++)
+                    {
+                        ItemData itemData = WearItems[i];
+                        if (itemData.Amount > 0)
+                        {
+                            Item item = CreateItem(itemData);
+                            if (item != null) yield return item;
+                        }
+                    }
+
+                    for (int i = 0; i < BeltItems.Length; i++)
+                    {
+                        ItemData itemData = BeltItems[i];
+                        if (itemData.Amount > 0)
+                        {
+                            Item item = CreateItem(itemData);
+                            if (item != null) yield return item;
+                        }
+                    }
+                }
+
+                private bool MoveToIdealContainer(PlayerInventory playerInventory, Item item)
+                {
+                    if (item.info.isWearable && CanWearItem(playerInventory.containerWear, item))
+                        return item.MoveToContainer(playerInventory.containerWear, -1, false);
+
+                    if (item.info.stackable > 1)
+                    {
+                        if (playerInventory.containerBelt?.FindItemByItemID(item.info.itemid) != null)
+                            return item.MoveToContainer(playerInventory.containerBelt);
+
+                        if (playerInventory.containerMain?.FindItemByItemID(item.info.itemid) != null)
+                            return item.MoveToContainer(playerInventory.containerMain);
+                    }
+                    if (item.info.HasFlag(ItemDefinition.Flag.NotStraightToBelt) || !item.info.isUsable)
+                        return item.MoveToContainer(playerInventory.containerMain);
+
+                    return item.MoveToContainer(playerInventory.containerBelt, -1, false);
+                }
+
+                private bool CanWearItem(ItemContainer containerWear, Item item)
+                {
+                    ItemModWearable itemModWearable = item.info.GetComponent<ItemModWearable>();
+                    if (!itemModWearable)
+                        return false;
+
+                    for (int i = 0; i < containerWear.itemList.Count; i++)
+                    {
+                        Item otherItem = containerWear.itemList[i];
+                        if (otherItem != null)
+                        {
+                            ItemModWearable otherModWearable = otherItem.info.GetComponent<ItemModWearable>();
+                            if (otherModWearable && !itemModWearable.CanExistWith(otherModWearable))
+                                return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                internal void CopyItemsFrom(BasePlayer player)
+                {
+                    ItemData[] array = MainItems;
+                    CopyItems(ref array, player.inventory.containerMain, 24);
+                    MainItems = array;
+
+                    array = WearItems;
+                    CopyItems(ref array, player.inventory.containerWear, 8);
+                    WearItems = array;
+
+                    array = BeltItems;
+                    CopyItems(ref array, player.inventory.containerBelt, 6);
+                    BeltItems = array;
+                }
+
+                private void CopyItems(ref ItemData[] array, ItemContainer container, int limit)
+                {
+                    limit = Mathf.Min(container.itemList.Count, limit);
+
+                    array = new ItemData[limit];
+
+                    for (int i = 0; i < limit; i++)
+                        array[i] = new ItemData(container.itemList[i]);
+                }
+
+                internal void ClearItems()
+                {
+                    MainItems = Array.Empty<ItemData>();
+                    WearItems = Array.Empty<ItemData>();
+                    BeltItems = Array.Empty<ItemData>();
+                }
+            }
+        }
+
+        private class PlayerData
+        {
+            [JsonProperty]
+            private Dictionary<ulong, PlayerUsageData> _players = new Dictionary<ulong, PlayerUsageData>();
+
+            internal bool Find(ulong playerId, out PlayerUsageData playerUsageData) => _players.TryGetValue(playerId, out playerUsageData);
+
+            internal bool Exists(ulong playerId) => _players.ContainsKey(playerId);
+
+            internal PlayerUsageData this[ulong key]
+            {
+                get
+                {
+                    if (_players.TryGetValue(key, out PlayerUsageData tValue))
+                        return tValue;
+
+                    tValue = (PlayerUsageData)Activator.CreateInstance(typeof(PlayerUsageData));
+                    _players.Add(key, tValue);
+                    return tValue;
+                }
+                set
+                {
+                    if (value == null)
+                    {
+                        _players.Remove(key);
+                        return;
+                    }
+                    _players[key] = value;
+                }
+            }
+
+            internal void OnKitClaimed(ulong playerId, KitData.Kit kit)
+            {
+                if (kit.MaximumUses == 0 && kit.Cooldown == 0)
+                    return;
+
+                if (!_players.TryGetValue(playerId, out PlayerUsageData playerUsageData))
+                    playerUsageData = _players[playerId] = new PlayerUsageData();
+
+                playerUsageData.OnKitClaimed(kit);
+            }
+
+            internal bool ClearKitUses(ulong playerId, KitData.Kit kit)
+            {
+                if (!_players.TryGetValue(playerId, out PlayerUsageData playerUsageData))
+                    return false;
+
+                playerUsageData.ClearKitUses(kit.Name);
+                return true;
+            }
+
+            internal void Wipe() => _players.Clear();
+
+            internal bool IsValid => _players != null;
+
+            public class PlayerUsageData
+            {
+                [JsonProperty]
+                private Hash<string, KitUsageData> _usageData = new Hash<string, KitUsageData>();
+
+                public bool ClaimAutoKits { get; set; } = true;
+
+                internal double GetCooldownRemaining(string name)
+                {
+                    if (!_usageData.TryGetValue(name, out KitUsageData kitUsageData))
+                        return 0;
+
+                    double currentTime = CurrentTime;
+
+                    return currentTime > kitUsageData.NextUseTime ? 0 : kitUsageData.NextUseTime - CurrentTime;
+                }
+
+                internal void SetCooldownRemaining(string name, double seconds)
+                {
+                    if (!_usageData.TryGetValue(name, out KitUsageData kitUsageData))
+                        return;
+
+                    kitUsageData.NextUseTime = CurrentTime + seconds;
+                }
+
+                internal int GetKitUses(string name)
+                {
+                    if (!_usageData.TryGetValue(name, out KitUsageData kitUsageData))
+                        return 0;
+
+                    return kitUsageData.TotalUses;
+                }
+
+                internal void SetKitUses(string name, int amount)
+                {
+                    if (!_usageData.TryGetValue(name, out KitUsageData kitUsageData))
+                        return;
+
+                    kitUsageData.TotalUses = amount;
+                }
+
+                internal void ClearKitUses(string name)
+                {
+                    if (!_usageData.TryGetValue(name, out KitUsageData kitUsageData))
+                        return;
+
+                    kitUsageData.TotalUses = 0;
+                    kitUsageData.NextUseTime = 0;
+                }
+
+                internal void OnKitClaimed(KitData.Kit kit)
+                {
+                    if (!_usageData.TryGetValue(kit.Name, out KitUsageData kitUsageData))
+                        kitUsageData = _usageData[kit.Name] = new KitUsageData();
+
+                    kitUsageData.OnKitClaimed(kit.Cooldown);
+                }
+
+                public class KitUsageData
+                {
+                    public int TotalUses { get; set; }
+
+                    public double NextUseTime { get; set; }
+
+                    internal void OnKitClaimed(int cooldownSeconds)
+                    {
+                        TotalUses += 1;
+                        NextUseTime = CurrentTime + cooldownSeconds;
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+        #region Сериализация предметов (порт из Kits)
+
+        private static Item CreateItem(ItemData itemData, BasePlayer player = null)
+        {
+            int itemId = itemData.ItemID;
+            if (itemId <= 0)
+            {
+                Debug.LogWarning($"[OctaKits] Предмет '{itemData.Shortname}' не найден в ItemDictionary — пропускаем");
+                return null;
+            }
+
+            ulong skin = itemData.Skin;
+
+            if (player)
+            {
+                itemId = _getRedirectedIfNotOwned(player, itemData.ItemID);
+                skin = _canUseSkin(player, itemData.Skin) ? itemData.Skin : 0UL;
+            }
+
+            Item item = ItemManager.CreateByItemID(itemId, itemData.Amount, skin);
+
+            if (!string.IsNullOrEmpty(itemData.DisplayName))
+                item.name = itemData.DisplayName;
+
+            if (!string.IsNullOrEmpty(itemData.Text))
+                item.text = itemData.Text;
+
+            // Прочность применяем только если она задана в данных набора (MaxCondition > 0);
+            // иначе непрописанные в редакторе значения 0/0 выдавали бы сломанные предметы
+            if (itemData.MaxCondition > 0f && item.info.condition.enabled)
+            {
+                item.maxCondition = itemData.MaxCondition;
+                item.condition = itemData.Condition > 0f ? itemData.Condition : itemData.MaxCondition;
+            }
+
+            if (itemData.Frequency > 0)
+            {
+                ItemModRFListener rfListener = item.info.GetComponentInChildren<ItemModRFListener>();
+                if (rfListener)
+                    (BaseNetworkable.serverEntities.Find(item.instanceData.subEntity) as PagerEntity)?.ChangeFrequency(itemData.Frequency);
+            }
+
+            if (itemData.BlueprintItemID > 0)
+            {
+                if (item.instanceData == null)
+                    item.instanceData = new ProtoBuf.Item.InstanceData();
+
+                item.instanceData.ShouldPool = false;
+
+                item.instanceData.blueprintAmount = 1;
+                item.instanceData.blueprintTarget = itemData.BlueprintItemID;
+
+                item.MarkDirty();
+            }
+
+            FlameThrower flameThrower = item.GetHeldEntity() as FlameThrower;
+            if (flameThrower)
+                flameThrower.ammo = itemData.Ammo;
+
+            if (itemData.Contents != null)
+            {
+                foreach (ItemData contentData in itemData.Contents)
+                {
+                    Item newContent = CreateItem(contentData, player);
+                    if (newContent != null)
+                    {
+                        if (!newContent.MoveToContainer(item.contents))
+                            newContent.Remove();
+                    }
+                }
+            }
+
+            if (itemData.Container != null)
+            {
+                if (item.contents == null)
+                {
+                    ItemModContainerArmorSlot armorSlot = FindItemMod<ItemModContainerArmorSlot>(item);
+                    if (armorSlot)
+                        armorSlot.CreateAtCapacity(itemData.Container.slots, item);
+                    else
+                    {
+                        item.contents = Pool.Get<ItemContainer>();
+                        item.contents.ServerInitialize(item, itemData.Container.slots);
+                        item.contents.GiveUID();
+                    }
+                }
+                itemData.Container.Load(item.contents);
+            }
+
+            BaseProjectile weapon = item.GetHeldEntity() as BaseProjectile;
+            if (weapon)
+            {
+                weapon.DelayedModsChanged();
+
+                if (!string.IsNullOrEmpty(itemData.Ammotype))
+                    weapon.primaryMagazine.ammoType = ItemManager.FindItemDefinition(itemData.Ammotype);
+                weapon.primaryMagazine.contents = itemData.Ammo;
+            }
+
+            item.MarkDirty();
+
+            return item;
+        }
+
+        private static T FindItemMod<T>(Item item) where T : ItemMod
+        {
+            foreach (ItemMod itemMod in item.info.itemMods)
+            {
+                if (itemMod is T mod)
+                    return mod;
+            }
+
+            return null;
+        }
+
+        // availableSlots — приватное поле ItemContainer в стоковых сборках; Carbon его
+        // паблицит, но чтобы плагин собирался и без паблицинга — обходим рефлексией
+        private static readonly FieldInfo _availableSlotsField =
+            typeof(global::ItemContainer).GetField("availableSlots", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+
+        private static System.Collections.IList GetAvailableSlots(global::ItemContainer container)
+            => _availableSlotsField?.GetValue(container) as System.Collections.IList;
+
+        public class ItemData
+        {
+            public string Shortname { get; set; }
+
+            public string DisplayName { get; set; }
+
+            public ulong Skin { get; set; }
+
+            public int Amount { get; set; }
+
+            public float Condition { get; set; }
+
+            public float MaxCondition { get; set; }
+
+            public int Ammo { get; set; }
+
+            public string Ammotype { get; set; }
+
+            public int Position { get; set; }
+
+            public int Frequency { get; set; }
+
+            public string BlueprintShortname { get; set; }
+
+            public string Text { get; set; }
+
+            public ItemData[] Contents { get; set; }
+
+            public ItemContainer Container { get; set; }
+
+
+            [JsonIgnore]
+            private int _itemId;
+
+            [JsonIgnore]
+            private int _blueprintItemId;
+
+            [JsonIgnore]
+            private JObject _jObject;
+
+
+            [JsonIgnore]
+            internal int ItemID
+            {
+                get
+                {
+                    if (_itemId == 0)
+                    {
+                        // устаревший/переименованный shortname не должен ронять выдачу всего набора
+                        ItemDefinition def = null;
+                        if (!string.IsNullOrEmpty(Shortname))
+                            ItemManager.itemDictionaryByName.TryGetValue(Shortname, out def);
+                        _itemId = def != null ? def.itemid : -1;
+                    }
+                    return _itemId;
+                }
+            }
+
+            [JsonIgnore]
+            internal bool IsBlueprint => !string.IsNullOrEmpty(Shortname) && Shortname.Equals(BLUEPRINT_BASE);
+
+            [JsonIgnore]
+            internal int BlueprintItemID
+            {
+                get
+                {
+                    if (_blueprintItemId == 0 && !string.IsNullOrEmpty(BlueprintShortname))
+                    {
+                        ItemDefinition def = null;
+                        ItemManager.itemDictionaryByName.TryGetValue(BlueprintShortname, out def);
+                        _blueprintItemId = def != null ? def.itemid : -1;
+                    }
+                    return _blueprintItemId;
+                }
+            }
+
+            [JsonIgnore]
+            internal JObject ToJObject
+            {
+                get
+                {
+                    if (_jObject == null)
+                    {
+                        _jObject = new JObject
+                        {
+                            ["Shortname"] = Shortname,
+                            ["DisplayName"] = DisplayName,
+                            ["SkinID"] = Skin,
+                            ["Amount"] = Amount,
+                            ["Condition"] = Condition,
+                            ["MaxCondition"] = MaxCondition,
+                            ["IsBlueprint"] = BlueprintItemID != 0,
+                            ["Ammo"] = Ammo,
+                            ["AmmoType"] = Ammotype,
+                            ["Text"] = Text,
+                            ["Contents"] = new JArray()
+                        };
+
+                        for (int i = 0; i < Contents?.Length; i++)
+                            (_jObject["Contents"] as JArray).Add(Contents[i].ToJObject);
+
+                        if (Container != null && Container.contents != null && Container.contents.Count > 0)
+                        {
+                            for (int i = 0; i < Container.contents.Count; i++)
+                                (_jObject["Contents"] as JArray).Add(Container.contents[i].ToJObject);
+                        }
+                    }
+
+                    return _jObject;
+                }
+            }
+
+            internal ItemData()
+            {
+            }
+
+            internal ItemData(Item item)
+            {
+                Shortname = item.info.shortname;
+                Amount = item.amount;
+                DisplayName = item.name;
+                Text = item.text;
+
+                BaseEntity heldEntity = item.GetHeldEntity();
+                if (heldEntity)
+                {
+                    Ammotype = heldEntity is BaseProjectile projectile ? projectile.primaryMagazine.ammoType.shortname : null;
+                    Ammo = heldEntity is BaseProjectile baseProjectile ? baseProjectile.primaryMagazine.contents :
+                        heldEntity is FlameThrower thrower ? thrower.ammo : 0;
+                }
+
+                Position = item.position;
+                Skin = item.skin;
+
+                Condition = item.condition;
+                MaxCondition = item.maxCondition;
+
+                Frequency = ItemModAssociatedEntity<PagerEntity>.GetAssociatedEntity(item)?.GetFrequency() ?? -1;
+
+                if (item.instanceData != null && item.instanceData.blueprintTarget != 0)
+                    BlueprintShortname = ItemManager.FindItemDefinition(item.instanceData.blueprintTarget).shortname;
+
+                if (item.contents != null)
+                    Container = new ItemContainer(item.contents);
+            }
+
+            public class ItemContainer
+            {
+                public int slots;
+                public float temperature;
+                public int flags;
+                public int allowedContents;
+                public int maxStackSize;
+                public List<int> allowedItems;
+                public List<int> availableSlots;
+                public int volume;
+                public List<ItemData> contents;
+
+                public ItemContainer() { }
+
+                public ItemContainer(global::ItemContainer container)
+                {
+                    contents = new List<ItemData>();
+                    slots = container.capacity;
+                    temperature = container.temperature;
+                    allowedContents = (int)container.allowedContents;
+
+                    if (container.HasLimitedAllowedItems)
+                    {
+                        allowedItems = new List<int>();
+                        for (int i = 0; i < container.onlyAllowedItems.Length; i++)
+                        {
+                            if (container.onlyAllowedItems[i])
+                            {
+                                allowedItems.Add(container.onlyAllowedItems[i].itemid);
+                            }
+                        }
+                    }
+
+                    flags = (int)container.flags;
+                    maxStackSize = container.maxStackSize;
+                    volume = container.containerVolume;
+
+                    var srcSlots = GetAvailableSlots(container);
+                    if (srcSlots is { Count: > 0 })
+                    {
+                        availableSlots = new List<int>();
+                        for (int j = 0; j < srcSlots.Count; j++)
+                        {
+                            availableSlots.Add((int)srcSlots[j]);
+                        }
+                    }
+
+                    for (int k = 0; k < container.itemList.Count; k++)
+                    {
+                        Item item = container.itemList[k];
+                        if (item.IsValid())
+                        {
+                            contents.Add(new ItemData(item));
+                        }
+                    }
+                }
+
+                public void Load(global::ItemContainer itemContainer)
+                {
+                    itemContainer.capacity = slots;
+                    itemContainer.itemList = Pool.Get<List<Item>>();
+                    itemContainer.temperature = temperature;
+                    itemContainer.flags = (global::ItemContainer.Flag)flags;
+                    itemContainer.allowedContents = (global::ItemContainer.ContentsType)((allowedContents == 0) ? 1 : allowedContents);
+
+                    if (allowedItems is { Count: > 0 })
+                    {
+                        itemContainer.onlyAllowedItems = new ItemDefinition[allowedItems.Count];
+                        for (int i = 0; i < allowedItems.Count; i++)
+                        {
+                            itemContainer.onlyAllowedItems[i] = ItemManager.FindItemDefinition(allowedItems[i]);
+                        }
+                    }
+                    else
+                    {
+                        itemContainer.onlyAllowedItems = null;
+                    }
+
+                    itemContainer.maxStackSize = maxStackSize;
+                    itemContainer.containerVolume = volume;
+
+                    var dstSlots = GetAvailableSlots(itemContainer);
+                    if (dstSlots != null)
+                    {
+                        dstSlots.Clear();
+
+                        if (availableSlots != null)
+                        {
+                            for (int j = 0; j < availableSlots.Count; j++)
+                            {
+                                dstSlots.Add((ItemSlot)availableSlots[j]);
+                            }
+                        }
+                    }
+
+                    foreach (ItemData itemData in contents)
+                    {
+                        Item item = CreateItem(itemData);
+                        if (item == null)
+                            continue;
+
+                        if (!item.MoveToContainer(itemContainer, itemData.Position) && !item.MoveToContainer(itemContainer))
+                            item.Remove();
+                    }
+
+                    itemContainer.MarkDirty();
+                }
+            }
         }
 
         #endregion
