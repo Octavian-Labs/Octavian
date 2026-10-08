@@ -529,7 +529,7 @@ namespace Oxide.Plugins
                     try
                     {
                         // Безопасный вызов метода получения использований кита
-                        object usesResult = Kits.Call("GetPlayerKitUses", player.UserIDString, kitname);
+                        object usesResult = Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname);
                         int usedCount = usesResult is int ? (int)usesResult : 0;
                         int remaining = Math.Max(0, kitInfo.MaxUses - usedCount);
                         usesleft = remaining.ToString();
@@ -804,7 +804,7 @@ namespace Oxide.Plugins
                 
                 string usesleft = gl("uses_title_unlimited");
                 if ((int) Kits.Call<int>("GetKitMaxUses", kitname) != 0)
-                    usesleft = $"{(int) Kits.Call("GetKitMaxUses", kitname) - (int) Kits.Call("GetPlayerKitUses", player.userID, kitname)}";
+                    usesleft = $"{(int) Kits.Call("GetKitMaxUses", kitname) - (int) Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)}";
                 
                 string cost = gl("price_title_free");
                 if(Convert.ToInt32(kitObj.SelectToken("Cost")) != 0)
@@ -973,7 +973,7 @@ namespace Oxide.Plugins
                 object maxUsesResult = Kits?.Call("GetKitMaxUses", kitname);
                 int kitUseLimit = maxUsesResult is int ? (int)maxUsesResult : 0;
 
-                object timesUsedResult = Kits?.Call("GetPlayerKitUses", player.userID, kitname);
+                object timesUsedResult = Kits?.Call("GetPlayerKitUses", (ulong)player.userID, kitname);
                 int kitTimesUsed = timesUsedResult is int ? (int)timesUsedResult : 0;
 
                 if (IsKitOnCd(player, kitname))
@@ -1010,14 +1010,14 @@ namespace Oxide.Plugins
         private string KitUsesLeft(BasePlayer player, string _kitName) 
         {   
             int _kitMaxUses = Convert.ToInt32(Kits?.CallHook("GetKitMaxUses", _kitName));
-            int _kitTimesUsed = Convert.ToInt32(Kits?.CallHook("GetPlayerKitUses", player.userID, _kitName));
+            int _kitTimesUsed = Convert.ToInt32(Kits?.CallHook("GetPlayerKitUses", (ulong)player.userID, _kitName));
             string _kitUsesLeft = Convert.ToString(_kitMaxUses - _kitTimesUsed);
             return _kitUsesLeft;
         }
 
         private bool IsKitOnCd(BasePlayer player, string _kitName) 
         {
-            double _currentCd = Convert.ToDouble(Kits?.CallHook("GetPlayerKitCooldown", player.userID, _kitName));
+            double _currentCd = Convert.ToDouble(Kits?.CallHook("GetPlayerKitCooldown", (ulong)player.userID, _kitName));
             if ( _currentCd == 0)
             {
                 return false;
@@ -1039,7 +1039,7 @@ namespace Oxide.Plugins
 
         private string GetCurrentKitCd(BasePlayer player, string _kitName) 
         { 
-            int _currentCdInt = Convert.ToInt32(Kits?.CallHook("GetPlayerKitCooldown", player.userID, _kitName));
+            int _currentCdInt = Convert.ToInt32(Kits?.CallHook("GetPlayerKitCooldown", (ulong)player.userID, _kitName));
             
             TimeSpan cooldownTS = TimeSpan.FromSeconds(_currentCdInt); 
             string cooldownFormated = string.Format("{0:D1}D {1:D2}:{2:D2}:{3:D2}", cooldownTS.Days, cooldownTS.Hours, cooldownTS.Minutes, cooldownTS.Seconds);

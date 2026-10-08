@@ -670,7 +670,7 @@ namespace Oxide.Plugins
             {
                 if (text.Contains("{rp}"))
                 {
-                    string playersRP = $"{ServerRewards?.Call<int>("CheckPoints", player.userID)}";
+                    string playersRP = $"{ServerRewards?.Call<int>("CheckPoints", (ulong)player.userID)}";
                     text = text.Replace("{rp}", playersRP);
                 }
             }
@@ -1315,7 +1315,7 @@ namespace Oxide.Plugins
             if (kit == null) return $"НЕДОСТУПЕН%{KGlassLt}";
 
             double cdLeft = 0;
-            try { cdLeft = Convert.ToDouble(Kits.Call("GetPlayerKitCooldown", player.userID, kitname)); } catch { }
+            try { cdLeft = Convert.ToDouble(Kits.Call("GetPlayerKitCooldown", (ulong)player.userID, kitname)); } catch { }
             if (cdLeft > 0) return $"⏱ {KitFmtTime(cdLeft)}%{KRed}";
 
             string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
@@ -1326,7 +1326,7 @@ namespace Oxide.Plugins
             if (maxUses > 0)
             {
                 int used = 0;
-                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", player.userID, kitname)); } catch { }
+                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
                 if (maxUses - used < 1) return $"ЛИМИТ ИСЧЕРПАН%{KGlassLt}";
             }
 
@@ -1375,7 +1375,7 @@ namespace Oxide.Plugins
                 int cooldownSec = 0, maxUses = 0, used = 0;
                 try { cooldownSec = Convert.ToInt32(Kits.Call("GetKitCooldown", kitname)); } catch { }
                 try { maxUses = Convert.ToInt32(Kits.Call("GetKitMaxUses", kitname)); } catch { }
-                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", player.userID, kitname)); } catch { }
+                try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
 
                 string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
                 string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
@@ -1496,7 +1496,7 @@ namespace Oxide.Plugins
             int cooldownSec = 0, maxUses = 0, used = 0;
             try { cooldownSec = Convert.ToInt32(Kits.Call("GetKitCooldown", kitname)); } catch { }
             try { maxUses = Convert.ToInt32(Kits.Call("GetKitMaxUses", kitname)); } catch { }
-            try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", player.userID, kitname)); } catch { }
+            try { used = Convert.ToInt32(Kits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
 
             string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
             string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";

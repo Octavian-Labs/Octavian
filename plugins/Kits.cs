@@ -272,13 +272,13 @@ namespace Oxide.Plugins
                     return false;
                 case CostType.ServerRewards:
                     {
-                        if ((ServerRewards?.Call<int>("CheckPoints", player.UserIDString) ?? 0) < amount)
+                        if ((ServerRewards?.Call<int>("CheckPoints", (ulong)player.userID) ?? 0) < amount)
                             return false;
 
-                        return (bool)ServerRewards?.Call("TakePoints", player.userID, amount);
+                        return (bool)ServerRewards?.Call("TakePoints", (ulong)player.userID, amount);
                     }
                 case CostType.Economics:
-                    return (bool)Economics?.Call("Withdraw", player.UserIDString, (double)amount);
+                    return (bool)Economics?.Call("Withdraw", (ulong)player.userID, (double)amount);
             }
             return false;
         }

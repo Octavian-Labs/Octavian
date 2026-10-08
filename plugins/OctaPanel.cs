@@ -1644,14 +1644,14 @@ namespace Oxide.Plugins
             {
                 if (_config.economic.serverRewards)
                 {
-                    var ret = ServerRewards?.Call<object>("CheckPoints", player.userID);
+                    var ret = ServerRewards?.Call<object>("CheckPoints", (ulong)player.userID);
                     if (ret == null) return "0";
                     return ((int)ret) + "";
                 }
 
                 if (_config.economic.economics)
                 {
-                    var ret = Economics?.Call<double>("Balance", player.userID);
+                    var ret = Economics?.Call<double>("Balance", (ulong)player.userID);
                     if (ret == null) return "0";
                     return ((double)ret) + "";
                 }

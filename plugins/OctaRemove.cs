@@ -1946,7 +1946,7 @@ namespace Oxide.Plugins
                     }
                     if (check)
                     {
-                        var balance = Economics.Call("Balance", player.userID);
+                        var balance = Economics.Call("Balance", (ulong)player.userID);
                         if (balance == null)
                         {
                             return false;
@@ -1958,7 +1958,7 @@ namespace Oxide.Plugins
                     }
                     else
                     {
-                        var withdraw = Economics.Call("Withdraw", player.userID, (double)currencyInfo.Amount);
+                        var withdraw = Economics.Call("Withdraw", (ulong)player.userID, (double)currencyInfo.Amount);
                         if (withdraw == null || !(bool)withdraw)
                         {
                             return false;
@@ -1973,7 +1973,7 @@ namespace Oxide.Plugins
                     }
                     if (check)
                     {
-                        var points = ServerRewards.Call("CheckPoints", player.userID);
+                        var points = ServerRewards.Call("CheckPoints", (ulong)player.userID);
                         if (points == null)
                         {
                             return false;
@@ -1986,7 +1986,7 @@ namespace Oxide.Plugins
                     }
                     else
                     {
-                        var takePoints = ServerRewards.Call("TakePoints", player.userID, currencyInfo.Amount);
+                        var takePoints = ServerRewards.Call("TakePoints", (ulong)player.userID, currencyInfo.Amount);
                         if (takePoints == null || !(bool)takePoints)
                         {
                             return false;
@@ -2116,7 +2116,7 @@ namespace Oxide.Plugins
                                 {
                                     continue;
                                 }
-                                var result = Economics.Call("Deposit", player.userID, (double)currencyInfo.Amount);
+                                var result = Economics.Call("Deposit", (ulong)player.userID, (double)currencyInfo.Amount);
                                 if (result != null)
                                 {
                                     flag = true;
@@ -2130,7 +2130,7 @@ namespace Oxide.Plugins
                                 {
                                     continue;
                                 }
-                                var result = ServerRewards.Call("AddPoints", player.userID, currencyInfo.Amount);
+                                var result = ServerRewards.Call("AddPoints", (ulong)player.userID, currencyInfo.Amount);
                                 if (result != null)
                                 {
                                     flag = true;
