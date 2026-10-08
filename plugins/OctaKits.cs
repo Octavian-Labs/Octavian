@@ -36,6 +36,8 @@ namespace Oxide.Plugins
 
         private Dictionary<string, KitCache> kitCache = new Dictionary<string, KitCache>();
         private readonly Dictionary<ulong, Timer> _cdTimers = new Dictionary<ulong, Timer>();
+        private readonly Dictionary<ulong, bool> _editorOverwrite = new Dictionary<ulong, bool>();
+        private readonly Dictionary<ulong, string> _editorToast = new Dictionary<ulong, string>();
         private bool isInitialized = false;
         private bool _initScheduled = false;
         private int _initRetries = 0;
@@ -354,16 +356,16 @@ namespace Oxide.Plugins
         }
 
         // Самостоятельное окно OctaKits: корневой оверлей + стеклянная панель с шапкой
-        private void CreateStandaloneRoot(ref CuiElementContainer ui)
+        private void CreateStandaloneRoot(ref CuiElementContainer ui, string title = "◆ <b>НАБОРЫ</b>", string subtitle = "выбери набор — обзор покажет содержимое", string closeCmd = "octakits_close", bool keyboard = false)
         {
             CUIClass.CreatePanel(ref ui, "octakits_root", "Overlay", "0 0 0 0.85", "0 0", "1 1", true, 0f, 0f, "assets/content/ui/uibackgroundblur.mat");
-            CUIClass.CreatePanel(ref ui, "octakits_content", "octakits_root", GlassBg, "0.18 0.08", "0.82 0.94", false, 0.2f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_content", "octakits_root", GlassBg, "0.18 0.08", "0.82 0.94", false, 0.2f, 0f, "assets/icons/iconmaterial.mat", "", "", keyboard);
             // золотая шапка
             CUIClass.CreatePanel(ref ui, "octakits_header", "octakits_content", "0 0 0 0", "0 0.95", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "octakits_headline", "octakits_content", Gold, "0 0.945", "1 0.948", false, 0f, 0f, "assets/icons/iconmaterial.mat");
-            CUIClass.CreateText(ref ui, "octakits_title", "octakits_header", GoldBright, "◆ <b>НАБОРЫ</b>", 16, "0.02 0.1", "0.5 0.9", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
-            CUIClass.CreateText(ref ui, "octakits_sub", "octakits_header", TMuted, "выбери набор — обзор покажет содержимое", 10, "0.5 0.1", "0.76 0.9", TextAnchor.MiddleRight, "robotocondensed-regular.ttf");
-            CUIClass.CreateButton(ref ui, "octakits_close", "octakits_header", CRed, "<b>✕</b>", 13, "0.945 0.15", "0.99 0.85", "octakits_close", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreateText(ref ui, "octakits_title", "octakits_header", GoldBright, title, 16, "0.02 0.1", "0.5 0.9", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "octakits_sub", "octakits_header", TMuted, subtitle, 10, "0.5 0.1", "0.76 0.9", TextAnchor.MiddleRight, "robotocondensed-regular.ttf");
+            CUIClass.CreateButton(ref ui, "octakits_close", "octakits_header", CRed, "<b>✕</b>", 13, "0.945 0.15", "0.99 0.85", closeCmd, "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
         }
 
         private void ShowKits(BasePlayer player, int page = 0)
@@ -1351,7 +1353,7 @@ namespace Oxide.Plugins
                 });
             }
 
-            public static void CreateInput(ref CuiElementContainer _container, string _name, string _parent, string _color, int _size, string _anchorMin, string _anchorMax, string _defaultText, string _font = "permanentmarker.ttf", string _command = "command.processinput", TextAnchor _align = TextAnchor.MiddleCenter, int _charsLimit = 200)
+            public static void CreateInput(ref CuiElementContainer _container, string _name, string _parent, string _color, int _size, string _anchorMin, string _anchorMax, string _defaultText, string _font = "permanentmarker.ttf", string _command = "command.processinput", TextAnchor _align = TextAnchor.MiddleCenter, int _charsLimit = 200, bool _readOnly = false)
             {
                 _container.Add(new CuiElement
                 {
@@ -1371,7 +1373,7 @@ namespace Oxide.Plugins
                             Font = _font,
                             FontSize = _size,
                             Align = _align,
-                            ReadOnly = true,
+                            ReadOnly = _readOnly,
                         },
 
                         new CuiRectTransformComponent
@@ -1637,12 +1639,187 @@ namespace Oxide.Plugins
         private bool IsKitsAdmin(BasePlayer player)
             => player != null && (player.IsAdmin || permission.UserHasPermission(player.UserIDString, "kits.admin"));
 
-        private void OpenKitsEditor(BasePlayer player, string consoleCmd)
+        #region Редактор наборов (наш дизайн поверх headless-API Kits)
+
+        private void StartKitEditor(BasePlayer player, string kitName)
         {
-            // Редактор Kits — полноэкранный интерфейс, окно витрины закрываем
+            if (Kits == null)
+            {
+                player.ChatMessage("<color=#E8B84B>OctaKits</color>: система наборов недоступна");
+                return;
+            }
+
+            object result = null;
+            try { result = Kits.Call("KitEditorStart", player, kitName ?? ""); } catch { }
+
+            if (!(result is JObject draft))
+            {
+                player.ChatMessage("<color=#E8B84B>OctaKits</color>: не удалось открыть редактор — проверь право kits.admin");
+                return;
+            }
+
+            if (_cdTimers.TryGetValue(player.userID, out var t) && t != null) { t.Destroy(); _cdTimers.Remove(player.userID); }
+
+            // при редактировании существующего набора перезапись включена по умолчанию
+            _editorOverwrite[(ulong)player.userID] = !string.IsNullOrEmpty(kitName);
+            _editorToast[(ulong)player.userID] = null;
+
+            DrawKitEditor(player, draft);
+        }
+
+        private void DrawKitEditor(BasePlayer player, JObject draft)
+        {
+            var ui = new CuiElementContainer();
+            string draftName = draft?.SelectToken("Name")?.ToString() ?? "";
+
+            CreateStandaloneRoot(ref ui, "◆ <b>РЕДАКТОР НАБОРА</b>", string.IsNullOrEmpty(draftName) ? "новый набор" : draftName, "octakits_editor_cancel", true);
+
+            // Тост с результатом последнего действия
+            ulong uid = (ulong)player.userID;
+            string toast = _editorToast.TryGetValue(uid, out string t) ? t : null;
+            if (!string.IsNullOrEmpty(toast))
+                CUIClass.CreateText(ref ui, "octaedit_toast", "octakits_content", "0.98 0.80 0.35 1", toast, 11, "0.01 0.905", "0.99 0.945", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", 0f);
+
+            // ── Левая колонка: параметры набора ──
+            CUIClass.CreatePanel(ref ui, "octaedit_fields", "octakits_content", GlassBg, "0.01 0.03", "0.345 0.90", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octaedit_fields_gold", "octaedit_fields", Gold, "0 0.985", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreateText(ref ui, "octaedit_fields_title", "octaedit_fields", Gold, "◆ <b>ПАРАМЕТРЫ</b>", 11, "0.04 0.945", "0.96 0.98", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+
+            DrawEditorField(ref ui, 0, "НАЗВАНИЕ", "name", draftName);
+            DrawEditorField(ref ui, 1, "ОПИСАНИЕ", "description", draft?.SelectToken("Description")?.ToString() ?? "");
+            DrawEditorField(ref ui, 2, "ИКОНКА (URL)", "image", draft?.SelectToken("KitImage")?.ToString() ?? "");
+            DrawEditorField(ref ui, 3, "ПРАВО ДОСТУПА (kits.*)", "permission", draft?.SelectToken("RequiredPermission")?.ToString() ?? "");
+            DrawEditorField(ref ui, 4, "УРОВЕНЬ АВТОРИЗАЦИИ (0-2)", "authLevel", $"{draft?.SelectToken("RequiredAuth")}");
+            DrawEditorField(ref ui, 5, "МАКС. ИСПОЛЬЗОВАНИЙ (0 = без лимита)", "maximumUses", $"{draft?.SelectToken("MaximumUses")}");
+            DrawEditorField(ref ui, 6, "ПЕРЕЗАРЯДКА (СЕК)", "cooldown", $"{draft?.SelectToken("Cooldown")}");
+            DrawEditorField(ref ui, 7, "ЦЕНА (0 = бесплатно)", "cost", $"{draft?.SelectToken("Cost")}");
+            DrawEditorField(ref ui, 8, "COPYPASTE ФАЙЛ", "copyPaste", draft?.SelectToken("CopyPasteFile")?.ToString() ?? "");
+
+            // Тоггл «скрытый набор»
+            bool isHidden = draft?.SelectToken("IsHidden")?.ToObject<bool>() ?? false;
+            float tyTop = 0.865f - 9 * 0.068f;
+            CUIClass.CreateText(ref ui, "octaedit_lbl_hidden", "octaedit_fields", TMuted, "СКРЫТЫЙ НАБОР", 9, $"0.04 {f(tyTop - 0.040)}", $"0.70 {f(tyTop - 0.005)}", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateButton(ref ui, "octaedit_tgl_hidden", "octaedit_fields", isHidden ? CGreen : GlassRow,
+                isHidden ? "<b>✓</b>" : "", 12, $"0.80 {f(tyTop - 0.052)}", $"0.96 {f(tyTop - 0.008)}",
+                "octakits_editor_toggle isHidden", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+
+            // Кнопки действий
+            bool ow = _editorOverwrite.TryGetValue(uid, out bool o) && o;
+            CUIClass.CreateButton(ref ui, "octaedit_save", "octaedit_fields", CGreen, "<b>✓ СОХРАНИТЬ</b>", 11, "0.04 0.068", "0.63 0.115", "octakits_editor_save", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreateButton(ref ui, "octaedit_ow", "octaedit_fields", ow ? Gold : GlassRow, ow ? "<b>◉</b> ПЕРЕЗАПИСАТЬ" : "◯ ПЕРЕЗАПИСАТЬ", 10, "0.645 0.068", "0.96 0.115", "octakits_editor_overwrite", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreateButton(ref ui, "octaedit_copyinv", "octaedit_fields", GoldDark, "⬇ КОПИРОВАТЬ ИНВЕНТАРЬ", 10, "0.04 0.012", "0.48 0.058", "octakits_editor_copyinv", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreateButton(ref ui, "octaedit_clear", "octaedit_fields", CRed, "ОЧИСТИТЬ", 10, "0.50 0.012", "0.96 0.058", "octakits_editor_clearitems", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+
+            // ── Правая колонка: предметы набора ──
+            CUIClass.CreatePanel(ref ui, "octaedit_items", "octakits_content", GlassBg, "0.355 0.03", "0.99 0.90", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octaedit_items_gold", "octaedit_items", Gold, "0 0.985", "1 1.0", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+
+            var main = draft?.SelectToken("MainItems") as JArray;
+            var belt = draft?.SelectToken("BeltItems") as JArray;
+            var wear = draft?.SelectToken("WearItems") as JArray;
+
+            CUIClass.CreateText(ref ui, "octaedit_sec_main", "octaedit_items", Gold, $"◆ <b>ОСНОВНОЙ ИНВЕНТАРЬ</b>  <size=9><color=#8a7f66>{main?.Count ?? 0} шт.</color></size>", 11, "0.03 0.93", "0.97 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "octaedit_div_main", "octaedit_items", GoldDark, "0.03 0.925", "0.97 0.928", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octaedit_grid_main", "octaedit_items", "0 0 0 0.0", "0.02 0.44", "0.98 0.91", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            for (int i = 0; i < mainA.Length; i++)
+            {
+                string[] splitA = mainA[i].Split('-');
+                CUIClass.CreatePanel(ref ui, $"octaedit_mitem{i}", "octaedit_grid_main", GlassRow, splitA[0], splitA[1], false, 0.1f, 0f, "assets/icons/iconmaterial.mat");
+                DrawEditorItem(ref ui, $"octaedit_mitem{i}", main, i);
+            }
+
+            CUIClass.CreateText(ref ui, "octaedit_sec_belt", "octaedit_items", Gold, $"◆ <b>БЫСТРЫЙ ДОСТУП</b>  <size=9><color=#8a7f66>{belt?.Count ?? 0} шт.</color></size>", 11, "0.03 0.38", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "octaedit_div_belt", "octaedit_items", GoldDark, "0.03 0.375", "0.97 0.378", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octaedit_grid_belt", "octaedit_items", "0 0 0 0.0", "0.02 0.24", "0.98 0.36", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            for (int i = 0; i < beltA.Length; i++)
+            {
+                string[] splitA = beltA[i].Split('-');
+                CUIClass.CreatePanel(ref ui, $"octaedit_bitem{i}", "octaedit_grid_belt", GlassRow, splitA[0], splitA[1], false, 0.1f, 0f, "assets/icons/iconmaterial.mat");
+                DrawEditorItem(ref ui, $"octaedit_bitem{i}", belt, i);
+            }
+
+            CUIClass.CreateText(ref ui, "octaedit_sec_wear", "octaedit_items", Gold, $"◆ <b>ЭКИПИРОВКА</b>  <size=9><color=#8a7f66>{wear?.Count ?? 0} шт.</color></size>", 11, "0.03 0.19", "0.97 0.23", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, "octaedit_div_wear", "octaedit_items", GoldDark, "0.03 0.185", "0.97 0.188", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref ui, "octaedit_grid_wear", "octaedit_items", "0 0 0 0.0", "0.02 0.05", "0.98 0.17", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            for (int i = 0; i < clothA.Length; i++)
+            {
+                string[] splitA = clothA[i].Split('-');
+                CUIClass.CreatePanel(ref ui, $"octaedit_witem{i}", "octaedit_grid_wear", GlassRow, splitA[0], splitA[1], false, 0.1f, 0f, "assets/icons/iconmaterial.mat");
+                DrawEditorItem(ref ui, $"octaedit_witem{i}", wear, i);
+            }
+
             CuiHelper.DestroyUi(player, "octakits_root");
-            if (_cdTimers.TryGetValue(player.userID, out var _t) && _t != null) { _t.Destroy(); _cdTimers.Remove(player.userID); }
-            player.SendConsoleCommand(consoleCmd);
+            CuiHelper.AddUi(player, ui);
+        }
+
+        private static string f(double v) => v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+        private void DrawEditorField(ref CuiElementContainer ui, int index, string label, string field, string value)
+        {
+            float yTop = 0.865f - index * 0.068f;
+            CUIClass.CreateText(ref ui, $"octaedit_lbl_{field}", "octaedit_fields", TMuted, label, 9, $"0.04 {f(yTop - 0.022)}", $"0.96 {f(yTop)}", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreatePanel(ref ui, $"octaedit_in_bg_{field}", "octaedit_fields", GlassRow, $"0.04 {f(yTop - 0.062)}", $"0.96 {f(yTop - 0.024)}", false, 0f, 0f, "assets/icons/iconmaterial.mat");
+            CUIClass.CreateInput(ref ui, $"octaedit_in_{field}", $"octaedit_in_bg_{field}", TWhite, 11, "0 0", "1 1", value ?? "", "robotocondensed-regular.ttf", $"octakits_editor_set {field}", TextAnchor.MiddleLeft, 128);
+        }
+
+        private void DrawEditorItem(ref CuiElementContainer ui, string cellName, JArray items, int index)
+        {
+            try
+            {
+                if (items == null || index >= items.Count) return;
+                var item = items[index];
+                if (item == null) return;
+
+                string shortname = $"{item.SelectToken("Shortname")}";
+                var iDef = ItemManager.FindItemDefinition(shortname);
+                if (iDef == null) return;
+
+                ulong skin = 0;
+                var skinTok = item.SelectToken("SkinID");
+                if (skinTok != null) skin = skinTok.ToObject<ulong>();
+
+                ui.Add(new CuiElement
+                {
+                    Parent = cellName,
+                    Name = $"{shortname}_{index}",
+                    Components = { new CuiImageComponent { ItemId = iDef.itemid, SkinId = skin, FadeIn = 0.1f }, new CuiRectTransformComponent { AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90" } },
+                    FadeOut = 0f
+                });
+                CUIClass.CreateText(ref ui, "amount", cellName, GoldBright, $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, "robotocondensed-bold.ttf", 0f);
+            }
+            catch { }
+        }
+
+        private void EditorToast(BasePlayer player, string text)
+        {
+            _editorToast[(ulong)player.userID] = text;
+            object result = null;
+            try { result = Kits?.Call("KitEditorGet", player); } catch { }
+            if (result is JObject draft)
+                DrawKitEditor(player, draft);
+        }
+
+        private void RefreshKitCache()
+        {
+            if (Kits == null) return;
+            string[] all = null;
+            try { all = Kits.Call("GetAllKits") as string[]; } catch { }
+            if (all == null) return;
+            LoadKitCache(all);
+            PreloadKitImages(all);
+        }
+
+        private string EditorErrorText(string code)
+        {
+            switch (code)
+            {
+                case "no-admin": return "Нет доступа к редактору наборов";
+                case "no-session": return "Сессия редактирования потеряна — открой редактор заново";
+                case "no-name": return "Укажите название набора";
+                case "no-contents": return "Набор пуст — скопируйте инвентарь или укажите CopyPaste-файл";
+                case "exists": return "Набор с таким именем уже существует — включите «ПЕРЕЗАПИСАТЬ»";
+                default: return code ?? "Ошибка редактора";
+            }
         }
 
         [ConsoleCommand("octakits_admin_create")]
@@ -1650,7 +1827,7 @@ namespace Oxide.Plugins
         {
             var player = arg?.Player();
             if (!IsKitsAdmin(player)) return;
-            OpenKitsEditor(player, "kits.create");
+            StartKitEditor(player, "");
         }
 
         [ConsoleCommand("octakits_admin_edit")]
@@ -1662,10 +1839,130 @@ namespace Oxide.Plugins
             string name = (arg?.FullString.ToString() ?? "").Replace("%", " ").Trim();
             if (string.IsNullOrEmpty(name)) return;
 
-            // Kits ожидает имена с пробелами в собственной кодировке ▊▊
-            OpenKitsEditor(player, $"kits.edit {name.Replace(" ", "▊▊")}");
+            StartKitEditor(player, name);
         }
 
+        [ConsoleCommand("octakits_editor_set")]
+        private void octakits_editor_set(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player) || Kits == null) return;
+            if (arg == null || arg.Args == null || arg.Args.Length < 1) return;
 
+            string field = arg.GetString(0);
+            string value = arg.Args.Length > 1 ? string.Join(" ", arg.Args.Skip(1).Select(x => x.ToString())) : "";
+
+            object result = null;
+            try { result = Kits.Call("KitEditorSetField", player, field, value); } catch { }
+
+            if (result is JObject draft)
+                DrawKitEditor(player, draft);
+            else
+                EditorToast(player, EditorErrorText(result as string));
+        }
+
+        [ConsoleCommand("octakits_editor_toggle")]
+        private void octakits_editor_toggle(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player) || Kits == null) return;
+
+            object draftObj = null;
+            try { draftObj = Kits.Call("KitEditorGet", player); } catch { }
+            if (!(draftObj is JObject draft)) return;
+
+            string field = arg?.GetString(0) ?? "isHidden";
+            bool cur = draft.SelectToken("IsHidden")?.ToObject<bool>() ?? false;
+
+            object result = null;
+            try { result = Kits.Call("KitEditorSetField", player, field, (!cur).ToString()); } catch { }
+            if (result is JObject snap)
+                DrawKitEditor(player, snap);
+            else
+                EditorToast(player, EditorErrorText(result as string));
+        }
+
+        [ConsoleCommand("octakits_editor_overwrite")]
+        private void octakits_editor_overwrite(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player)) return;
+            ulong uid = (ulong)player.userID;
+            _editorOverwrite[uid] = !(_editorOverwrite.TryGetValue(uid, out bool o) && o);
+
+            object result = null;
+            try { result = Kits?.Call("KitEditorGet", player); } catch { }
+            if (result is JObject draft)
+                DrawKitEditor(player, draft);
+        }
+
+        [ConsoleCommand("octakits_editor_copyinv")]
+        private void octakits_editor_copyinv(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player) || Kits == null) return;
+
+            object result = null;
+            try { result = Kits.Call("KitEditorCopyInventory", player); } catch { }
+            if (result is JObject draft)
+            {
+                _editorToast[(ulong)player.userID] = "Инвентарь скопирован в набор";
+                DrawKitEditor(player, draft);
+            }
+            else EditorToast(player, "Сессия редактирования потеряна");
+        }
+
+        [ConsoleCommand("octakits_editor_clearitems")]
+        private void octakits_editor_clearitems(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player) || Kits == null) return;
+
+            object result = null;
+            try { result = Kits.Call("KitEditorClearItems", player); } catch { }
+            if (result is JObject draft)
+            {
+                _editorToast[(ulong)player.userID] = "Предметы набора очищены";
+                DrawKitEditor(player, draft);
+            }
+            else EditorToast(player, "Сессия редактирования потеряна");
+        }
+
+        [ConsoleCommand("octakits_editor_save")]
+        private void octakits_editor_save(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (!IsKitsAdmin(player) || Kits == null) return;
+
+            ulong uid = (ulong)player.userID;
+            bool overwrite = _editorOverwrite.TryGetValue(uid, out bool o) && o;
+
+            object result = null;
+            try { result = Kits.Call("KitEditorSave", player, overwrite); } catch { }
+
+            if ("ok".Equals(result as string))
+            {
+                _editorOverwrite.Remove(uid);
+                _editorToast.Remove(uid);
+                RefreshKitCache();
+                player.ChatMessage("<color=#E8B84B>OctaKits</color>: набор сохранён");
+                ShowKits(player);
+            }
+            else EditorToast(player, EditorErrorText(result as string));
+        }
+
+        [ConsoleCommand("octakits_editor_cancel")]
+        private void octakits_editor_cancel(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null) return;
+
+            try { Kits?.Call("KitEditorCancel", player); } catch { }
+            _editorOverwrite.Remove((ulong)player.userID);
+            _editorToast.Remove((ulong)player.userID);
+            ShowKits(player);
+        }
+
+        #endregion
     }
 }

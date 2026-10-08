@@ -1,4 +1,4 @@
-﻿using Facepunch;
+using Facepunch;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Oxide.Core;
@@ -616,6 +616,143 @@ namespace Oxide.Plugins
             foreach (Item item in kit.CreateItems())
                 yield return item;
         }
+
+        #region API редактора (для OctaKits — без родного UI)
+
+        [HookMethod("KitEditorStart")]
+        public object KitEditorStart(BasePlayer player, string kitName)
+        {
+            if (player == null || !(IsAdmin(player) || player.IsAdmin))
+                return null;
+
+            if (string.IsNullOrEmpty(kitName))
+                _kitCreators[player.userID] = new KitData.Kit();
+            else
+            {
+                if (!kitData.Find(kitName, out KitData.Kit editKit))
+                    return null;
+
+                _kitCreators[player.userID] = KitData.Kit.CloneOf(editKit);
+            }
+
+            return EditorSnapshot(_kitCreators[player.userID]);
+        }
+
+        [HookMethod("KitEditorGet")]
+        public object KitEditorGet(BasePlayer player)
+            => player != null && _kitCreators.TryGetValue(player.userID, out KitData.Kit kit) ? EditorSnapshot(kit) : (object)null;
+
+        [HookMethod("KitEditorSetField")]
+        public object KitEditorSetField(BasePlayer player, string field, string value)
+        {
+            if (player == null || !(IsAdmin(player) || player.IsAdmin))
+                return "no-admin";
+
+            if (!_kitCreators.TryGetValue(player.userID, out KitData.Kit kit))
+                return "no-session";
+
+            if (string.IsNullOrEmpty(value))
+                ClearField(kit, field);
+            else
+            {
+                string error = TrySetParameter(player, kit, field, value);
+                if (error != null)
+                    return error;
+            }
+
+            return EditorSnapshot(kit);
+        }
+
+        [HookMethod("KitEditorCopyInventory")]
+        public object KitEditorCopyInventory(BasePlayer player)
+        {
+            if (player == null || !(IsAdmin(player) || player.IsAdmin) || !_kitCreators.TryGetValue(player.userID, out KitData.Kit kit))
+                return null;
+
+            kit.CopyItemsFrom(player);
+            return EditorSnapshot(kit);
+        }
+
+        [HookMethod("KitEditorClearItems")]
+        public object KitEditorClearItems(BasePlayer player)
+        {
+            if (player == null || !(IsAdmin(player) || player.IsAdmin) || !_kitCreators.TryGetValue(player.userID, out KitData.Kit kit))
+                return null;
+
+            kit.ClearItems();
+            return EditorSnapshot(kit);
+        }
+
+        [HookMethod("KitEditorSave")]
+        public object KitEditorSave(BasePlayer player, bool overwrite)
+        {
+            if (player == null || !(IsAdmin(player) || player.IsAdmin))
+                return "no-admin";
+
+            if (!_kitCreators.TryGetValue(player.userID, out KitData.Kit kit))
+                return "no-session";
+
+            if (string.IsNullOrEmpty(kit.Name))
+                return "no-name";
+
+            if (kit.ItemCount == 0 && string.IsNullOrEmpty(kit.CopyPasteFile))
+                return "no-contents";
+
+            if (kitData.Exists(kit.Name) && !overwrite)
+                return "exists";
+
+            kitData[kit.Name] = kit;
+            SaveKitData();
+
+            _kitCreators.Remove(player.userID);
+
+            if (!string.IsNullOrEmpty(kit.RequiredPermission) && !permission.PermissionExists(kit.RequiredPermission))
+                permission.RegisterPermission(kit.RequiredPermission, this);
+
+            if (!string.IsNullOrEmpty(kit.KitImage))
+                RegisterImage(kit.Name, kit.KitImage);
+
+            return "ok";
+        }
+
+        [HookMethod("KitEditorCancel")]
+        public void KitEditorCancel(BasePlayer player)
+        {
+            if (player != null)
+                _kitCreators.Remove(player.userID);
+        }
+
+        // Свежий снапшот черновика: Kit.ToJObject кэширует _jObject и после мутаций отдаёт устаревшие данные
+        private static JObject EditorSnapshot(KitData.Kit kit)
+        {
+            JObject obj = new JObject
+            {
+                ["Name"] = kit.Name,
+                ["Description"] = kit.Description,
+                ["RequiredPermission"] = kit.RequiredPermission,
+                ["MaximumUses"] = kit.MaximumUses,
+                ["RequiredAuth"] = kit.RequiredAuth,
+                ["Cooldown"] = kit.Cooldown,
+                ["Cost"] = kit.Cost,
+                ["IsHidden"] = kit.IsHidden,
+                ["CopyPasteFile"] = kit.CopyPasteFile,
+                ["KitImage"] = kit.KitImage,
+                ["MainItems"] = new JArray(),
+                ["WearItems"] = new JArray(),
+                ["BeltItems"] = new JArray()
+            };
+
+            for (int i = 0; i < kit.MainItems.Length; i++)
+                ((JArray)obj["MainItems"]).Add(kit.MainItems[i].ToJObject);
+            for (int i = 0; i < kit.WearItems.Length; i++)
+                ((JArray)obj["WearItems"]).Add(kit.WearItems[i].ToJObject);
+            for (int i = 0; i < kit.BeltItems.Length; i++)
+                ((JArray)obj["BeltItems"]).Add(kit.BeltItems[i].ToJObject);
+
+            return obj;
+        }
+
+        #endregion
         #endregion
 
         #region UI
@@ -1284,8 +1421,13 @@ namespace Oxide.Plugins
             if (!_kitCreators.TryGetValue(player.userID, out KitData.Kit kit))
                 return;
 
-            string fieldName = arg.GetString(0);
+            ClearField(kit, arg.GetString(0));
 
+            OpenKitsEditor(player);
+        }
+
+        private void ClearField(KitData.Kit kit, string fieldName)
+        {
             switch (fieldName)
             {
                 case "name":
@@ -1308,16 +1450,17 @@ namespace Oxide.Plugins
                     break;
                 case "cooldown":
                     kit.Cooldown = 0;
-                    break;                
+                    break;
                 case "maximumUses":
                     kit.MaximumUses = 0;
                     break;
                 case "authLevel":
                     kit.RequiredAuth = 0;
                     break;
+                case "isHidden":
+                    kit.IsHidden = false;
+                    break;
             }
-
-            OpenKitsEditor(player);
         }
 
         [ConsoleCommand("kits.creator")]
@@ -1339,68 +1482,73 @@ namespace Oxide.Plugins
 
         private void SetParameter(BasePlayer player, KitData.Kit kit, string fieldName, object value)
         {
+            string error = TrySetParameter(player, kit, fieldName, value);
+            if (error != null)
+                CreateMenuPopup(player, error);
+        }
+
+        // Возвращает текст ошибки или null; используется и родным UI, и внешним редактором
+        private string TrySetParameter(BasePlayer player, KitData.Kit kit, string fieldName, object value)
+        {
             if (value == null)
-                return;
+                return null;
 
             switch (fieldName)
             {
                 case "name":
                     kit.Name = (string)value;
-                    break;
+                    return null;
                 case "description":
                     kit.Description = (string)value;
-                    break;
+                    return null;
                 case "copyPaste":
                     kit.CopyPasteFile = (string)value;
-                    break;
+                    return null;
                 case "permission":
                     if (!((string)value).StartsWith("kits."))
-                    {
-                        CreateMenuPopup(player, Message("EditKit.PermissionPrefix", player.userID));
-                        return;
-                    }
+                        return Message("EditKit.PermissionPrefix", player.userID);
                     kit.RequiredPermission = (string)value;
-                    break;
+                    return null;
                 case "image":
                     kit.KitImage = (string)value;
-                    break;
+                    return null;
                 case "cost":
                     {
                         if (!TryConvertValue(value, out int intValue))
-                            CreateMenuPopup(player, Message("EditKit.Number", player.userID));
-                        else kit.Cost = intValue;
+                            return Message("EditKit.Number", player.userID);
+                        kit.Cost = intValue;
+                        return null;
                     }
-                    break;
                 case "cooldown":
                     {
                         if (!TryConvertValue(value, out int intValue))
-                            CreateMenuPopup(player, Message("EditKit.Number", player.userID));
-                        else kit.Cooldown = intValue;
+                            return Message("EditKit.Number", player.userID);
+                        kit.Cooldown = intValue;
+                        return null;
                     }
-                    break;
                 case "maximumUses":
                     {
                         if (!TryConvertValue(value, out int intValue))
-                            CreateMenuPopup(player, Message("EditKit.Number", player.userID));
-                        else kit.MaximumUses = intValue;
+                            return Message("EditKit.Number", player.userID);
+                        kit.MaximumUses = intValue;
+                        return null;
                     }
-                    break;
                 case "authLevel":
                     {
                         if (!TryConvertValue(value, out int intValue))
-                            CreateMenuPopup(player, Message("EditKit.Number", player.userID));
-                        else kit.RequiredAuth = Mathf.Clamp(intValue, 0, 2);                        
+                            return Message("EditKit.Number", player.userID);
+                        kit.RequiredAuth = Mathf.Clamp(intValue, 0, 2);
+                        return null;
                     }
-                    break;
                 case "isHidden":
                     {
                         if (!TryConvertValue(value, out bool boolValue))
-                            CreateMenuPopup(player, Message("EditKit.Bool", player.userID));
-                        else kit.IsHidden = boolValue;
+                            return Message("EditKit.Bool", player.userID);
+                        kit.IsHidden = boolValue;
+                        return null;
                     }
-                    break;                
-                default:                    
-                    return;
+                default:
+                    return null;
             }
         }
 
@@ -1830,7 +1978,7 @@ namespace Oxide.Plugins
         private void ccmdKit(ConsoleSystem.Arg arg)
         {
             BasePlayer player = arg.Connection?.player as BasePlayer;
-            if (player != null && !IsAdmin(player))
+            if (player != null && !(IsAdmin(player) || player.IsAdmin))
                 return;
 
             var cargs = arg.Args == null ? new string[0] : arg.Args.Select(a => a.ToString()).ToArray();
