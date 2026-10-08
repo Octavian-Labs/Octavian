@@ -12,10 +12,12 @@ using System;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaFeed", "Octavian", "1.0.2")]
-    [Description("Киллфид: кто кого убил, оружие, дистанция. /dm — личные настройки")]
+    [Info("OctaFeed", "Octavian", "1.0.3")]
+    [Description("Киллфид: кто кого убил, оружие, дистанция. Поддержка боссов OctaBoss")]
     public partial class OctaFeed : RustPlugin
     {
+        [PluginReference] private Plugin OctaBoss;
+
         private static int RowWidth => Instance.Cfg?.UIConfig != null && Instance.Cfg.UIConfig.RowWidth > 0 ? Instance.Cfg.UIConfig.RowWidth : 480;
         private static int GetWpStart(int totalWidth, int modCount) => (totalWidth - 57) - (20 + modCount * 18);
 
@@ -36,7 +38,20 @@ namespace Oxide.Plugins
             container.Add(new CuiButton { Button = { Command = $"octafeed show", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", }, Text = { Text = "", }, }, "DMUI", "DMUI.Button");
             CuiHelper.AddUi(player, container);
         }
-        internal Dictionary<ulong, HitInfo> LastAttacks = new Dictionary<ulong, HitInfo>();
+        private class RecentAttack
+        {
+            public HitInfo Hit;
+            public float Time;
+        }
+        private readonly Dictionary<ulong, RecentAttack> LastAttacks = new Dictionary<ulong, RecentAttack>();
+
+        private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
+        {
+            if (entity is BasePlayer player && player.IsNonNpcPlayer() && info?.Initiator != null && info.Initiator != entity)
+            {
+                LastAttacks[player.userID] = new RecentAttack { Hit = info, Time = UnityEngine.Time.realtimeSinceStartup };
+            }
+        }
 
         internal Dictionary<string, string> Names = new Dictionary<string, string>()
         {
@@ -78,6 +93,9 @@ namespace Oxide.Plugins
             ["sheep"] = "Sheep",
             ["lamb"] = "Lamb",
             ["simpleshark"] = "Shark",
+            ["crocodile"] = "Crocodile",
+            ["tiger"] = "Tiger",
+            ["panther"] = "Panther",
             ["minicopter.entity"] = "Minicopter",
             ["scraptransporthelicopter"] = "Transport helicopter",
             ["patrolhelicopter"] = "Patrol helicopter",
@@ -420,8 +438,8 @@ namespace Oxide.Plugins
                 FillDistance(victim, initiator);
                 FillIcons(info);
                 string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false && Instance.GetNpcName(victim.ShortPrefabName) != victim.ShortPrefabName)
-                    this.Message = string.Format(messageVariable, GetPrefabName(victim.ShortPrefabName), GetNameString(initiator));
+                if (string.IsNullOrEmpty(messageVariable) == false)
+                    this.Message = string.Format(messageVariable, GetEntityName(victim), GetNameString(initiator));
             }
 
             public DeathRow(BasePlayer victim, BaseCombatEntity initiator, HitInfo info)
@@ -431,8 +449,8 @@ namespace Oxide.Plugins
                 FillDistance(victim, initiator);
                 FillIcons(info);
                 string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false && Instance.GetNpcName(initiator.ShortPrefabName) != initiator.ShortPrefabName)
-                    this.Message = string.Format(messageVariable, GetNameString(victim), GetPrefabName(initiator.ShortPrefabName));
+                if (string.IsNullOrEmpty(messageVariable) == false)
+                    this.Message = string.Format(messageVariable, GetNameString(victim), GetEntityName(initiator));
             }
 		   		 		  						  	   		  	   		  	 				  		 			  	 		
             public DeathRow(PatrolHelicopter victim, BasePlayer initiator, HitInfo info)
@@ -621,6 +639,24 @@ namespace Oxide.Plugins
                 return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color={Instance.GetColorFor(player)}>{playerName.Substring(0, Math.Min(16, playerName.Length))}</color></size>";
             }
 
+            private string GetEntityName(BaseCombatEntity entity)
+            {
+                if (entity == null) return "Неизвестно";
+                try
+                {
+                    string bossName = Instance.OctaBoss?.Call("GetBossName", entity) as string;
+                    if (!string.IsNullOrEmpty(bossName))
+                        return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {bossName}</color></size>";
+                }
+                catch { }
+
+                var livestock = entity as LivestockAnimal;
+                if (livestock != null && !string.IsNullOrEmpty(livestock.AnimalName))
+                    return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {livestock.AnimalName}</color></size>";
+
+                return GetPrefabName(entity.ShortPrefabName);
+            }
+
             private string GetPrefabName(string shortPrefabName)
             {
                 return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color={Instance.Cfg.UIConfig.NameProperty.Color}>{Instance.GetNpcName(shortPrefabName)}</color></size>";
@@ -755,50 +791,80 @@ namespace Oxide.Plugins
         }
         private void OnEntityDeath(BaseCombatEntity victim, HitInfo info)
         {
-            if (victim == null || victim.net == null || victim.net.ID == null)
-                return;
-            
-            if (info == null)
-            {
-                if (victim.IsNonNpcPlayer())
-                    new DeathRow(victim as BasePlayer, null).Run();
-                return;
-            }
-
-            if (info.damageTypes == null)
+            if (victim == null || victim.net == null)
                 return;
 
             DeathRow outputRow = null;
-            
-            if (info.Initiator != null && info.Initiator is BaseCombatEntity initiator && 
-                initiator.net != null && initiator.net.ID != null)
+
+            // Если жертва — живой игрок, а смертельный урон пришел без инициатора или как урон окружения
+            // (Drowned, Bleeding, Fall, Cold), проверяем последний урон от игрока/босса за 8 секунд
+            if (victim is BasePlayer vp && vp.IsNonNpcPlayer())
             {
-                if (victim is BasePlayer victimPlayer && info.Initiator is BasePlayer initiatorPlayer && 
-                    victim.net.ID.Value != initiator.net.ID.Value)
+                bool isEnvOrSelf = info == null || info.Initiator == null || info.Initiator == victim;
+                if (!isEnvOrSelf && info.damageTypes != null)
                 {
-                    if (victimPlayer.IsNonNpcPlayer() && initiatorPlayer.IsNpcPlayer())
+                    var maj = info.damageTypes.GetMajorityDamageType();
+                    if (maj == DamageType.Drowned || maj == DamageType.Bleeding || maj == DamageType.Cold)
+                        isEnvOrSelf = true;
+                }
+
+                if (isEnvOrSelf)
+                {
+                    RecentAttack lastAttack;
+                    if (LastAttacks.TryGetValue(vp.userID, out lastAttack) && lastAttack != null &&
+                        lastAttack.Hit?.Initiator != null && lastAttack.Hit.Initiator != victim)
                     {
-                        outputRow = new DeathRow(victimPlayer, initiatorPlayer as NPCPlayer, info);
-                    }
-                    else if (victimPlayer.IsNpcPlayer() && initiatorPlayer.IsNonNpcPlayer())
-                    {
-                        outputRow = new DeathRow(victimPlayer as NPCPlayer, initiatorPlayer, info);
-                    }
-                    else if (victimPlayer.IsNonNpcPlayer() && initiatorPlayer.IsNonNpcPlayer())
-                    {
-                        outputRow = new DeathRow(victimPlayer, initiatorPlayer, info);
+                        if (UnityEngine.Time.realtimeSinceStartup - lastAttack.Time <= 8f)
+                        {
+                            info = lastAttack.Hit;
+                        }
                     }
                 }
-                // Остальной код метода...
+                LastAttacks.Remove(vp.userID);
             }
 
-            if (info.Initiator == null || 
-                (info.Initiator.net != null && info.Initiator.net.ID != null && 
-                victim.net != null && victim.net.ID != null &&
-                info.Initiator.net.ID.Value == victim.net.ID.Value))
+            if (info != null && info.damageTypes != null && info.Initiator is BaseCombatEntity initiator &&
+                initiator.net != null && initiator != victim)
             {
-                if (victim.IsNonNpcPlayer())
-                    outputRow = new DeathRow(victim as BasePlayer, info);
+                // Жертва — живой игрок
+                if (victim is BasePlayer victimPlayer && victimPlayer.IsNonNpcPlayer())
+                {
+                    if (initiator is BasePlayer initPlayer)
+                    {
+                        if (initPlayer.IsNpcPlayer())
+                            outputRow = new DeathRow(victimPlayer, initPlayer as NPCPlayer, info);
+                        else
+                            outputRow = new DeathRow(victimPlayer, initPlayer, info);
+                    }
+                    else if (initiator is PatrolHelicopter || initiator is BradleyAPC)
+                    {
+                        outputRow = new DeathRow(victimPlayer, initiator, info);
+                    }
+                    else
+                    {
+                        // Животное / босс / турель / ловушка убили игрока!
+                        outputRow = new DeathRow(victimPlayer, initiator, info);
+                    }
+                }
+                // Жертва — животное / босс / NPC / вертолет / танк, а убийца — живой игрок
+                else if (initiator is BasePlayer killerPlayer && killerPlayer.IsNonNpcPlayer())
+                {
+                    if (victim is NPCPlayer npcVictim)
+                        outputRow = new DeathRow(npcVictim, killerPlayer, info);
+                    else if (victim is PatrolHelicopter heli)
+                        outputRow = new DeathRow(heli, killerPlayer, info);
+                    else if (victim is BradleyAPC bradley)
+                        outputRow = new DeathRow(bradley, killerPlayer, info);
+                    else
+                        // Игрок убил животное / босса!
+                        outputRow = new DeathRow(victim, killerPlayer, info);
+                }
+            }
+
+            // Чистая смерть без инициатора (суицид, падение, голод, чистое утопление вне боя)
+            if (outputRow == null && victim is BasePlayer player && player.IsNonNpcPlayer())
+            {
+                outputRow = new DeathRow(player, info);
             }
 
             outputRow?.Run();

@@ -1256,6 +1256,21 @@ namespace Oxide.Plugins
         private BossState EscortOf(BaseEntity ent) =>
             _bosses.Values.FirstOrDefault(st => st.Escorts.Contains(ent));
 
+        // API для других плагинов (OctaFeed, статистика и т.д.)
+        [HookMethod("GetBossName")]
+        public string GetBossName(BaseCombatEntity ent)
+        {
+            if (ent == null) return null;
+            var st = StateOf(ent);
+            if (st != null && st.Alive) return st.Spec.DisplayName;
+            var esc = EscortOf(ent);
+            if (esc != null && esc.Alive) return $"Свита ({esc.Spec.DisplayName})";
+            return null;
+        }
+
+        [HookMethod("IsBoss")]
+        public bool IsBoss(BaseCombatEntity ent) => ent != null && StateOf(ent) != null;
+
         // скорость по фазе: ApplySpeed умножает ТЕКУЩИЕ значения агента —
         // поэтому делим на накопленный множитель, а не передаём абсолют
         private void ApplyPhaseSpeed(BossState st)
