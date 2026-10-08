@@ -3067,7 +3067,8 @@ namespace Oxide.Plugins
                     for (int i = 0; i < list.Count; i++)
                     {
                         Item item = CreateItem(list[i], player);
-                        
+                        if (item == null) continue;
+
                         if (!MoveToIdealContainer(player.inventory, item) && !item.MoveToContainer(player.inventory.containerMain) && !item.MoveToContainer(player.inventory.containerBelt))                        
                             item.Drop(player.GetDropPosition(), player.GetDropVelocity());                                                
                     }
@@ -3088,6 +3089,7 @@ namespace Oxide.Plugins
                         else
                         {
                             Item item = CreateItem(itemData, player);
+                            if (item == null) continue;
                             if (!isWearContainer || (item.info.isWearable && CanWearItem(container, item)))
                             {
                                 item.position = itemData.Position;
@@ -3108,21 +3110,30 @@ namespace Oxide.Plugins
                     {
                         ItemData itemData = MainItems[i];
                         if (itemData.Amount > 0)
-                            yield return CreateItem(itemData);
+                        {
+                            Item item = CreateItem(itemData);
+                            if (item != null) yield return item;
+                        }
                     }
                     
                     for (int i = 0; i < WearItems.Length; i++)
                     {
                         ItemData itemData = WearItems[i];
                         if (itemData.Amount > 0)
-                            yield return CreateItem(itemData);
+                        {
+                            Item item = CreateItem(itemData);
+                            if (item != null) yield return item;
+                        }
                     }
                     
                     for (int i = 0; i < BeltItems.Length; i++)
                     {
                         ItemData itemData = BeltItems[i];
                         if (itemData.Amount > 0)
-                            yield return CreateItem(itemData);
+                        {
+                            Item item = CreateItem(itemData);
+                            if (item != null) yield return item;
+                        }
                     }
                 }
 
@@ -3343,6 +3354,12 @@ namespace Oxide.Plugins
         private static Item CreateItem(ItemData itemData, BasePlayer player = null)
         {
             int itemId = itemData.ItemID;
+            if (itemId <= 0)
+            {
+                Debug.LogWarning($"[Kits] Предмет '{itemData.Shortname}' не найден в ItemDictionary — пропускаем");
+                return null;
+            }
+
             ulong skin = itemData.Skin;
 
             if (player)
@@ -3374,7 +3391,7 @@ namespace Oxide.Plugins
                     (BaseNetworkable.serverEntities.Find(item.instanceData.subEntity) as PagerEntity)?.ChangeFrequency(itemData.Frequency);  
             }
 
-            if (itemData.BlueprintItemID != 0)
+            if (itemData.BlueprintItemID > 0)
             {
                 if (item.instanceData == null)
                     item.instanceData = new ProtoBuf.Item.InstanceData();
@@ -3498,7 +3515,13 @@ namespace Oxide.Plugins
                 get
                 {
                     if (_itemId == 0)
-                        _itemId = ItemManager.itemDictionaryByName[Shortname].itemid;
+                    {
+                        // устаревший/переименованный shortname не должен ронять выдачу всего набора
+                        ItemDefinition def = null;
+                        if (!string.IsNullOrEmpty(Shortname))
+                            ItemManager.itemDictionaryByName.TryGetValue(Shortname, out def);
+                        _itemId = def != null ? def.itemid : -1;
+                    }
                     return _itemId;
                 }
             }
@@ -3512,7 +3535,11 @@ namespace Oxide.Plugins
                 get
                 {
                     if (_blueprintItemId == 0 && !string.IsNullOrEmpty(BlueprintShortname))
-                        _blueprintItemId = ItemManager.itemDictionaryByName[BlueprintShortname].itemid;
+                    {
+                        ItemDefinition def = null;
+                        ItemManager.itemDictionaryByName.TryGetValue(BlueprintShortname, out def);
+                        _blueprintItemId = def != null ? def.itemid : -1;
+                    }
                     return _blueprintItemId;
                 }
             }

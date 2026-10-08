@@ -1065,7 +1065,8 @@ namespace Oxide.Plugins
 
             if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] octakits_try_claim called for kit '{kitname}' by player {player.displayName}");
 
-            if ((bool) Kits.Call("TryClaimKit", player, kitname, false))
+            object claimResult = Kits.Call("TryClaimKit", player, kitname, false);
+            if (claimResult is bool && (bool)claimResult)
             {   
                 if (config?.debugMode == true) PrintWarning($"[OctaKits DEBUG] Kit '{kitname}' successfully claimed by {player.displayName}");
 
