@@ -12,10 +12,12 @@ using System;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaFeed", "Octavian", "1.0.1")]
+    [Info("OctaFeed", "Octavian", "1.0.2")]
     [Description("Киллфид: кто кого убил, оружие, дистанция. /dm — личные настройки")]
     public partial class OctaFeed : RustPlugin
     {
+        private static int RowWidth => Instance.Cfg?.UIConfig != null && Instance.Cfg.UIConfig.RowWidth > 0 ? Instance.Cfg.UIConfig.RowWidth : 480;
+        private static int GetWpStart(int totalWidth, int modCount) => (totalWidth - 57) - (20 + modCount * 18);
 
         private void RemoveUITemplate(BasePlayer player)
         {
@@ -24,8 +26,11 @@ namespace Oxide.Plugins
 
         private void AddUISettings(BasePlayer player)
         {
+            int w = RowWidth;
+            int ox = Instance.Cfg.UIConfig.OffsetX;
+            int oy = Instance.Cfg.UIConfig.OffsetY;
             CuiElementContainer container = new CuiElementContainer();
-            container.Add(new CuiElement { Name = "DMUI", Parent = "Overlay", Components = { new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = $"{-385} {-25}", OffsetMax = $"{-365} {-5}" }, new CuiImageComponent { Color = "1 1 1 0.8", Sprite = "assets/icons/tools.png", Material = "assets/icons/iconmaterial.mat", } } });
+            container.Add(new CuiElement { Name = "DMUI", Parent = "Overlay", Components = { new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = $"{-w - 25 - ox} {-25 - oy}", OffsetMax = $"{-w - 5 - ox} {-5 - oy}" }, new CuiImageComponent { Color = "1 1 1 0.8", Sprite = "assets/icons/tools.png", Material = "assets/icons/iconmaterial.mat", } } });
             if (Instance.Cfg.UIConfig.Outline)
                 container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
             container.Add(new CuiButton { Button = { Command = $"octafeed show", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", }, Text = { Text = "", }, }, "DMUI", "DMUI.Button");
@@ -187,17 +192,19 @@ namespace Oxide.Plugins
         private void AddUIRow(string message, string distance, int weaponIcon, List<int> weaponModIcons)
         {
             LAST_ROW_MODIFY_TIME = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+            int w = RowWidth;
+            int wpStart = GetWpStart(w, weaponModIcons.Count);
             CuiElementContainer container = new CuiElementContainer();
             for (int i = Instance.Cfg.UIConfig.Rows - 1; i > 0; i--)
             {
-                container.Add(new CuiElement { Name = $"{PANEL_NAME}R{(LAST_ROW_ID + i - 1) % Instance.Cfg.UIConfig.Rows}", Components = { new CuiRectTransformComponent { OffsetMin = i >= DeathRow.DeathRows.Count ? $"380 {-20 - i * 25}" : $"0 {-20 - i * 25}", OffsetMax = $"380 {0 - i * 25}" } }, Update = true });
+                container.Add(new CuiElement { Name = $"{PANEL_NAME}R{(LAST_ROW_ID + i - 1) % Instance.Cfg.UIConfig.Rows}", Components = { new CuiRectTransformComponent { OffsetMin = i >= DeathRow.DeathRows.Count ? $"{w} {-20 - i * 25}" : $"0 {-20 - i * 25}", OffsetMax = $"{w} {0 - i * 25}" } }, Update = true });
             }
 
             LAST_ROW_ID = (LAST_ROW_ID - 1 + Instance.Cfg.UIConfig.Rows) % Instance.Cfg.UIConfig.Rows;
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}", Components = { new CuiRectTransformComponent { OffsetMin = "0 -20", OffsetMax = "380 0" } }, Update = true });
+            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}", Components = { new CuiRectTransformComponent { OffsetMin = "0 -20", OffsetMax = $"{w} 0" } }, Update = true });
             container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}DT", Components = { new CuiTextComponent { Text = distance }, }, Update = true });
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}K", Components = { new CuiTextComponent { Text = message }, new CuiRectTransformComponent { OffsetMin = $"{0 - (6 - weaponModIcons.Count) * 18} 0", OffsetMax = $"{190 + (6 - weaponModIcons.Count) * 18} 20" }, }, Update = true });
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}WP", Components = { new CuiRectTransformComponent { OffsetMin = $"{305 - (weaponModIcons.Count * 18)} 0", OffsetMax = "325 20" }, }, Update = true });
+            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}K", Components = { new CuiTextComponent { Text = message }, new CuiRectTransformComponent { OffsetMin = "6 0", OffsetMax = $"{wpStart - 6} 20" }, }, Update = true });
+            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}WP", Components = { new CuiRectTransformComponent { OffsetMin = $"{wpStart} 0", OffsetMax = $"{w - 57} 20" }, }, Update = true });
             container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}IW", Components = { new CuiImageComponent { ItemId = weaponIcon }, }, Update = true });
             for (int j = 0; j < weaponModIcons.Count; j++)
             {
@@ -230,20 +237,23 @@ namespace Oxide.Plugins
                     return;
             }
 
+            int w = RowWidth;
             CuiElementContainer container = new CuiElementContainer();
             for (int i = Instance.Cfg.UIConfig.Rows - 1; i >= 0; i--)
             {
                 if (i < DeathRow.DeathRows.Count)
                 {
                     int currentRowIndex = (LAST_ROW_ID + i) % Instance.Cfg.UIConfig.Rows;
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex, Parent = PANEL_NAME, Components = { new CuiRectTransformComponent { OffsetMin = $"0 {-20 - (i) * 25}", OffsetMax = $"380 {0 - (i) * 25}" }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "D" + "T", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiTextComponent { Text = DeathRow.DeathRows[i].Distance, }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "K", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiTextComponent { Text = DeathRow.DeathRows[i].Message, }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"0 0", OffsetMax = $"{190 + (6 - DeathRow.DeathRows[i].WeaponModsIcons.Count) * 18} 20" }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "WP", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{305 - (DeathRow.DeathRows[i].WeaponModsIcons.Count * 18)} 0", OffsetMax = $"{325} 20" }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "I" + "W", Parent = PANEL_NAME + "R" + currentRowIndex + "WP", Components = { new CuiImageComponent { ItemId = DeathRow.DeathRows[i].WeaponIcon, } }, Update = true });
-                    for (int j = 0; j < DeathRow.DeathRows[i].WeaponModsIcons.Count; j++)
+                    var row = DeathRow.DeathRows[i];
+                    int wpStart = GetWpStart(w, row.WeaponModsIcons.Count);
+                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex, Parent = PANEL_NAME, Components = { new CuiRectTransformComponent { OffsetMin = $"0 {-20 - (i) * 25}", OffsetMax = $"{w} {0 - (i) * 25}" }, }, Update = true });
+                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "D" + "T", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiTextComponent { Text = row.Distance, }, }, Update = true });
+                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "K", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiTextComponent { Text = row.Message, }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "6 0", OffsetMax = $"{wpStart - 6} 20" }, }, Update = true });
+                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "WP", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{wpStart} 0", OffsetMax = $"{w - 57} 20" }, }, Update = true });
+                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "I" + "W", Parent = PANEL_NAME + "R" + currentRowIndex + "WP", Components = { new CuiImageComponent { ItemId = row.WeaponIcon, } }, Update = true });
+                    for (int j = 0; j < row.WeaponModsIcons.Count; j++)
                     {
-                        container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "I" + "M" + (5 - j).ToString(), Parent = PANEL_NAME + "R" + currentRowIndex + "WP", Components = { new CuiImageComponent { ItemId = DeathRow.DeathRows[i].WeaponModsIcons.ElementAt(j), }, }, Update = true });
+                        container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "I" + "M" + (5 - j).ToString(), Parent = PANEL_NAME + "R" + currentRowIndex + "WP", Components = { new CuiImageComponent { ItemId = row.WeaponModsIcons.ElementAt(j), }, }, Update = true });
                     }
                 }
             }
@@ -253,16 +263,21 @@ namespace Oxide.Plugins
 
         private string CreateUITemplate()
         {
+            int w = RowWidth;
+            int ox = Instance.Cfg.UIConfig.OffsetX;
+            int oy = Instance.Cfg.UIConfig.OffsetY;
+            int defaultWpStart = GetWpStart(w, 0);
+
             CuiElementContainer container = new CuiElementContainer();
-            container.Add(new CuiElement { Name = PANEL_NAME, Parent = HUD, Components = { new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = $"{-385 - Instance.Cfg.UIConfig.OffsetX} {-250 - Instance.Cfg.UIConfig.OffsetY}", OffsetMax = $"{-5 - Instance.Cfg.UIConfig.OffsetX} {-5 - Instance.Cfg.UIConfig.OffsetY}" }, new CuiImageComponent { Color = "0 0 0 0" }, } });
+            container.Add(new CuiElement { Name = PANEL_NAME, Parent = HUD, Components = { new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = $"{-w - 5 - ox} {-250 - oy}", OffsetMax = $"{-5 - ox} {-5 - oy}" }, new CuiImageComponent { Color = "0 0 0 0" }, } });
             for (int i = 0; i < Instance.Cfg.UIConfig.Rows; i++)
             {
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i, Parent = PANEL_NAME, Components = { new CuiRectTransformComponent { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = $"380 {-20 - i * 25}", OffsetMax = $"380 {0 - i * 25}" }, new CuiImageComponent { Color = HexToRGBA(Instance.Cfg.UIConfig.RowColor) }, } });
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "D", Parent = PANEL_NAME + "R" + i, Components = { new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"325 -20", OffsetMax = $"385 40" }, new CuiRawImageComponent { Color = HexToRGBA(Instance.Cfg.UIConfig.DistanceColor), Material = "assets/icons/iconmaterial.mat", Sprite = $"assets/icons/subtract.png", }, } });
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "D" + "T", Parent = PANEL_NAME + "R" + i, Components = { new CuiTextComponent { Text = "", Color = HexToRGBA(Instance.Cfg.UIConfig.DistanceProperty.Color), Align = TextAnchor.MiddleCenter, FontSize = Instance.Cfg.UIConfig.DistanceProperty.Size, Font = "robotocondensed-bold.ttf", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"325 0", OffsetMax = $"385 20" } } });
+                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i, Parent = PANEL_NAME, Components = { new CuiRectTransformComponent { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = $"{w} {-20 - i * 25}", OffsetMax = $"{w} {0 - i * 25}" }, new CuiImageComponent { Color = HexToRGBA(Instance.Cfg.UIConfig.RowColor) }, } });
+                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "D", Parent = PANEL_NAME + "R" + i, Components = { new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{w - 55} -20", OffsetMax = $"{w + 5} 40" }, new CuiRawImageComponent { Color = HexToRGBA(Instance.Cfg.UIConfig.DistanceColor), Material = "assets/icons/iconmaterial.mat", Sprite = $"assets/icons/subtract.png", }, } });
+                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "D" + "T", Parent = PANEL_NAME + "R" + i, Components = { new CuiTextComponent { Text = "", Color = HexToRGBA(Instance.Cfg.UIConfig.DistanceProperty.Color), Align = TextAnchor.MiddleCenter, FontSize = Instance.Cfg.UIConfig.DistanceProperty.Size, Font = "robotocondensed-bold.ttf", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{w - 55} 0", OffsetMax = $"{w + 5} 20" } } });
                 if (Instance.Cfg.UIConfig.Outline)
                     container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "WP", Parent = PANEL_NAME + "R" + i, Components = { new CuiScrollViewComponent { Vertical = false, Horizontal = true, MovementType = UnityEngine.UI.ScrollRect.MovementType.Unrestricted, ContentTransform = new CuiRectTransform { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "0 0", OffsetMax = "113 20" }, HorizontalScrollbar = new CuiScrollbar { Size = 0, HandleColor = "0 0 0 0", HighlightColor = "0 0 0 0", PressedColor = "0 0 0 0", TrackColor = "0 0 0 0", }, VerticalScrollbar = new CuiScrollbar { Size = 0, HandleColor = "0 0 0 0", HighlightColor = "0 0 0 0", PressedColor = "0 0 0 0", TrackColor = "0 0 0 0", } }, new CuiImageComponent { Color = "0 0 0 0", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{192} 0", OffsetMax = $"{325} 20" }, } });
+                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "WP", Parent = PANEL_NAME + "R" + i, Components = { new CuiScrollViewComponent { Vertical = false, Horizontal = true, MovementType = UnityEngine.UI.ScrollRect.MovementType.Unrestricted, ContentTransform = new CuiRectTransform { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "0 0", OffsetMax = "128 20" }, HorizontalScrollbar = new CuiScrollbar { Size = 0, HandleColor = "0 0 0 0", HighlightColor = "0 0 0 0", PressedColor = "0 0 0 0", TrackColor = "0 0 0 0", }, VerticalScrollbar = new CuiScrollbar { Size = 0, HandleColor = "0 0 0 0", HighlightColor = "0 0 0 0", PressedColor = "0 0 0 0", TrackColor = "0 0 0 0", } }, new CuiImageComponent { Color = "0 0 0 0", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{defaultWpStart} 0", OffsetMax = $"{w - 57} 20" }, } });
                 container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "I" + "W", Parent = PANEL_NAME + "R" + i + "WP", Components = { new CuiImageComponent { ItemId = 1545779598, Color = "1 1 1 1", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{1} 1", OffsetMax = $"{19} 19" } } });
                 if (Instance.Cfg.UIConfig.ImageOutline)
                     container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
@@ -273,7 +288,7 @@ namespace Oxide.Plugins
                         container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
                 }
 
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "K", Parent = PANEL_NAME + "R" + i, Components = { new CuiTextComponent { Text = "", Color = HexToRGBA(Instance.Cfg.UIConfig.TextProperty.Color), Align = TextAnchor.MiddleRight, FontSize = Instance.Cfg.UIConfig.TextProperty.Size, Font = "robotocondensed-bold.ttf", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"0 0", OffsetMax = $"190 20" } } });
+                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "K", Parent = PANEL_NAME + "R" + i, Components = { new CuiTextComponent { Text = "", Color = HexToRGBA(Instance.Cfg.UIConfig.TextProperty.Color), Align = TextAnchor.MiddleRight, FontSize = Instance.Cfg.UIConfig.TextProperty.Size, Font = "robotocondensed-bold.ttf", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "6 0", OffsetMax = $"{defaultWpStart - 6} 20" } } });
                 if (Instance.Cfg.UIConfig.Outline)
                     container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
             }
@@ -1022,6 +1037,8 @@ namespace Oxide.Plugins
                 public int OffsetY = 0;
                 [JsonProperty("[8.2] Отступ сбоку в пикселях (при разрешении 1360x768)")]
                 public int OffsetX = 0;
+                [JsonProperty("[8.3] Ширина строки киллфида в пикселях")]
+                public int RowWidth = 480;
                 [JsonProperty("[9.1] Включить настройку плагина")]
                 public bool EnableUISettings = true;
                 [JsonProperty("[9.2] Включить кнопку настроек плагина")]
