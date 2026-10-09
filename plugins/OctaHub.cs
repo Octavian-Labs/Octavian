@@ -143,9 +143,35 @@ namespace Oxide.Plugins
         private class PlayData { public long TotalSec; public long WipeSec; }
         private Dictionary<ulong, PlayData> _play = new Dictionary<ulong, PlayData>();
 
-        // мировые события (Брэдли/Карго/Чинук/вертолёт/хак-ящики) — скан раз в 20 сек
-        private class WorldEvent { public string Key; public string Title; public Vector3 Pos; public string Desc; }
-        private readonly List<WorldEvent> _worldEvents = new List<WorldEvent>();
+        // мировые события — одна карточка на КАТЕГОРИЮ (не на сущность):
+        // туши техники лежат в serverEntities до деспавна, считаем только живых
+        private class WorldEvtCat
+        {
+            public string Key, Title, Desc;
+            public string Image = "";       // url иконки (те же, что у OctaPanel)
+            public int Count;               // живых сущностей категории
+            public Vector3 Pos;             // квадрат первой найденной
+            public string Note;             // «респавн ожидается», «выключено в конфиге»
+        }
+        private readonly List<WorldEvtCat> _worldCats = new List<WorldEvtCat>
+        {
+            new WorldEvtCat { Key = "bradley", Title = "БРЭДЛИ", Image = "https://i.imgur.com/j5cMDpt.png",
+                Desc = "Боевой БТР патрулирует монумент: броня, пулемёт, ракеты. Добыча — элитные ящики и запчасти. Взрывчатка решает." },
+            new WorldEvtCat { Key = "heli", Title = "ПАТРУЛЬНЫЙ ВЕРТОЛЁТ", Image = "https://i.imgur.com/HtAifod.png",
+                Desc = "Летающий кошмар с ракетами и пулемётом. Нападает на вооружённых. Сбитый — оставляет ящики с топ-лутом." },
+            new WorldEvtCat { Key = "chinook", Title = "ЧИНУК", Image = "https://i.imgur.com/jRIF5y8.png",
+                Desc = "Транспортник сбрасывает защищённый ящик на монумент. Догони точку высадки и дождись расшифровки." },
+            new WorldEvtCat { Key = "cargo", Title = "ГРУЗОВОЕ СУДНО", Image = "https://i.imgur.com/xU8IUWO.png",
+                Desc = "Корабль с охраной-учёными и тремя защищёнными ящиками. Подплывай на лодке — лестница с кормы." },
+            new WorldEvtCat { Key = "crate", Title = "ЗАЩИЩЁННЫЙ ЯЩИК", Image = "",
+                Desc = "Ящик с таймером расшифровки — процесс шумный и долгий. Лут уровня заправки или нефтевышки." },
+            new WorldEvtCat { Key = "airdrop", Title = "ГРУЗОВОЙ САМОЛЁТ", Image = "https://i.imgur.com/CL41EJS.png",
+                Desc = "Самолёт сбрасывает контейнер — по сигнальной гранате или по расписанию. Жди точку падения." },
+            new WorldEvtCat { Key = "ghost", Title = "ПРИЗРАЧНЫЙ КОРАБЛЬ", Image = "",
+                Desc = "Судно-призрак из глубоководья — появляется в открытом море, на борту лут и опасность." },
+            new WorldEvtCat { Key = "city", Title = "ПЛАВУЧИЙ ГОРОД", Image = "",
+                Desc = "Плавучий город в открытом море: торговля, терминалы, мини-игры. Туда — только на лодке." },
+        };
         private string _worldSig = "";
         private Timer _scanTimer, _playTimer, _saveTimer;
 
@@ -626,6 +652,7 @@ namespace Oxide.Plugins
             var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
             var st = St(player);
             st.EvtKey = args.Length > 0 && args[0] != "back" ? args[0] : null;
+            st.EvtPage = 0;
             UiRefresh(player, UiCnt);
         }
 
@@ -859,46 +886,69 @@ namespace Oxide.Plugins
 
         // ── Трекер мировых событий ───────────────────────────────────────────
 
-        // Один проход по serverEntities — собираем живые ивенты-корни.
+        private WorldEvtCat Cat(string key)
+        {
+            for (int i = 0; i < _worldCats.Count; i++)
+                if (_worldCats[i].Key == key) return _worldCats[i];
+            return null;
+        }
+
+        // ghostship/floatingcity — internal-классы, ловим по префиксу префаба (как OctaPanel)
+        private static bool MatchesPrefab(BaseNetworkable e, string prefix)
+        {
+            var spn = e?.ShortPrefabName;
+            return spn != null && spn.StartsWith(prefix, StringComparison.Ordinal)
+                && !spn.Contains("mapmarker");
+        }
+
+        // Один проход по serverEntities — счёт живых сущностей по категориям.
         // Подпись сравниваем, чтобы перерисовывать раздел только при изменениях.
         private void ScanWorldEvents()
         {
-            var found = new List<WorldEvent>();
-            int crates = 0;
+            foreach (var c in _worldCats) { c.Count = 0; c.Note = null; }
+
             foreach (var ent in BaseNetworkable.serverEntities)
             {
                 if (ent == null || ent.IsDestroyed) continue;
-                if (ent is BradleyAPC)
-                    found.Add(new WorldEvent { Key = "bradley", Title = "БРЭДЛИ", Pos = ent.transform.position,
-                        Desc = "Боевой БТР патрулирует монумент — броня, пулемёт, ракеты. Добыча: элитные ящики и запчасти." });
-                else if (ent is PatrolHelicopter)
-                    found.Add(new WorldEvent { Key = "heli", Title = "ПАТРУЛЬНЫЙ ВЕРТОЛЁТ", Pos = ent.transform.position,
-                        Desc = "Летающий кошмар с ракетами и пулемётом. Сбить — значит забрать топ-лут с обломков." });
-                else if (ent is CH47Helicopter)
-                    found.Add(new WorldEvent { Key = "chinook", Title = "ЧИНУК", Pos = ent.transform.position,
-                        Desc = "Транспортник летит к точке сброса — на борту защищённый ящик. Догони и расшифруй." });
-                else if (ent is CargoShip)
-                    found.Add(new WorldEvent { Key = "cargo", Title = "ГРУЗОВОЕ СУДНО", Pos = ent.transform.position,
-                        Desc = "Корабль с охраной и тремя защищёнными ящиками. Подплывай на лодке — лестница с кормы." });
-                else if (ent is HackableLockedCrate && crates < 4)
+                var ce = ent as BaseCombatEntity;
+                if (ce != null && ce.IsDead()) continue; // туша техники — не событие
+
+                WorldEvtCat c = null;
+                if (ent is BradleyAPC) c = Cat("bradley");
+                else if (ent is PatrolHelicopter) c = Cat("heli");
+                else if (ent is CH47Helicopter) c = Cat("chinook");
+                else if (ent is CargoShip) c = Cat("cargo");
+                else if (ent is CargoPlane) c = Cat("airdrop");
+                else if (ent is HackableLockedCrate hc)
                 {
-                    crates++;
-                    found.Add(new WorldEvent { Key = $"crate{crates}", Title = "ЗАЩИЩЁННЫЙ ЯЩИК", Pos = ent.transform.position,
-                        Desc = "Ящик с таймером — расшифровка шумная и долгая. Лут уровня заправки/нефтевышки." });
+                    // ящик интересен, когда приземлился и ещё не вскрыт
+                    if (hc.hasLanded && !hc.hasBeenOpened) c = Cat("crate");
                 }
+                else if (MatchesPrefab(ent, "ghostship")) c = Cat("ghost");
+                else if (MatchesPrefab(ent, "floatingcity")) c = Cat("city");
+
+                if (c == null) continue;
+                if (c.Count == 0) c.Pos = ent.transform.position;
+                c.Count++;
             }
 
-            _worldEvents.Clear();
-            _worldEvents.AddRange(found);
+            // живые подсказки из спавнеров/флагов
+            var bs = BradleySpawner.singleton;
+            if (bs != null && bs.spawned == null && bs.pendingRespawn)
+                Cat("bradley").Note = "респавн ожидается";
+            if (!CargoShip.event_enabled)
+                Cat("cargo").Note = "выключено в конфиге";
 
-            // сигнатура = типы + квадраты — перерисовка только при реальном изменении
-            var sig = string.Join("|", _worldEvents.Select(e => e.Key + GridOf(e.Pos)));
+            // сигнатура: категория + количество + квадрат
+            var sig = string.Join("|", _worldCats.Select(c =>
+                c.Count > 0 ? $"{c.Key}x{c.Count}@{GridOf(c.Pos)}" : c.Key + ":" + (c.Note ?? "")));
             if (sig == _worldSig) return;
             _worldSig = sig;
             foreach (var p in BasePlayer.activePlayerList)
             {
                 UiState s;
-                if (_ui.TryGetValue(p.userID, out s) && s.Section == "events" && s.EvtKey == null)
+                if (_ui.TryGetValue(p.userID, out s) && s.Section == "events"
+                    && (s.EvtKey == null || s.EvtKey.StartsWith("we:")))
                     UiRefresh(p, UiCnt);
             }
         }
@@ -1187,6 +1237,9 @@ namespace Oxide.Plugins
 
         private string EventWidgetText()
         {
+            // живое мировое событие важнее расписания боссов
+            var act = _worldCats.FirstOrDefault(c => c.Count > 0);
+            if (act != null) return $"{act.Title} · АКТИВНО";
             try
             {
                 var arr = OctaBoss?.Call("GetBossStates") as JArray;
@@ -1247,84 +1300,177 @@ namespace Oxide.Plugins
 
         #region [Section: События — живые боссы через OctaBoss.GetBossStates]
 
+        // Общая сетка карточек 3x2 для раздела События
+        private static readonly string[] EvtGrid =
+        {
+            "0.015 0.545-0.325 0.895", "0.345 0.545-0.655 0.895", "0.675 0.545-0.985 0.895",
+            "0.015 0.135-0.325 0.485", "0.345 0.135-0.655 0.485", "0.675 0.135-0.985 0.485",
+        };
+
         private void DrawEventsSection(ref CuiElementContainer ui, BasePlayer player)
         {
             var st = St(player);
 
-            // детальный вид конкретного события
+            // вложенные виды: сетка боссов / деталь мирового / деталь босса
             if (st.EvtKey != null) { DrawEventDetail(ref ui, player, st.EvtKey); return; }
 
             // заголовок раздела + кнопка обновления
             CUIClass.CreateText(ref ui, "oh_evt_h", UiCnt, "text",
-                "<b>◆ СОБЫТИЯ ОСТРОВА</b>  <color=@muted>— живые сущности и боссы по расписанию</color>", 15,
+                "<b>◆ СОБЫТИЯ ОСТРОВА</b>  <color=@muted>— что сейчас живо на карте</color>", 15,
                 "0.015 0.925", "0.90 0.99", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreateButton(ref ui, "oh_evt_rf", UiCnt, "accent.glass", "<color=@accent>⟳</color>", 14,
                 "0.945 0.925", "0.99 0.99", "octahub_refresh", "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
-            // ── карточки: сначала живые мировые события, потом боссы ──────────
-            var cards = new List<JObject>();
-            for (int i = 0; i < _worldEvents.Count; i++)
-            {
-                var w = _worldEvents[i];
-                cards.Add(new JObject
-                {
-                    ["key"] = $"we{i}", ["name"] = w.Title, ["enabled"] = true, ["alive"] = true,
-                    ["grid"] = GridOf(w.Pos), ["world"] = true,
-                });
-            }
-            JArray states = null;
-            if (OctaBoss != null)
-                try { states = OctaBoss.Call("GetBossStates") as JArray; } catch { }
-            if (states != null)
-                foreach (var o in states.OfType<JObject>()
-                    .OrderByDescending(o => o["alive"]?.Value<bool>() == true)
-                    .ThenBy(o => o["nextSpawnUnix"]?.Value<long>() ?? long.MaxValue))
-                    cards.Add(o);
+            // карточки-категории: БОССЫ первой, дальше мировые в фиксированном порядке
+            int cardCount = 1 + _worldCats.Count;
+            int totalPages = (int)Math.Ceiling(cardCount / 6.0);
+            st.EvtPage = Math.Max(0, Math.Min(st.EvtPage, totalPages - 1));
+            int start = st.EvtPage * 6;
 
-            if (cards.Count == 0)
+            for (int idx = 0; idx < 6 && start + idx < cardCount; idx++)
             {
-                CUIClass.CreateText(ref ui, "oh_evt_err", UiCnt, "muted",
-                    OctaBoss == null ? "Событий нет — OctaBoss не загружен." : "Сейчас на острове тихо.", 15,
-                    "0 0", "1 0.9", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                int ci = start + idx;
+                string[] a = EvtGrid[idx].Split('-');
+                string card = $"oh_evt_{idx}";
+
+                string name, status, img = "", cmd;
+                bool active;
+                if (ci == 0)
+                {
+                    name = "БОССЫ ОСТРОВА";
+                    status = BossAggStatus(out active, out img);
+                    cmd = "octahub_evt bosses";
+                }
+                else
+                {
+                    var c = _worldCats[ci - 1];
+                    name = c.Title;
+                    img = c.Image;
+                    active = c.Count > 0;
+                    if (c.Count > 0)
+                        status = $"<color=@accent>АКТИВНО{(c.Count > 1 ? " ×" + c.Count : "")}</color>" +
+                                 $"  <color=@muted>[{GridOf(c.Pos)}]</color>";
+                    else if (!string.IsNullOrEmpty(c.Note))
+                        status = $"<color=@muted>{c.Note}</color>";
+                    else
+                        status = "<color=@muted>нет на карте</color>";
+                    cmd = $"octahub_evt we:{c.Key}";
+                }
+
+                CUIClass.CreatePanel(ref ui, card, UiCnt, "bg", a[0], a[1], false, 0f, Mat);
+                CUIClass.CreatePanel(ref ui, card + "_g", card, active ? "accent" : "accent.dark",
+                    "0 0.97", "1 1", false, 0f, Mat);
+                if (img.StartsWith("http"))
+                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.04 0.30", "0.34 0.94", 0.15f);
+
+                CUIClass.CreateText(ref ui, card + "_n", card, "text", $"<b>{name}</b>", 14,
+                    "0.38 0.74", "0.97 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, card + "_s", card, "muted", status, 11,
+                    "0.38 0.52", "0.97 0.76", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateButton(ref ui, card + "_b", card, "hover", "<color=@accent>ПОДРОБНЕЕ</color>", 10,
+                    "0.38 0.10", "0.97 0.28", cmd, "", "white", 0f,
+                    TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            }
+
+            // пагинация категорий
+            if (totalPages > 1)
+            {
+                if (st.EvtPage > 0)
+                    CUIClass.CreateButton(ref ui, "oh_evt_prev", UiCnt, "accent.glass", "<color=@accent>‹</color>", 16,
+                        "0.885 0.015", "0.93 0.08", $"octahub_evt_page {st.EvtPage - 1}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                if (st.EvtPage + 1 < totalPages)
+                    CUIClass.CreateButton(ref ui, "oh_evt_next", UiCnt, "accent.glass", "<color=@accent>›</color>", 16,
+                        "0.935 0.015", "0.985 0.08", $"octahub_evt_page {st.EvtPage + 1}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            }
+        }
+
+        // Сводный статус карточки «БОССЫ»: живые / ближайший по таймеру / выключены
+        private string BossAggStatus(out bool active, out string img)
+        {
+            active = false; img = "";
+            JArray states = null;
+            try { states = OctaBoss?.Call("GetBossStates") as JArray; } catch { }
+            if (states == null || states.Count == 0)
+                return OctaBoss == null ? "<color=@muted>OctaBoss не загружен</color>"
+                                        : "<color=@muted>нет видов боссов</color>";
+
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            int aliveN = 0;
+            long nextAt = long.MaxValue; string nextName = null;
+            bool anyEnabled = false;
+            foreach (var o in states.OfType<JObject>())
+            {
+                if (string.IsNullOrEmpty(img))
+                    img = o["image"]?.ToString() ?? "";
+                if (o["enabled"]?.Value<bool>() != true) continue;
+                anyEnabled = true;
+                if (o["alive"]?.Value<bool>() == true) { aliveN++; continue; }
+                long ns = o["nextSpawnUnix"]?.Value<long>() ?? 0;
+                if (ns > 0 && ns < nextAt) { nextAt = ns; nextName = o["name"]?.ToString(); }
+            }
+
+            if (aliveN > 0) { active = true; return $"<color=@red>ЖИВЫХ СЕЙЧАС: {aliveN}</color>"; }
+            if (nextName != null)
+                return $"<color=@muted>ближайший:</color> <color=@accent>{nextName} · {FmtLeft(nextAt - now)}</color>";
+            return anyEnabled ? "<color=@muted>ожидают расписания</color>" : "<color=@muted>все выключены</color>";
+        }
+
+        // Сетка боссов внутри карточки «БОССЫ» — живые карточки из GetBossStates
+        private void DrawBossGrid(ref CuiElementContainer ui, BasePlayer player)
+        {
+            var st = St(player);
+
+            CUIClass.CreatePanel(ref ui, "oh_evd", UiCnt, "row", "0.015 0.90", "0.985 0.985", false, 0f, Mat);
+            CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text",
+                "<b>БОССЫ ОСТРОВА</b>  <color=@muted>— статусы живут по расписанию OctaBoss</color>", 12,
+                "0.02 0", "0.85 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateButton(ref ui, "oh_evd_b", "oh_evd", "accent.glass", "<color=@accent>← НАЗАД</color>", 10,
+                "0.86 0.15", "0.99 0.85", "octahub_evt back", "", "white", 0f,
+                TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
+            JArray states = null;
+            try { states = OctaBoss?.Call("GetBossStates") as JArray; } catch { }
+            var list = states?.OfType<JObject>()
+                .OrderByDescending(o => o["alive"]?.Value<bool>() == true)
+                .ThenBy(o => o["nextSpawnUnix"]?.Value<long>() ?? long.MaxValue)
+                .ToList() ?? new List<JObject>();
+
+            if (list.Count == 0)
+            {
+                CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "muted",
+                    OctaBoss == null ? "OctaBoss не загружен." : "Видов боссов нет — настрой их в OctaBoss.json.", 14,
+                    "0 0", "1 0.85", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 return;
             }
 
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-            // сетка 3x2 с пагинацией
-            string[] grid =
-            {
-                "0.015 0.545-0.325 0.895", "0.345 0.545-0.655 0.895", "0.675 0.545-0.985 0.895",
-                "0.015 0.135-0.325 0.485", "0.345 0.135-0.655 0.485", "0.675 0.135-0.985 0.485",
-            };
-            int totalPages = (int)Math.Ceiling(cards.Count / 6.0);
+            int totalPages = (int)Math.Ceiling(list.Count / 6.0);
             st.EvtPage = Math.Max(0, Math.Min(st.EvtPage, totalPages - 1));
             int start = st.EvtPage * 6;
 
-            for (int idx = 0; idx < 6 && start + idx < cards.Count; idx++)
+            for (int idx = 0; idx < 6 && start + idx < list.Count; idx++)
             {
-                var o = cards[start + idx];
-                string[] a = grid[idx].Split('-');
+                var o = list[start + idx];
+                string[] a = EvtGrid[idx].Split('-');
                 string key = o["key"]?.ToString() ?? $"b{idx}";
                 string name = o["name"]?.ToString() ?? key.ToUpper();
                 bool enabled = o["enabled"]?.Value<bool>() ?? true;
                 bool alive = o["alive"]?.Value<bool>() ?? false;
-                bool world = o["world"]?.Value<bool>() == true;
-                string card = $"oh_evt_{idx}";
+                string card = $"oh_boss_{idx}";
 
                 CUIClass.CreatePanel(ref ui, card, UiCnt, "bg", a[0], a[1], false, 0f, Mat);
-                CUIClass.CreatePanel(ref ui, card + "_g", card,
-                    alive ? (world ? "accent" : "red") : "accent.dark", "0 0.97", "1 1", false, 0f, Mat);
+                CUIClass.CreatePanel(ref ui, card + "_g", card, alive ? "red" : "accent.dark",
+                    "0 0.97", "1 1", false, 0f, Mat);
 
                 string img = o["image"]?.ToString() ?? "";
                 if (img.StartsWith("http"))
-                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.03 0.35", "0.33 0.95", 0.15f);
+                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.04 0.30", "0.34 0.94", 0.15f);
 
                 string status;
-                if (world)
-                    status = $"<color=@accent>АКТИВНО</color>  <color=@muted>[{o["grid"]}]</color>";
-                else if (!enabled)
+                if (!enabled)
                     status = "<color=@muted>ВЫКЛЮЧЕН</color>";
                 else if (alive)
                 {
@@ -1339,59 +1485,62 @@ namespace Oxide.Plugins
                                     : "<color=@muted>ожидает расписания</color>";
                 }
 
-                CUIClass.CreateText(ref ui, card + "_n", card, "text", $"<b>{name}</b>", 15,
-                    "0.36 0.78", "0.97 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, card + "_n", card, "text", $"<b>{name}</b>", 14,
+                    "0.38 0.74", "0.97 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 CUIClass.CreateText(ref ui, card + "_s", card, "muted", status, 11,
-                    "0.36 0.60", "0.97 0.80", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                    "0.38 0.52", "0.97 0.76", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
-                // hp-бар живого босса
-                if (alive && !world)
+                if (alive)
                 {
                     int hp = o["hp"]?.Value<int>() ?? 0, hpMax = Math.Max(1, o["hpMax"]?.Value<int>() ?? 1);
                     float frac = Math.Max(0f, Math.Min(1f, (float)hp / hpMax));
-                    CUIClass.CreatePanel(ref ui, card + "_hpb", card, "row", "0.36 0.50", "0.97 0.56", false, 0f, Mat);
+                    CUIClass.CreatePanel(ref ui, card + "_hpb", card, "row", "0.38 0.40", "0.97 0.46", false, 0f, Mat);
                     CUIClass.CreatePanel(ref ui, card + "_hpf", card + "_hpb", "red",
                         "0 0", $"{frac.ToString("0.###", CultureInfo.InvariantCulture)} 1", false, 0f, Mat);
                 }
 
                 CUIClass.CreateButton(ref ui, card + "_b", card, "hover", "<color=@accent>ПОДРОБНЕЕ</color>", 10,
-                    "0.36 0.08", "0.97 0.24", $"octahub_evt {key}", "", "white", 0f,
+                    "0.38 0.10", "0.97 0.28", $"octahub_evt {key}", "", "white", 0f,
                     TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
 
-            // пагинация событий
             if (totalPages > 1)
             {
                 if (st.EvtPage > 0)
-                    CUIClass.CreateButton(ref ui, "oh_evt_prev", UiCnt, "accent.glass", "<color=@accent>‹</color>", 16,
+                    CUIClass.CreateButton(ref ui, "oh_boss_prev", UiCnt, "accent.glass", "<color=@accent>‹</color>", 16,
                         "0.885 0.015", "0.93 0.08", $"octahub_evt_page {st.EvtPage - 1}", "", "white", 0f,
                         TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
                 if (st.EvtPage + 1 < totalPages)
-                    CUIClass.CreateButton(ref ui, "oh_evt_next", UiCnt, "accent.glass", "<color=@accent>›</color>", 16,
+                    CUIClass.CreateButton(ref ui, "oh_boss_next", UiCnt, "accent.glass", "<color=@accent>›</color>", 16,
                         "0.935 0.015", "0.985 0.08", $"octahub_evt_page {st.EvtPage + 1}", "", "white", 0f,
                         TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
         }
 
-        // Детальный вид события: мировой ивент (we#) или босс с лор-описанием
+        // Детальный вид: «bosses» → сетка боссов, «we:<кат>» → мировое событие, иначе → лор босса
         private void DrawEventDetail(ref CuiElementContainer ui, BasePlayer player, string key)
         {
-            // мировое событие — берём живой снимок из трекера
-            if (key.StartsWith("we"))
+            if (key == "bosses") { DrawBossGrid(ref ui, player); return; }
+
+            // мировое событие — категория из трекера
+            if (key.StartsWith("we:"))
             {
-                int wi;
-                WorldEvent w = int.TryParse(key.Substring(2), out wi) && wi < _worldEvents.Count
-                    ? _worldEvents[wi] : null;
+                var c = Cat(key.Substring(3));
+                string status = "<color=@muted>нет на карте</color>";
+                if (c != null && c.Count > 0)
+                    status = $"<color=@accent>АКТИВНО{(c.Count > 1 ? " ×" + c.Count : "")}</color>" +
+                             $" · квадрат <color=@accent>{GridOf(c.Pos)}</color>";
+                else if (c != null && !string.IsNullOrEmpty(c.Note))
+                    status = $"<color=@muted>{c.Note}</color>";
+
                 CUIClass.CreatePanel(ref ui, "oh_evd", UiCnt, "row", "0.015 0.90", "0.985 0.985", false, 0f, Mat);
-                CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text",
-                    w != null ? $"<color=@accent>АКТИВНО</color> · квадрат <color=@accent>{GridOf(w.Pos)}</color>"
-                              : "<color=@muted>событие завершилось</color>", 12,
+                CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text", status, 12,
                     "0.02 0", "0.85 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text",
-                    w != null
-                        ? $"<size=30><color=#E8B84B>{w.Title}</color></size>\n\n<size=16>{w.Desc}</size>\n\n" +
+                    c != null
+                        ? $"<size=30><color=#E8B84B>{c.Title}</color></size>\n\n<size=16>{c.Desc}</size>\n\n" +
                           "<size=13><color=#83b8c7>СОВЕТ:</color> иди группой — точка шумная, сбегутся и свои, и чужие.</size>"
-                        : "Событие завершилось — вернись к списку.",
+                        : "Неизвестное событие.",
                     14, "0.03 0.08", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
                 // кнопка последней — иначе её перекроет текст
                 CUIClass.CreateButton(ref ui, "oh_evd_b", "oh_evd", "accent.glass", "<color=@accent>← НАЗАД</color>", 10,
@@ -1413,28 +1562,29 @@ namespace Oxide.Plugins
             var lines = spec != null ? BossPageLines(spec) : new List<string> { key.ToUpper() };
 
             // вверху — живой статус одной строкой
-            string status;
-            if (live == null) status = "<color=@muted>нет данных</color>";
-            else if (live["enabled"]?.Value<bool>() != true) status = "<color=@muted>ВЫКЛЮЧЕН</color>";
+            string status2;
+            if (live == null) status2 = "<color=@muted>нет данных</color>";
+            else if (live["enabled"]?.Value<bool>() != true) status2 = "<color=@muted>ВЫКЛЮЧЕН</color>";
             else if (live["alive"]?.Value<bool>() == true)
             {
                 string g = live["grid"]?.ToString();
-                status = $"<color=@red>ЖИВ</color> · {live["hp"]}/{live["hpMax"]} HP" +
+                status2 = $"<color=@red>ЖИВ</color> · {live["hp"]}/{live["hpMax"]} HP" +
                          (g != null ? $" · квадрат <color=@accent>{g}</color>" : "") +
                          $" · фаза {live["phase"]}";
             }
             else
             {
                 long ns = live["nextSpawnUnix"]?.Value<long>() ?? 0;
-                status = ns > 0 ? $"спавн через <color=@accent>{FmtLeft(ns - DateTimeOffset.UtcNow.ToUnixTimeSeconds())}</color>"
+                status2 = ns > 0 ? $"спавн через <color=@accent>{FmtLeft(ns - DateTimeOffset.UtcNow.ToUnixTimeSeconds())}</color>"
                                 : "<color=@muted>ожидает расписания</color>";
             }
 
             CUIClass.CreatePanel(ref ui, "oh_evd", UiCnt, "row", "0.015 0.90", "0.985 0.985", false, 0f, Mat);
-            CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text", status, 12,
+            CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text", status2, 12,
                 "0.02 0", "0.85 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            // назад — в сетку боссов, откуда пришли
             CUIClass.CreateButton(ref ui, "oh_evd_b", "oh_evd", "accent.glass", "<color=@accent>← НАЗАД</color>", 10,
-                "0.86 0.15", "0.99 0.85", "octahub_evt back", "", "white", 0f,
+                "0.86 0.15", "0.99 0.85", "octahub_evt bosses", "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
             CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text", string.Join("\n", lines), 13,
