@@ -26,7 +26,7 @@ namespace Oxide.Plugins
 
         #region [Dependencies]
 
-        [PluginReference] Plugin ImageLibrary, OctaUI, OctaKits, OctaBoss, OctVIP, OctaTP, OctaFeed, OctaWC;
+        [PluginReference] Plugin ImageLibrary, OctaUI, OctaKits, OctaBoss, OctVIP, OctaTP, OctaFeed, OctaWC, OctaRel;
         [PluginReference] Plugin Economics, ServerRewards, WipeCountdown;
 
         private void DependencyWarnings()
@@ -111,12 +111,14 @@ namespace Oxide.Plugins
 
         private class UiState
         {
-            public string Section = "home"; // активный раздел
-            public int InfoTab = 2;         // открытая инфо-страница (старый номер вкладки), 0 = список
-            public int Page = 1;            // страница внутри инфо-страницы
+            public string Section = "home";    // активный раздел
+            public int InfoTab = 0;            // открытая инфо-страница (старый номер вкладки), 0 = список
+            public string InfoFrom = "list";   // откуда пришли на инфо-страницу: list | home
+            public int Page = 1;               // страница внутри инфо-страницы
             public int KitPage = 0;
-            public string KitCat = "";      // фильтр наборов: "" | fav | free | paid | vip
-            public string EvtKey = null;    // открытая карточка события (ключ босса)
+            public string KitCat = "";         // фильтр наборов: "" | fav | free | paid | vip
+            public string EvtKey = null;       // открытая карточка события (ключ босса или we#)
+            public int EvtPage = 0;            // страница сетки событий
         }
         private readonly Dictionary<ulong, UiState> _ui = new Dictionary<ulong, UiState>();
 
@@ -136,6 +138,16 @@ namespace Oxide.Plugins
 
         // персональная настройка автооткрытия: uid -> bool (data/OctaHub/Prefs.json)
         private Dictionary<ulong, bool> _autoOpen = new Dictionary<ulong, bool>();
+
+        // время игры на сервере: uid -> секунды (data/OctaHub/Playtime.json)
+        private class PlayData { public long TotalSec; public long WipeSec; }
+        private Dictionary<ulong, PlayData> _play = new Dictionary<ulong, PlayData>();
+
+        // мировые события (Брэдли/Карго/Чинук/вертолёт/хак-ящики) — скан раз в 20 сек
+        private class WorldEvent { public string Key; public string Title; public Vector3 Pos; public string Desc; }
+        private readonly List<WorldEvent> _worldEvents = new List<WorldEvent>();
+        private string _worldSig = "";
+        private Timer _scanTimer, _playTimer, _saveTimer;
 
         #endregion
 
@@ -157,14 +169,24 @@ namespace Oxide.Plugins
             SeedVipPages();
             LoadFav();
             LoadPrefs();
+            LoadPlay();
             DependencyWarnings();
             RegisterCommands();
             RegisterPerms();
             DownloadImages();
+
+            // трекер мировых событий — для раздела События
+            _scanTimer = timer.Every(20f, ScanWorldEvents);
+            // счётчик времени на сервере — минута в минуту
+            _playTimer = timer.Every(60f, PlayTick);
+            _saveTimer = timer.Every(300f, SavePlay);
         }
 
         private void OnPlayerConnected(BasePlayer player)
         {
+            if (!_play.ContainsKey(player.userID))
+                _play[player.userID] = new PlayData();
+
             if (config?.generalSettings == null || !config.generalSettings.openOnConnect) return;
 
             // персональная настройка игрока важнее глобальной
@@ -193,10 +215,16 @@ namespace Oxide.Plugins
         {
             _seen.Clear();
             SaveSeen();
+            foreach (var kv in _play) kv.Value.WipeSec = 0;
+            SavePlay();
         }
 
         private void Unload()
         {
+            _scanTimer?.Destroy();
+            _playTimer?.Destroy();
+            _saveTimer?.Destroy();
+            SavePlay();
             foreach (var p in BasePlayer.activePlayerList)
             {
                 UiClose(p);
@@ -307,6 +335,15 @@ namespace Oxide.Plugins
         }
 
         private void SavePrefs() => Interface.Oxide.DataFileSystem.WriteObject($"{Name}/Prefs", _autoOpen);
+
+        private void LoadPlay()
+        {
+            if (Interface.Oxide.DataFileSystem.ExistsDatafile($"{Name}/Playtime"))
+                _play = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, PlayData>>($"{Name}/Playtime")
+                        ?? new Dictionary<ulong, PlayData>();
+        }
+
+        private void SavePlay() => Interface.Oxide.DataFileSystem.WriteObject($"{Name}/Playtime", _play);
 
         #endregion
 
@@ -450,16 +487,19 @@ namespace Oxide.Plugins
             var st = St(player);
             if (args[0] == "back")
             {
-                st.InfoTab = 0; st.Page = 1;
-                UiRefresh(player, UiCnt, UiBot);
+                // возврат на предыдущий уровень: из списка или с главной
+                if (st.InfoFrom == "home") { st.Section = "home"; st.InfoTab = 0; st.Page = 1; }
+                else { st.InfoTab = 0; st.Page = 1; }
+                UiRefresh(player, UiHdr, UiNav, UiCnt, UiBot);
                 return;
             }
             int tab;
             if (!int.TryParse(args[0], out tab) || !IsInfoTab(tab)) return;
             st.Section = "info";
             st.InfoTab = tab;
+            st.InfoFrom = args.Length > 2 ? args[2] : "list";
             st.Page = args.Length > 1 && int.TryParse(args[1], out var pg) ? pg : 1;
-            UiRefresh(player, UiCnt, UiBot);
+            UiRefresh(player, UiHdr, UiNav, UiCnt, UiBot);
         }
 
         [ConsoleCommand("octahub_close")]
@@ -484,6 +524,21 @@ namespace Oxide.Plugins
             if (rows == null || i < 0 || i >= rows.Count) return;
             var chat = rows[i].chatCommand;
             if (string.IsNullOrEmpty(chat)) return;
+
+            // спец-префикс sec: — переход в раздел панели вместо чат-команды
+            if (chat.StartsWith("sec:", StringComparison.OrdinalIgnoreCase))
+            {
+                var st = St(player);
+                var sec = chat.Substring(4).Trim();
+                if (Array.IndexOf(SectionIds, sec) >= 0 && SectionAllowed(player, sec))
+                {
+                    st.Section = sec; st.EvtKey = null;
+                    if (sec == "info") st.InfoTab = 0;
+                    st.Page = 1;
+                    UiRefresh(player, UiHdr, UiNav, UiCnt, UiBot);
+                }
+                return;
+            }
             player.SendConsoleCommand("chat.say", "/" + chat.TrimStart('/'));
         }
 
@@ -508,6 +563,14 @@ namespace Oxide.Plugins
                     break;
                 case "feedname":
                     OctaFeed?.Call("API_SetSetting", player.userID, "hideMyName", !FeedGet(player, "hideMyName"));
+                    break;
+                case "relnotify":
+                    if (OctaRel != null)
+                    {
+                        bool relCur = false;
+                        try { relCur = Convert.ToBoolean(OctaRel.Call("GetNotify", (ulong)player.userID)); } catch { }
+                        OctaRel.Call("SetNotify", (ulong)player.userID, !relCur);
+                    }
                     break;
             }
             UiRefresh(player, UiCnt);
@@ -563,6 +626,35 @@ namespace Oxide.Plugins
             var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
             var st = St(player);
             st.EvtKey = args.Length > 0 && args[0] != "back" ? args[0] : null;
+            UiRefresh(player, UiCnt);
+        }
+
+        [ConsoleCommand("octahub_evt_page")]
+        private void CmdEvtPage(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null || !_ui.ContainsKey(player.userID)) return;
+            var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
+            if (args.Length < 1) return;
+            int page;
+            if (int.TryParse(args[0], out page))
+            {
+                St(player).EvtPage = Math.Max(0, page);
+                UiRefresh(player, UiCnt);
+            }
+        }
+
+        // Управление списками OctaRel из профиля
+        [ConsoleCommand("octahub_rel")]
+        private void CmdRel(ConsoleSystem.Arg arg)
+        {
+            var player = arg?.Player();
+            if (player == null || OctaRel == null || !_ui.ContainsKey(player.userID)) return;
+            var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
+            if (args.Length < 3 || args[0] != "del") return;
+            ulong target;
+            if (!ulong.TryParse(args[2], out target)) return;
+            OctaRel.Call("RemoveRelation", (ulong)player.userID, args[1], target);
             UiRefresh(player, UiCnt);
         }
 
@@ -744,6 +836,73 @@ namespace Oxide.Plugins
             return $"{(int)ts.TotalMinutes}м";
         }
 
+        // ── Счётчик времени на сервере ───────────────────────────────────────
+
+        private void PlayTick()
+        {
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                PlayData d;
+                if (!_play.TryGetValue(p.userID, out d))
+                    d = _play[p.userID] = new PlayData();
+                d.TotalSec += 60;
+                d.WipeSec += 60;
+            }
+        }
+
+        private static string FmtHours(long seconds)
+        {
+            var h = seconds / 3600;
+            var m = (seconds % 3600) / 60;
+            return h > 0 ? $"{h} ч {m} мин" : $"{m} мин";
+        }
+
+        // ── Трекер мировых событий ───────────────────────────────────────────
+
+        // Один проход по serverEntities — собираем живые ивенты-корни.
+        // Подпись сравниваем, чтобы перерисовывать раздел только при изменениях.
+        private void ScanWorldEvents()
+        {
+            var found = new List<WorldEvent>();
+            int crates = 0;
+            foreach (var ent in BaseNetworkable.serverEntities)
+            {
+                if (ent == null || ent.IsDestroyed) continue;
+                if (ent is BradleyAPC)
+                    found.Add(new WorldEvent { Key = "bradley", Title = "БРЭДЛИ", Pos = ent.transform.position,
+                        Desc = "Боевой БТР патрулирует монумент — броня, пулемёт, ракеты. Добыча: элитные ящики и запчасти." });
+                else if (ent is PatrolHelicopter)
+                    found.Add(new WorldEvent { Key = "heli", Title = "ПАТРУЛЬНЫЙ ВЕРТОЛЁТ", Pos = ent.transform.position,
+                        Desc = "Летающий кошмар с ракетами и пулемётом. Сбить — значит забрать топ-лут с обломков." });
+                else if (ent is CH47Helicopter)
+                    found.Add(new WorldEvent { Key = "chinook", Title = "ЧИНУК", Pos = ent.transform.position,
+                        Desc = "Транспортник летит к точке сброса — на борту защищённый ящик. Догони и расшифруй." });
+                else if (ent is CargoShip)
+                    found.Add(new WorldEvent { Key = "cargo", Title = "ГРУЗОВОЕ СУДНО", Pos = ent.transform.position,
+                        Desc = "Корабль с охраной и тремя защищёнными ящиками. Подплывай на лодке — лестница с кормы." });
+                else if (ent is HackableLockedCrate && crates < 4)
+                {
+                    crates++;
+                    found.Add(new WorldEvent { Key = $"crate{crates}", Title = "ЗАЩИЩЁННЫЙ ЯЩИК", Pos = ent.transform.position,
+                        Desc = "Ящик с таймером — расшифровка шумная и долгая. Лут уровня заправки/нефтевышки." });
+                }
+            }
+
+            _worldEvents.Clear();
+            _worldEvents.AddRange(found);
+
+            // сигнатура = типы + квадраты — перерисовка только при реальном изменении
+            var sig = string.Join("|", _worldEvents.Select(e => e.Key + GridOf(e.Pos)));
+            if (sig == _worldSig) return;
+            _worldSig = sig;
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                UiState s;
+                if (_ui.TryGetValue(p.userID, out s) && s.Section == "events" && s.EvtKey == null)
+                    UiRefresh(p, UiCnt);
+            }
+        }
+
         #endregion
 
         #region [UI — каркас в стиле админки OctaBoss]
@@ -888,7 +1047,7 @@ namespace Oxide.Plugins
 
             switch (st.Section)
             {
-                case "kits": DrawKitsSection(player); break;
+                case "kits": DrawKitsSection(ref ui, player); break;
                 case "events": DrawEventsSection(ref ui, player); break;
                 case "profile": DrawProfileSection(ref ui, player); break;
                 case "services": DrawServicesSection(ref ui, player); break;
@@ -945,11 +1104,19 @@ namespace Oxide.Plugins
                 // ── виджеты: вайп / событие / наборы ─────────────────────────
                 string[] wa =
                 {
-                    "0.015 0.80-0.335 0.975", "0.345 0.80-0.665 0.975", "0.675 0.80-0.995 0.975"
+                    "0.015 0.845-0.335 0.985", "0.345 0.845-0.665 0.985", "0.675 0.845-0.995 0.985"
                 };
-                DrawHomeWidget(ref ui, player, wa[0].Split('-'), "ДО ВАЙПА", WipeText(), "octahub_infotab 4");
+                DrawHomeWidget(ref ui, player, wa[0].Split('-'), "ДО ВАЙПА", WipeText(), "octahub_infotab 4 1 home");
                 DrawHomeWidget(ref ui, player, wa[1].Split('-'), "СОБЫТИЕ", EventWidgetText(), "octahub_sec events");
                 DrawHomeWidget(ref ui, player, wa[2].Split('-'), "НАБОРОВ ДОСТУПНО", KitsWidgetText(player), "octahub_sec kits");
+
+                // ── приветствие + персональная статистика ────────────────────
+                CUIClass.CreateText(ref ui, "oh_cnt_hello", UiCnt, "text",
+                    $"<b>Добро пожаловать, <color=@accent>{player.displayName}</color>!</b>", 14,
+                    "0.02 0.77", "0.985 0.835", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, "oh_cnt_stats", UiCnt, "muted",
+                    HomeStatsText(player), 11,
+                    "0.02 0.735", "0.985 0.775", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
             }
 
             // ── текст: первая страница — hero из конфига, 2+ — PageData ─────
@@ -968,15 +1135,15 @@ namespace Oxide.Plugins
             }
 
             if (headTitle != null)
-                CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 24,
-                    "0.035 0.68", "0.965 0.79", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 22,
+                    "0.035 0.655", "0.965 0.725", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             if (headSub != null)
                 CUIClass.CreateText(ref ui, "oh_cnt_sub", UiCnt, "muted", StripSize(R(player, headSub)), 12,
-                    "0.035 0.63", "0.965 0.69", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.615", "0.965 0.62", false, 0f, Mat);
+                    "0.035 0.615", "0.965 0.655", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.605", "0.965 0.61", false, 0f, Mat);
 
             CUIClass.CreateText(ref ui, "oh_cnt_text", UiCnt, tab.mainFontColor, R(player, string.Join("\n", body)),
-                tab.mainFontSize, "0.035 0.10", "0.965 0.605", tab.mainAlign,
+                tab.mainFontSize, "0.035 0.10", "0.965 0.60", tab.mainAlign,
                 tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
 
             if (foot.Count > 0)
@@ -984,6 +1151,24 @@ namespace Oxide.Plugins
                     "0.035 0.02", "0.875 0.09", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
             DrawPageArrows(ref ui, 1, st.Page);
+        }
+
+        // Персональная строка: время на сервере / за вайп / валюта
+        private string HomeStatsText(BasePlayer player)
+        {
+            PlayData pd;
+            _play.TryGetValue(player.userID, out pd);
+            string s = $"на сервере <color=@accent>{FmtHours(pd?.TotalSec ?? 0)}</color>" +
+                       $" · за вайп <color=@accent>{FmtHours(pd?.WipeSec ?? 0)}</color>";
+            try
+            {
+                if (ServerRewards != null)
+                    s += $" · RP <color=@accent>{ServerRewards.Call<int>("CheckPoints", (ulong)player.userID)}</color>";
+                else if (Economics != null)
+                    s += $" · баланс <color=@accent>{Economics.Call<double>("Balance", player.UserIDString):0}</color>";
+            }
+            catch { }
+            return s;
         }
 
         private void DrawHomeWidget(ref CuiElementContainer ui, BasePlayer player, string[] a,
@@ -1066,71 +1251,86 @@ namespace Oxide.Plugins
         {
             var st = St(player);
 
-            // детальный вид конкретного босса
+            // детальный вид конкретного события
             if (st.EvtKey != null) { DrawEventDetail(ref ui, player, st.EvtKey); return; }
 
-            if (OctaBoss == null)
-            {
-                // запасной путь: сгенерированные PageData-страницы боссов (если были)
-                if (CheckPage(10, 2)) { DrawInfoPage(ref ui, player, 10, st.Page); return; }
-                CUIClass.CreateText(ref ui, "oh_evt_err", UiCnt, "muted",
-                    "Система событий недоступна — OctaBoss не загружен.", 15,
-                    "0 0", "1 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-                return;
-            }
+            // заголовок раздела + кнопка обновления
+            CUIClass.CreateText(ref ui, "oh_evt_h", UiCnt, "text",
+                "<b>◆ СОБЫТИЯ ОСТРОВА</b>  <color=@muted>— живые сущности и боссы по расписанию</color>", 15,
+                "0.015 0.925", "0.90 0.99", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateButton(ref ui, "oh_evt_rf", UiCnt, "accent.glass", "<color=@accent>⟳</color>", 14,
+                "0.945 0.925", "0.99 0.99", "octahub_refresh", "", "white", 0f,
+                TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
+            // ── карточки: сначала живые мировые события, потом боссы ──────────
+            var cards = new List<JObject>();
+            for (int i = 0; i < _worldEvents.Count; i++)
+            {
+                var w = _worldEvents[i];
+                cards.Add(new JObject
+                {
+                    ["key"] = $"we{i}", ["name"] = w.Title, ["enabled"] = true, ["alive"] = true,
+                    ["grid"] = GridOf(w.Pos), ["world"] = true,
+                });
+            }
             JArray states = null;
-            try { states = OctaBoss.Call("GetBossStates") as JArray; } catch { }
-            if (states == null || states.Count == 0)
+            if (OctaBoss != null)
+                try { states = OctaBoss.Call("GetBossStates") as JArray; } catch { }
+            if (states != null)
+                foreach (var o in states.OfType<JObject>()
+                    .OrderByDescending(o => o["alive"]?.Value<bool>() == true)
+                    .ThenBy(o => o["nextSpawnUnix"]?.Value<long>() ?? long.MaxValue))
+                    cards.Add(o);
+
+            if (cards.Count == 0)
             {
                 CUIClass.CreateText(ref ui, "oh_evt_err", UiCnt, "muted",
-                    "Нет настроенных событий.", 15, "0 0", "1 1",
-                    TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                    OctaBoss == null ? "Событий нет — OctaBoss не загружен." : "Сейчас на острове тихо.", 15,
+                    "0 0", "1 0.9", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 return;
             }
 
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-            // заголовок раздела + кнопка обновления
-            CUIClass.CreateText(ref ui, "oh_evt_h", UiCnt, "text",
-                "<b>◆ СОБЫТИЯ ОСТРОВА</b>", 18, "0.015 0.925", "0.90 0.99",
-                TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreateButton(ref ui, "oh_evt_rf", UiCnt, "accent.glass", "<color=@accent>⟳</color>", 14,
-                "0.945 0.925", "0.99 0.99", "octahub_refresh", "", "white", 0f,
-                TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
-
-            // сетка карточек 3x2 (строки сжаты — заголовок сверху)
+            // сетка 3x2 с пагинацией
             string[] grid =
             {
                 "0.015 0.545-0.325 0.895", "0.345 0.545-0.655 0.895", "0.675 0.545-0.985 0.895",
                 "0.015 0.135-0.325 0.485", "0.345 0.135-0.655 0.485", "0.675 0.135-0.985 0.485",
             };
-            int idx = 0;
-            foreach (var o in states.OfType<JObject>())
+            int totalPages = (int)Math.Ceiling(cards.Count / 6.0);
+            st.EvtPage = Math.Max(0, Math.Min(st.EvtPage, totalPages - 1));
+            int start = st.EvtPage * 6;
+
+            for (int idx = 0; idx < 6 && start + idx < cards.Count; idx++)
             {
-                if (idx >= grid.Length) break;
+                var o = cards[start + idx];
                 string[] a = grid[idx].Split('-');
                 string key = o["key"]?.ToString() ?? $"b{idx}";
                 string name = o["name"]?.ToString() ?? key.ToUpper();
                 bool enabled = o["enabled"]?.Value<bool>() ?? true;
                 bool alive = o["alive"]?.Value<bool>() ?? false;
+                bool world = o["world"]?.Value<bool>() == true;
                 string card = $"oh_evt_{idx}";
 
                 CUIClass.CreatePanel(ref ui, card, UiCnt, "bg", a[0], a[1], false, 0f, Mat);
-                CUIClass.CreatePanel(ref ui, card + "_g", card, alive ? "red" : "accent.dark", "0 0.97", "1 1", false, 0f, Mat);
+                CUIClass.CreatePanel(ref ui, card + "_g", card,
+                    alive ? (world ? "accent" : "red") : "accent.dark", "0 0.97", "1 1", false, 0f, Mat);
 
                 string img = o["image"]?.ToString() ?? "";
                 if (img.StartsWith("http"))
                     CUIClass.CreateImage(ref ui, card, Img3(img), "0.03 0.35", "0.33 0.95", 0.15f);
 
                 string status;
-                if (!enabled) status = "<color=@muted>ВЫКЛЮЧЕН</color>";
+                if (world)
+                    status = $"<color=@accent>АКТИВНО</color>  <color=@muted>[{o["grid"]}]</color>";
+                else if (!enabled)
+                    status = "<color=@muted>ВЫКЛЮЧЕН</color>";
                 else if (alive)
                 {
-                    int hp = o["hp"]?.Value<int>() ?? 0, hpMax = o["hpMax"]?.Value<int>() ?? 0;
-                    string grid2 = o["grid"]?.ToString();
-                    status = $"<color=@red>ЖИВ · {hp}/{hpMax} HP</color>" +
-                             (grid2 != null ? $"  <color=@muted>[{grid2}]</color>" : "");
+                    string g = o["grid"]?.ToString();
+                    status = $"<color=@red>ЖИВ · {o["hp"]}/{o["hpMax"]} HP</color>" +
+                             (g != null ? $"  <color=@muted>[{g}]</color>" : "");
                 }
                 else
                 {
@@ -1145,7 +1345,7 @@ namespace Oxide.Plugins
                     "0.36 0.60", "0.97 0.80", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
                 // hp-бар живого босса
-                if (alive)
+                if (alive && !world)
                 {
                     int hp = o["hp"]?.Value<int>() ?? 0, hpMax = Math.Max(1, o["hpMax"]?.Value<int>() ?? 1);
                     float frac = Math.Max(0f, Math.Min(1f, (float)hp / hpMax));
@@ -1157,13 +1357,49 @@ namespace Oxide.Plugins
                 CUIClass.CreateButton(ref ui, card + "_b", card, "hover", "<color=@accent>ПОДРОБНЕЕ</color>", 10,
                     "0.36 0.08", "0.97 0.24", $"octahub_evt {key}", "", "white", 0f,
                     TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
-                idx++;
+            }
+
+            // пагинация событий
+            if (totalPages > 1)
+            {
+                if (st.EvtPage > 0)
+                    CUIClass.CreateButton(ref ui, "oh_evt_prev", UiCnt, "accent.glass", "<color=@accent>‹</color>", 16,
+                        "0.885 0.015", "0.93 0.08", $"octahub_evt_page {st.EvtPage - 1}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                if (st.EvtPage + 1 < totalPages)
+                    CUIClass.CreateButton(ref ui, "oh_evt_next", UiCnt, "accent.glass", "<color=@accent>›</color>", 16,
+                        "0.935 0.015", "0.985 0.08", $"octahub_evt_page {st.EvtPage + 1}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
         }
 
-        // Детальный вид босса: живой статус + лор-описание (генерируется из OctaBoss.json)
+        // Детальный вид события: мировой ивент (we#) или босс с лор-описанием
         private void DrawEventDetail(ref CuiElementContainer ui, BasePlayer player, string key)
         {
+            // мировое событие — берём живой снимок из трекера
+            if (key.StartsWith("we"))
+            {
+                int wi;
+                WorldEvent w = int.TryParse(key.Substring(2), out wi) && wi < _worldEvents.Count
+                    ? _worldEvents[wi] : null;
+                CUIClass.CreatePanel(ref ui, "oh_evd", UiCnt, "row", "0.015 0.90", "0.985 0.985", false, 0f, Mat);
+                CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text",
+                    w != null ? $"<color=@accent>АКТИВНО</color> · квадрат <color=@accent>{GridOf(w.Pos)}</color>"
+                              : "<color=@muted>событие завершилось</color>", 12,
+                    "0.02 0", "0.85 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text",
+                    w != null
+                        ? $"<size=30><color=#E8B84B>{w.Title}</color></size>\n\n<size=16>{w.Desc}</size>\n\n" +
+                          "<size=13><color=#83b8c7>СОВЕТ:</color> иди группой — точка шумная, сбегутся и свои, и чужие.</size>"
+                        : "Событие завершилось — вернись к списку.",
+                    14, "0.03 0.08", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                // кнопка последней — иначе её перекроет текст
+                CUIClass.CreateButton(ref ui, "oh_evd_b", "oh_evd", "accent.glass", "<color=@accent>← НАЗАД</color>", 10,
+                    "0.86 0.15", "0.99 0.85", "octahub_evt back", "", "white", 0f,
+                    TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                return;
+            }
+
             JObject live = null;
             try
             {
@@ -1275,16 +1511,16 @@ namespace Oxide.Plugins
                 $"<color=@accent>◆ ЛЕНТА УБИЙСТВ</color>\n<size=11>{feedState} — меняется в НАСТРОЙКАХ</size>", 12,
                 "0.06 0.18", "0.94 0.40", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
-            // правая колонка — дома из OctaTP
-            CUIClass.CreatePanel(ref ui, "oh_pr_r", UiCnt, "row", "0.375 0.40", "0.985 0.97", false, 0f, Mat);
+            // правая колонка, верх — дома из OctaTP (компактно: лимит домов мал)
+            CUIClass.CreatePanel(ref ui, "oh_pr_r", UiCnt, "row", "0.375 0.68", "0.985 0.97", false, 0f, Mat);
             CUIClass.CreatePanel(ref ui, "oh_pr_rg", "oh_pr_r", "accent.dark", "0 0.965", "1 1", false, 0f, Mat);
-            CUIClass.CreateText(ref ui, "oh_pr_hh", "oh_pr_r", "accent", "◆ <b>МОИ ДОМА</b>", 13,
-                "0.04 0.90", "0.96 0.96", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateText(ref ui, "oh_pr_hh", "oh_pr_r", "accent", "◆ <b>МОИ ДОМА</b>", 12,
+                "0.04 0.83", "0.96 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
             if (OctaTP == null)
             {
                 CUIClass.CreateText(ref ui, "oh_pr_he", "oh_pr_r", "muted",
-                    "OctaTP не загружен.", 12, "0 0", "1 0.85", TextAnchor.MiddleCenter,
+                    "OctaTP не загружен.", 11, "0 0", "1 0.78", TextAnchor.MiddleCenter,
                     "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             }
             else
@@ -1294,15 +1530,15 @@ namespace Oxide.Plugins
                 if (homes == null || homes.Count == 0)
                 {
                     CUIClass.CreateText(ref ui, "oh_pr_he", "oh_pr_r", "muted",
-                        "Домов нет — поставь точку: /sethome имя", 12, "0 0", "1 0.85",
+                        "Домов нет — поставь точку: /sethome имя", 11, "0 0", "1 0.78",
                         TextAnchor.MiddleCenter, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
                 }
                 else
                 {
                     int hi = 0;
-                    foreach (var kv in homes.Take(8))
+                    foreach (var kv in homes.Take(4))
                     {
-                        float y1 = 0.84f - hi * 0.11f, y2 = y1 + 0.09f;
+                        float y1 = 0.72f - hi * 0.19f, y2 = y1 + 0.17f;
                         string aMin = $"0.04 {y1.ToString("0.###", CultureInfo.InvariantCulture)}";
                         string aMax = $"0.96 {y2.ToString("0.###", CultureInfo.InvariantCulture)}";
                         CUIClass.CreatePanel(ref ui, $"oh_pr_h{hi}", "oh_pr_r", "bg", aMin, aMax, false, 0f, Mat);
@@ -1314,6 +1550,39 @@ namespace Oxide.Plugins
                 }
             }
 
+            // правая колонка, низ — друзья и враги (OctaRel)
+            CUIClass.CreatePanel(ref ui, "oh_pr_rel", UiCnt, "row", "0.375 0.40", "0.985 0.66", false, 0f, Mat);
+            CUIClass.CreatePanel(ref ui, "oh_pr_rel_g", "oh_pr_rel", "accent.dark", "0 0.965", "1 1", false, 0f, Mat);
+            CUIClass.CreateText(ref ui, "oh_pr_rel_h", "oh_pr_rel", "accent", "◆ <b>СВОИ / ВРАГИ</b>", 12,
+                "0.04 0.86", "0.96 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+
+            if (OctaRel == null)
+            {
+                CUIClass.CreateText(ref ui, "oh_pr_rel_e", "oh_pr_rel", "muted",
+                    "Модуль связей (OctaRel) не загружен.", 11, "0 0", "1 0.8",
+                    TextAnchor.MiddleCenter, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+            }
+            else
+            {
+                JObject rel = null;
+                try { rel = OctaRel.Call("GetRelations", (ulong)player.userID) as JObject; } catch { }
+                var friends = rel?["friends"] as JArray ?? new JArray();
+                var enemies = rel?["enemies"] as JArray ?? new JArray();
+
+                CUIClass.CreateText(ref ui, "oh_pr_rel_f", "oh_pr_rel", "muted",
+                    $"<color=#8dd06f>ДРУЗЬЯ ({friends.Count})</color>   <color=#cd412b>ВРАГИ ({enemies.Count})</color>",
+                    10, "0.04 0.72", "0.96 0.85", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+
+                int ri = 0;
+                foreach (var f in friends.Take(4)) DrawRelRow(ref ui, ri++, f, "friend", true);
+                int ei = 0;
+                foreach (var e in enemies.Take(4)) DrawRelRow(ref ui, 4 + ei++, e, "enemy", false);
+
+                CUIClass.CreateText(ref ui, "oh_pr_rel_hint", "oh_pr_rel", "muted",
+                    "/friend add ник · /enemy add ник — онлайн врага предупредит радар", 9,
+                    "0.04 0.01", "0.96 0.11", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+            }
+
             // нижняя полоса — быстрые переходы
             CUIClass.CreateButton(ref ui, "oh_pr_go1", UiCnt, "accent.glass", "<color=@accent>НАБОРЫ →</color>", 11,
                 "0.015 0.28", "0.20 0.36", "octahub_sec kits", "", "white", 0f,
@@ -1322,8 +1591,31 @@ namespace Oxide.Plugins
                 "0.21 0.28", "0.36 0.36", "octahub_sec services", "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             CUIClass.CreateText(ref ui, "oh_pr_note", UiCnt, "muted",
-                "Профиль собирается из OctVIP, OctaTP и OctaFeed — всё живое, без дублей данных.", 10,
+                "Данные живые: OctVIP · OctaTP · OctaFeed · OctaRel", 10,
                 "0.375 0.28", "0.985 0.36", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+        }
+
+        // строка контакта в карточке СВОИ/ВРАГИ: i 0..3 — друзья слева, 4..7 — враги справа
+        private void DrawRelRow(ref CuiElementContainer ui, int i, JToken who, string type, bool isFriend)
+        {
+            string name = who?["name"]?.ToString() ?? "?";
+            ulong id = who?["id"]?.Value<ulong>() ?? 0UL;
+            bool online = id != 0 && BasePlayer.FindByID(id) != null;
+
+            float x1 = isFriend ? 0.04f : 0.52f, x2 = isFriend ? 0.50f : 0.96f;
+            int row = isFriend ? i : i - 4;
+            float y1 = 0.62f - row * 0.155f, y2 = y1 + 0.13f;
+            string aMin = $"{x1.ToString("0.##", CultureInfo.InvariantCulture)} {y1.ToString("0.###", CultureInfo.InvariantCulture)}";
+            string aMax = $"{x2.ToString("0.##", CultureInfo.InvariantCulture)} {y2.ToString("0.###", CultureInfo.InvariantCulture)}";
+            string n = $"oh_rel_{i}";
+
+            CUIClass.CreatePanel(ref ui, n, "oh_pr_rel", "bg", aMin, aMax, false, 0f, Mat);
+            CUIClass.CreateText(ref ui, n + "_t", n, "text",
+                $"{(online ? "<color=#8dd06f>●</color>" : "<color=#666>●</color>")} {name}", 10,
+                "0.02 0", "0.82 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateButton(ref ui, n + "_x", n, "0 0 0 0", "<color=#cd412b>✕</color>", 9,
+                "0.85 0", "0.98 1", $"octahub_rel del {type} {id}", "", "white", 0f,
+                TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
         }
 
         #endregion
@@ -1424,12 +1716,7 @@ namespace Oxide.Plugins
                 tab.tabImageAnchor != null && tab.tabImageAnchor.Count >= 2)
                 CUIClass.CreateImage(ref ui, UiCnt, Img2(tabNumber), tab.tabImageAnchor[0], tab.tabImageAnchor[1], 0f);
 
-            // кнопка «назад к списку» — только внутри раздела Инфо
             var st = St(player);
-            if (st.Section == "info")
-                CUIClass.CreateButton(ref ui, "oh_ip_back", UiCnt, "accent.glass", "<color=@accent>← СПИСОК</color>", 10,
-                    "0.015 0.015", "0.10 0.07", "octahub_infotab back", "", "white", 0f,
-                    TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
             if (!CheckPerms(player, tabNumber))
             {
@@ -1478,6 +1765,13 @@ namespace Oxide.Plugins
                     tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
             }
 
+            // Кнопка «Назад» — ПОСЛЕДНЯЯ: в CUI поздние элементы поверх,
+            // созданная до текста кнопка перекрывается и не кликается.
+            if (st.Section == "info")
+                CUIClass.CreateButton(ref ui, "oh_ip_back", UiCnt, "accent.glass", "<color=@accent>← НАЗАД</color>", 10,
+                    "0.015 0.015", "0.10 0.07", "octahub_infotab back", "", "white", 0f,
+                    TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
             DrawPageArrows(ref ui, tabNumber, page);
         }
 
@@ -1508,8 +1802,22 @@ namespace Oxide.Plugins
             DrawSettingRow(ref ui, i++, "СКРЫВАТЬ МОЙ НИК В ЛЕНТЕ",
                 feedOn ? "другие видят Anonymous вместо твоего ника" : "модуль OctaFeed не загружен",
                 feedOn && FeedGet(player, "hideMyName"), "octahub_set feedname", feedOn);
+
+            // уведомления OctaRel — живые, через API
+            bool relOn = OctaRel != null;
+            bool relNotify = false;
+            if (relOn)
+                try { relNotify = Convert.ToBoolean(OctaRel.Call("GetNotify", (ulong)player.userID)); } catch { }
+            DrawSettingRow(ref ui, i++, "УВЕДОМЛЕНИЯ О ДРУЗЬЯХ И ВРАГАХ",
+                relOn ? "чат: вход/выход из списков + радар врага рядом" : "модуль OctaRel не загружен",
+                relOn && relNotify, "octahub_set relnotify", relOn);
+
+            CUIClass.CreateText(ref ui, "oh_st_hint", UiCnt, "muted",
+                "настройки сохраняются автоматически и переживают перезаходы", 10,
+                "0.015 0.03", "0.985 0.09", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
         }
 
+        // Строка настройки — ВСЯ кликабельная (узкая кнопка-бегунок промахивается)
         private void DrawSettingRow(ref CuiElementContainer ui, int i, string title, string desc,
             bool on, string cmd, bool enabled)
         {
@@ -1518,24 +1826,25 @@ namespace Oxide.Plugins
             string aMax = $"0.985 {y2.ToString("0.###", CultureInfo.InvariantCulture)}";
             string n = $"oh_st_{i}";
 
-            CUIClass.CreatePanel(ref ui, n, UiCnt, "row", aMin, aMax, false, 0f, Mat);
+            // строка = кнопка целиком
+            CUIClass.CreateButton(ref ui, n, UiCnt, "row", "", 11, aMin, aMax,
+                enabled ? cmd : "", "", "white", 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             CUIClass.CreateText(ref ui, n + "_t", n, enabled ? "text" : "muted", $"<b>{title}</b>", 13,
                 "0.02 0.45", "0.80 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreateText(ref ui, n + "_d", n, "muted", desc, 10,
                 "0.02 0.05", "0.80 0.50", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
-            // переключатель: дорожка + бегунок
-            CUIClass.CreateButton(ref ui, n + "_sw", n, enabled ? (on ? "green" : "row") : "panel", "", 10,
-                "0.86 0.28", "0.955 0.72", enabled ? cmd : "", "", "white", 0f,
-                TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            // дорожка переключателя — декоративная часть той же кнопки
+            CUIClass.CreatePanel(ref ui, n + "_sw", n, enabled ? (on ? "green" : "panel") : "panel",
+                "0.86 0.28", "0.935 0.72", false, 0f, Mat);
             if (enabled)
             {
                 string kMin = on ? "0.52 0.15" : "0.06 0.15";
                 string kMax = on ? "0.94 0.85" : "0.48 0.85";
                 CUIClass.CreatePanel(ref ui, n + "_kn", n + "_sw", on ? "accent" : "muted", kMin, kMax, false, 0f, Mat);
             }
-            CUIClass.CreateText(ref ui, n + "_s", n, enabled ? (on ? "green" : "muted") : "muted",
-                on ? "ВКЛ" : "ВЫКЛ", 9, "0.955 0", "0.995 1",
+            CUIClass.CreateText(ref ui, n + "_s", n, on ? "green" : "muted",
+                enabled ? (on ? "ВКЛ" : "ВЫКЛ") : "—", 9, "0.94 0", "0.99 1",
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
         }
 
@@ -1678,19 +1987,19 @@ namespace Oxide.Plugins
             return $"ЗАБРАТЬ • {cost} {curLabel}%{KGreen}";
         }
 
-        // Раздел «Наборы»: полоса фильтров сверху + сетка карточек 3x3
-        private void DrawKitsSection(BasePlayer player)
+        // Раздел «Наборы»: полоса фильтров сверху + сетка карточек 3x3.
+        // Рисуем В ОБЩИЙ контейнер — отдельный AddUi до панели oh_cnt
+        // накрывал карточки фоном (в CUI последний элемент поверх).
+        private void DrawKitsSection(ref CuiElementContainer ui, BasePlayer player)
         {
             var st = St(player);
-            var ui = new CuiElementContainer();
+            KitsTab_Destroy(player); // сносим возможные старые элементы набора
 
             if (OctaKits == null)
             {
                 CUIClass.CreateText(ref ui, "owkit_err", UiCnt, "muted",
                     "Система наборов недоступна — OctaKits не загружен.", 15, "0 0", "1 1",
                     TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-                KitsTab_Destroy(player);
-                CuiHelper.AddUi(player, ui);
                 return;
             }
 
@@ -1715,8 +2024,6 @@ namespace Oxide.Plugins
                     st.KitCat == "fav" ? "Нет избранных наборов — отмечай ★ на карточках."
                                        : "Здесь нет доступных наборов.", 14,
                     "0 0", "1 0.85", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-                KitsTab_Destroy(player);
-                CuiHelper.AddUi(player, ui);
                 return;
             }
 
@@ -1791,9 +2098,6 @@ namespace Oxide.Plugins
                     CUIClass.CreateButton(ref ui, "owkit_next", UiCnt, "accent.glass", "<color=@accent>›</color>", 16, "0.935 0.006", "0.985 0.054",
                         $"octahub_kit_page {st.KitPage + 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
-
-            KitsTab_Destroy(player);
-            CuiHelper.AddUi(player, ui);
         }
 
         private void KitsTab_ItemCells(ref CuiElementContainer ui, string parent, string[] cellAnchors, JToken items, string prefix)
@@ -1828,7 +2132,7 @@ namespace Oxide.Plugins
 
             JObject kit = null;
             try { kit = OctaKits?.Call("GetKitObject", kitname) as JObject; } catch { }
-            if (kit == null) { DrawKitsSection(player); return; }
+            if (kit == null) { UiRefresh(player, UiCnt, UiBot); return; }
 
             var belt = kit.SelectToken("BeltItems");
             var main = kit.SelectToken("MainItems");
@@ -1934,10 +2238,7 @@ namespace Oxide.Plugins
             int page = 0;
             int.TryParse(args[0], out page);
             st.KitPage = Math.Max(0, page);
-            CuiHelper.DestroyUi(player, "owkit_view_inv");
-            CuiHelper.DestroyUi(player, "owkit_view_info");
-            DrawKitsSection(player);
-            UiRefresh(player, UiBot);
+            UiRefresh(player, UiCnt, UiBot);
         }
 
         [ConsoleCommand("octahub_kit_view")]
@@ -1972,7 +2273,7 @@ namespace Oxide.Plugins
             if (ok is bool && (bool)ok)
             {
                 if (inView) KitsTab_ViewKit(player, kitname, page);
-                else DrawKitsSection(player);
+                else UiRefresh(player, UiCnt, UiBot);
             }
         }
 
@@ -2551,11 +2852,13 @@ namespace Oxide.Plugins
                     {
                         rows = new List<ServiceRow>
                         {
-                            new ServiceRow { title = "ТОЧКА ДОМА", desc = "сохранить текущую позицию как дом", chatCommand = "sethome home" },
-                            new ServiceRow { title = "ДОМОЙ", desc = "телепорт к сохранённой точке", chatCommand = "home home" },
-                            new ServiceRow { title = "ЗАПРОС ТЕЛЕПОРТА", desc = "отправить запрос игроку: /tpr ник", chatCommand = "" },
-                            new ServiceRow { title = "ОТЧЁТ О НАРУШИТЕЛЕ", desc = "пожаловаться на игрока", chatCommand = "report" },
+                            new ServiceRow { title = "ВИТРИНА НАБОРОВ", desc = "каталог китов — откроется раздел НАБОРЫ", chatCommand = "sec:kits" },
+                            new ServiceRow { title = "СОБЫТИЯ ОСТРОВА", desc = "кто гуляет по карте прямо сейчас", chatCommand = "sec:events" },
+                            new ServiceRow { title = "ДОМОЙ", desc = "телепорт к сохранённой точке «home»", chatCommand = "home home" },
+                            new ServiceRow { title = "РАСПИСАНИЕ БОССОВ", desc = "кто и когда появится — в чат", chatCommand = "bosstimer" },
+                            new ServiceRow { title = "ЖАЛОБА", desc = "открыть форму репорта на игрока", chatCommand = "report" },
                             new ServiceRow { title = "ДИСКОРД", desc = "ссылка на сервер Discord в чате", chatCommand = "discord" },
+                            new ServiceRow { title = "КЛАН", desc = "управление командой — /clan", chatCommand = "clan" },
                         }
                     },
 
