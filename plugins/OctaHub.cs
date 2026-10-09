@@ -1549,12 +1549,20 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, "oh_evd", UiCnt, "row", "0.015 0.90", "0.985 0.985", false, 0f, Mat);
                 CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text", status, 12,
                     "0.02 0", "0.85 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                // крупный тайл события слева — квадратный якорь (контент ~2.3:1 по пикселям)
+                string weImg = c?.Image ?? "";
+                string tx = "0.03";
+                if (weImg.StartsWith("http"))
+                {
+                    CUIClass.CreateImage(ref ui, UiCnt, Img3(weImg), "0.03 0.30", "0.25 0.81", 0.15f);
+                    tx = "0.28";
+                }
                 CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text",
                     c != null
                         ? $"<size=30><color=#E8B84B>{c.Title}</color></size>\n\n<size=16>{c.Desc}</size>\n\n" +
                           "<size=13><color=#83b8c7>СОВЕТ:</color> иди группой — точка шумная, сбегутся и свои, и чужие.</size>"
                         : "Неизвестное событие.",
-                    14, "0.03 0.08", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    14, tx + " 0.08", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
                 // кнопка последней — иначе её перекроет текст
                 CUIClass.CreateButton(ref ui, "oh_evd_b", "oh_evd", "accent.glass", "<color=@accent>← НАЗАД</color>", 10,
                     "0.86 0.15", "0.99 0.85", "octahub_evt back", "", "white", 0f,
@@ -1600,8 +1608,19 @@ namespace Oxide.Plugins
                 "0.86 0.15", "0.99 0.85", "octahub_evt bosses", "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
+            // крупный портрет босса слева — image из GetBossStates это PNG-хендл ImageLibrary
+            string bossImg = live?["image"]?.ToString() ?? "";
+            string tx2 = "0.03";
+            if (!string.IsNullOrEmpty(bossImg))
+            {
+                CUIClass.CreateImage(ref ui, UiCnt,
+                    bossImg.StartsWith("http") ? Img3(bossImg) : bossImg,
+                    "0.03 0.30", "0.25 0.81", 0.15f);
+                tx2 = "0.28";
+            }
+
             CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text", string.Join("\n", lines), 13,
-                "0.03 0.03", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                tx2 + " 0.03", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
         }
 
         // Ищем вид босса в OctaBoss.json — для лор-описания детальной карточки
