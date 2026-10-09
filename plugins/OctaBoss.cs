@@ -38,6 +38,12 @@ namespace Oxide.Plugins
         // картинки зверей в админ-панели — мягкая зависимость
         [PluginReference] private Plugin ImageLibrary;
 
+        // фирменные тайлы боссов (Gemini-спрайт 4x2 → images/bosses/tiles),
+        // хостинг — ассет-репозиторий; переопределяются UiImageUrl в конфиге
+        private const string BossTileImg = "https://raw.githubusercontent.com/Octavian-Labs/qk7f2m9x/main/z3n/";
+        private static readonly HashSet<string> KnownBossTiles = new HashSet<string>
+            { "bull", "boar", "wolf", "tiger", "panther", "bear", "crocodile" };
+
         private class LootEntry
         {
             [JsonProperty("Шортнейм предмета")] public string ShortName = "scrap";
@@ -232,6 +238,7 @@ namespace Oxide.Plugins
                         Key = "bull",
                         Prefab = "assets/rust.ai/agents/bull/bull.prefab",
                         DisplayName = "БЫК-БОСС",
+                        UiImageUrl = BossTileImg + "bull.png",
                         Male = true,
                         Health = 9000f,
                         Scale = 2f,
@@ -266,6 +273,7 @@ namespace Oxide.Plugins
                         Key = "boar",
                         Prefab = "assets/rust.ai/agents/boar/boar.prefab",
                         DisplayName = "КАБАН-БОСС",
+                        UiImageUrl = BossTileImg + "boar.png",
                         Health = 2000f,
                         Scale = 2f,
                         SpeedMultiplier = 1.5f,
@@ -302,6 +310,7 @@ namespace Oxide.Plugins
                         Enabled = false, Key = "wolf",
                         Prefab = "assets/rust.ai/agents/wolf/wolf2.prefab",
                         DisplayName = "ВОЛК-БОСС",
+                        UiImageUrl = BossTileImg + "wolf.png",
                         Health = 1500f, Scale = 2f, SpeedMultiplier = 1.6f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 4, Radius = 8f, Scale = 0.8f },
@@ -322,6 +331,7 @@ namespace Oxide.Plugins
                         Enabled = false, Key = "tiger",
                         Prefab = "assets/rust.ai/agents/tiger/tiger.prefab",
                         DisplayName = "ТИГР-БОСС",
+                        UiImageUrl = BossTileImg + "tiger.png",
                         Health = 2500f, Scale = 1.8f, SpeedMultiplier = 1.7f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 0 },
@@ -342,6 +352,7 @@ namespace Oxide.Plugins
                         Enabled = false, Key = "panther",
                         Prefab = "assets/rust.ai/agents/panther/panther.prefab",
                         DisplayName = "ПАНТЕРА-БОСС",
+                        UiImageUrl = BossTileImg + "panther.png",
                         Health = 2500f, Scale = 1.8f, SpeedMultiplier = 1.7f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 0 },
@@ -362,6 +373,7 @@ namespace Oxide.Plugins
                         Enabled = false, Key = "bear",
                         Prefab = "assets/rust.ai/agents/bear/bear.prefab",
                         DisplayName = "МЕДВЕДЬ-БОСС",
+                        UiImageUrl = BossTileImg + "bear.png",
                         Health = 6000f, Scale = 2.2f, SpeedMultiplier = 1.3f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 2, Scale = 0.6f },
@@ -382,6 +394,7 @@ namespace Oxide.Plugins
                         Enabled = false, Key = "crocodile",
                         Prefab = "assets/rust.ai/agents/crocodile/crocodile.prefab",
                         DisplayName = "КРОКОДИЛ-БОСС",
+                        UiImageUrl = BossTileImg + "crocodile.png",
                         Health = 4000f, Scale = 2f, SpeedMultiplier = 1.3f,
                         HyperAggro = true,
                         Escort = new EscortSettings { Count = 3, Scale = 0.7f },
@@ -417,6 +430,12 @@ namespace Oxide.Plugins
                 bool cleaned = false;
                 foreach (var b in _cfg.Bosses)
                 {
+                    // миграция: у старых конфигов пустой UiImageUrl — подставляем фирменный тайл по ключу
+                    if (b != null && string.IsNullOrEmpty(b.UiImageUrl) && KnownBossTiles.Contains(b.Key))
+                    {
+                        b.UiImageUrl = BossTileImg + b.Key + ".png";
+                        cleaned = true;
+                    }
                     if (b?.Rewards?.Loot == null || b.Rewards.Loot.Count <= 25) continue;
                     var dedupped = DeduplicateLoot(b.Rewards.Loot);
                     if (dedupped.Count < b.Rewards.Loot.Count)
