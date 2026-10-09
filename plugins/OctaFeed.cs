@@ -12,46 +12,80 @@ using System;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaFeed", "Octavian", "1.0.3")]
+    // OctaFeed v2 — киллфид Octavian: кто кого убил, оружие, дистанция.
+    // Геометрия — долями экрана (офсеты конфига трактуются как виртуальные
+    // пиксели сетки 1280x720 и конвертируются в доли), поэтому лента выглядит
+    // одинаково на любом разрешении и любом соотношении сторон.
+    // Строки — список с индивидуальным TTL; перерисовка целиком (это дёшево:
+    // до N строк по несколько элементов), вместо кольцевого буфера и утаскивания
+    // элементов за край экрана.
+    [Info("OctaFeed", "Octavian", "2.0.0")]
     [Description("Киллфид: кто кого убил, оружие, дистанция. Поддержка боссов OctaBoss")]
-    public partial class OctaFeed : RustPlugin
+    public class OctaFeed : RustPlugin
     {
         [PluginReference] private Plugin OctaBoss;
 
-        private static int RowWidth => Instance.Cfg?.UIConfig != null && Instance.Cfg.UIConfig.RowWidth > 0 ? Instance.Cfg.UIConfig.RowWidth : 480;
-        private static int GetWpStart(int totalWidth, int modCount) => (totalWidth - 57) - (20 + modCount * 18);
+        #region [Данные]
 
-        private void RemoveUITemplate(BasePlayer player)
-        {
-            CuiHelper.DestroyUi(player, PANEL_NAME);
-        }
+        private static OctaFeed _i;
+        private OctaFeedConfig Cfg;
 
-        private void AddUISettings(BasePlayer player)
+        // Персистентные настройки игроков (data/OctaFeed/PlayersData.json)
+        public class PlayerData
         {
-            int w = RowWidth;
-            int ox = Instance.Cfg.UIConfig.OffsetX;
-            int oy = Instance.Cfg.UIConfig.OffsetY;
-            CuiElementContainer container = new CuiElementContainer();
-            container.Add(new CuiElement { Name = "DMUI", Parent = "Overlay", Components = { new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = $"{-w - 25 - ox} {-25 - oy}", OffsetMax = $"{-w - 5 - ox} {-5 - oy}" }, new CuiImageComponent { Color = "1 1 1 0.8", Sprite = "assets/icons/tools.png", Material = "assets/icons/iconmaterial.mat", } } });
-            if (Instance.Cfg.UIConfig.Outline)
-                container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
-            container.Add(new CuiButton { Button = { Command = $"octafeed show", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", }, Text = { Text = "", }, }, "DMUI", "DMUI.Button");
-            CuiHelper.AddUi(player, container);
+            public double LastConnectTime = 0;
+            public bool HideMessages = false;
+            public bool HideMyName = false;
         }
+        internal Dictionary<ulong, PlayerData> PlayersData = new Dictionary<ulong, PlayerData>();
+
+        // Одна строка ленты. TTL считается от момента добавления.
+        private class FeedRow
+        {
+            public string Message;
+            public string Distance;
+            public int WeaponIcon;
+            public List<int> ModIcons;
+            public float ExpiresAt; // realtimeSinceStartup
+        }
+        private readonly List<FeedRow> _rows = new List<FeedRow>(8);
+
+        // Последний урон по игроку — для атрибуции «смерти от окружения»
+        // (утонул/замёрз/истёк кровью через 8 сек после выстрела — засчитываем киллеру).
         private class RecentAttack
         {
             public HitInfo Hit;
             public float Time;
         }
-        private readonly Dictionary<ulong, RecentAttack> LastAttacks = new Dictionary<ulong, RecentAttack>();
+        private readonly Dictionary<ulong, RecentAttack> _lastAttacks = new Dictionary<ulong, RecentAttack>();
+        private const float AssistWindow = 8f;
 
-        private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
+        // Кому сейчас открыт виджет настроек (временное состояние, не сохраняем)
+        private readonly HashSet<ulong> _settingsOpen = new HashSet<ulong>();
+
+        // prefabID/ShortPrefabName -> itemid: иконка оружия/объекта в строке
+        private readonly Dictionary<uint, int> _prefab2Item = new Dictionary<uint, int>();
+        private readonly Dictionary<string, int> _prefabName2Item = new Dictionary<string, int>
         {
-            if (entity is BasePlayer player && player.IsNonNpcPlayer() && info?.Initiator != null && info.Initiator != entity)
-            {
-                LastAttacks[player.userID] = new RecentAttack { Hit = info, Time = UnityEngine.Time.realtimeSinceStartup };
-            }
-        }
+            ["40mm_grenade_he"] = -1123473824,
+            ["rocket_basic"] = 442886268,
+            ["rocket_admin"] = 442886268,
+            ["rocket_hv"] = 442886268,
+            ["rocket_fire"] = 442886268,
+        };
+
+        private const int IconHeadshot = 996293980; // иконка «хедшот»
+        private const int IconDefaultWeapon = 1545779598; // иконка оружия по умолчанию
+        private const string PanelName = "DM";      // лента
+        private const string GearName = "DMUI";     // шестерёнка настроек
+        private const string WidgetName = "DMUISettings"; // всплывающий виджет
+
+        // Виртуальные пиксели сетки, в которых заданы офсеты конфига.
+        private const float RefW = 1280f, RefH = 720f;
+
+        #endregion
+
+        #region [Справочники имён и сообщений]
 
         internal Dictionary<string, string> Names = new Dictionary<string, string>()
         {
@@ -114,7 +148,6 @@ namespace Oxide.Plugins
             ["hotairballoon"] = "Hot Air Balloon",
             ["cave_lift_trigger"] = "Lift",
             ["wolf2"] = "Wolf",
-            ["simpleshark"] = "Shark",
             ["door_barricade_b"] = "Barricade",
             ["modular_car_1mod_storage"] = "Car",
             ["modular_car_1mod_trade"] = "Car",
@@ -155,649 +188,163 @@ namespace Oxide.Plugins
             ["npc_underwaterdweller"] = "Underwater Dweller",
             ["npcplayertest"] = "Player Test",
         };
-        internal Dictionary<string, int> PrefabName2Item = new Dictionary<string, int>()
+
+        internal Dictionary<string, List<string>> Messages = new Dictionary<string, List<string>>()
         {
-            ["40mm_grenade_he"] = -1123473824,
-            ["rocket_basic"] = 442886268,
-            ["rocket_admin"] = 442886268,
-            ["rocket_hv"] = 442886268,
-            ["rocket_fire"] = 442886268,
+            ["AntiVehicle"] = new List<string>() { "{1} убил {0}" },
+            ["Arrow"] = new List<string>() { "{1} убил {0}" },
+            ["Bite"] = new List<string>() { "{1} убил {0}" },
+            ["Bleeding"] = new List<string>() { "{0} умер от кровотечения" },
+            ["Blunt"] = new List<string>() { "{1} убил {0}" },
+            ["Bullet"] = new List<string>() { "{1} убил {0}" },
+            ["Cold"] = new List<string>() { "{0} замерз" },
+            ["ColdExposure"] = new List<string>() { "{0} замерз" },
+            ["Collision"] = new List<string>() { "{1} убил {0}" },
+            ["Decay"] = new List<string>() { "{1} убил {0}" },
+            ["Drowned"] = new List<string>() { "{0} утонул" },
+            ["ElectricShock"] = new List<string>() { "{0} заискрился" },
+            ["Explosion"] = new List<string>() { "{1} убил {0}" },
+            ["Fall"] = new List<string>() { "{0} упал с высоты" },
+            ["Fun_Water"] = new List<string>() { "{0} погиб" },
+            ["Generic"] = new List<string>() { "{0} погиб" },
+            ["Heat"] = new List<string>() { "{1} убил {0}" },
+            ["Hunger"] = new List<string>() { "{0} умер от голода" },
+            ["Poison"] = new List<string>() { "{0} умер от отравления" },
+            ["Radiation"] = new List<string>() { "{0} умер от радиации" },
+            ["RadiationExposure"] = new List<string>() { "{0} умер от радиации" },
+            ["Slash"] = new List<string>() { "{1} убил {0}" },
+            ["Stab"] = new List<string>() { "{1} убил {0}" },
+            ["Suicide"] = new List<string>() { "{0} убил себя" },
+            ["Thirst"] = new List<string>() { "{0} умер от жажды" },
         };
 
-        private void RemoveUISettings(BasePlayer player)
+        #endregion
+
+        #region [Жизненный цикл]
+
+        private void Init()
         {
-            CuiHelper.DestroyUi(player, "DMUI");
+            Cfg = Config.ReadObject<OctaFeedConfig>();
+            if (Cfg?.CoreConfig == null || Cfg.UIConfig == null || Cfg.CoreConfig.Names == null || Cfg.CoreConfig.Names.Count == 0
+                || Cfg.CoreConfig.Messages == null || Cfg.CoreConfig.Messages.Count == 0 || Cfg.UIConfig.Colors == null)
+            {
+                Cfg = GetDefaultConfig();
+            }
+            Config.WriteObject(Cfg, true);
         }
 
-        internal static string HexToRGBA(string hexColor)
+        protected override void LoadDefaultConfig()
         {
-            if (ColorUtility.TryParseHtmlString(hexColor, out Color color))
-                return string.Format("{0:F2} {1:F2} {2:F2} {3:F2}", color.r, color.g, color.b, color.a);
-            return "1 1 1 1";
+            Config.WriteObject(GetDefaultConfig(), true);
         }
 
-        [ChatCommand("dm")]
-        private void CMDChatMain(BasePlayer player, string cmd, string[] args)
+        private void OnServerInitialized()
         {
-            if (Instance.Cfg.UIConfig.EnableUISettings == false)
-                return;
-            PlayersData.TryGetValue(player.userID, out PlayerData playerData);
-            if (args.Length > 0)
-            {
-                switch (args[0])
-                {
-                    case "hidemyname":
-                    {
-                        bool result = SwitchHideMyName(player);
-                        SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color>\nЛента: {(playerData != null && playerData.HideMessages ? "скрыта" : "видна")}\nСкрытие ника: {(result ? "вкл" : "выкл")}\nИспользование: /dm hidemessages|hidemyname");
-                        break;
-                    }
+            _i = this;
 
-                    case "hidemessages":
-                    {
-                        bool? result = SwitchHideMessages(player);
-                        if (result.HasValue)
-                            SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color>\nЛента: {(result.Value ? "скрыта" : "видна")}\nСкрытие ника: {(playerData != null && playerData.HideMyName ? "вкл" : "выкл")}\nИспользование: /dm hidemessages|hidemyname");
-                        break;
-                    }
-                }
-            }
-            else
-            {
-                SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color>\nЛента: {(playerData != null && playerData.HideMessages ? "скрыта" : "видна")}\nСкрытие ника: {(playerData != null && playerData.HideMyName ? "вкл" : "выкл")}\nИспользование: /dm hidemessages|hidemyname");
-            }
-        }
-        private void AddUIRow(string message, string distance, int weaponIcon, List<int> weaponModIcons)
-        {
-            LAST_ROW_MODIFY_TIME = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
-            int w = RowWidth;
-            int wpStart = GetWpStart(w, weaponModIcons.Count);
-            CuiElementContainer container = new CuiElementContainer();
-            for (int i = Instance.Cfg.UIConfig.Rows - 1; i > 0; i--)
-            {
-                container.Add(new CuiElement { Name = $"{PANEL_NAME}R{(LAST_ROW_ID + i - 1) % Instance.Cfg.UIConfig.Rows}", Components = { new CuiRectTransformComponent { OffsetMin = i >= DeathRow.DeathRows.Count ? $"{w} {-20 - i * 25}" : $"0 {-20 - i * 25}", OffsetMax = $"{w} {0 - i * 25}" } }, Update = true });
-            }
+            PlayersData = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, PlayerData>>("OctaFeed\\PlayersData")
+                          ?? new Dictionary<ulong, PlayerData>();
 
-            LAST_ROW_ID = (LAST_ROW_ID - 1 + Instance.Cfg.UIConfig.Rows) % Instance.Cfg.UIConfig.Rows;
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}", Components = { new CuiRectTransformComponent { OffsetMin = "0 -20", OffsetMax = $"{w} 0" } }, Update = true });
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}DT", Components = { new CuiTextComponent { Text = distance }, }, Update = true });
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}K", Components = { new CuiTextComponent { Text = message }, new CuiRectTransformComponent { OffsetMin = "6 0", OffsetMax = $"{wpStart - 6} 20" }, }, Update = true });
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}WP", Components = { new CuiRectTransformComponent { OffsetMin = $"{wpStart} 0", OffsetMax = $"{w - 57} 20" }, }, Update = true });
-            container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}IW", Components = { new CuiImageComponent { ItemId = weaponIcon }, }, Update = true });
-            for (int j = 0; j < weaponModIcons.Count; j++)
-            {
-                container.Add(new CuiElement { Name = $"{PANEL_NAME}R{LAST_ROW_ID}IM{5 - j}", Components = { new CuiImageComponent { ItemId = weaponModIcons[j] }, }, Update = true });
-            }
+            // вычищаем записи старше недели
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            foreach (var uid in PlayersData.Where(kv => kv.Value.LastConnectTime + 604800_000 < nowMs).Select(kv => kv.Key).ToList())
+                PlayersData.Remove(uid);
 
-            string jsonContainer = container.ToJson();
+            foreach (var groupColor in Cfg.UIConfig.Colors)
+                permission.RegisterPermission(groupColor.Key, this);
+
+            BuildItemIconMaps();
+
             foreach (var player in BasePlayer.activePlayerList)
-            {
-                if (Instance.PlayersData.TryGetValue(player.userID, out PlayerData playerData))
-                {
-                    if (playerData.HideMessages)
-                        continue;
-                }
+                DrawAll(player);
 
-                CuiHelper.AddUi(player, jsonContainer);
-            }
+            // раз в секунду снимаем истёкшие строки
+            timer.Every(1f, ExpireRows);
         }
 
-        private void SwitchPlayerHideMessages(BasePlayer player)
-        {
-            SwitchHideMessages(player);
-        }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-        private void AddUIRows(BasePlayer player)
-        {
-            if (Instance.PlayersData.TryGetValue(player.userID, out PlayerData playerData))
-            {
-                if (playerData.HideMessages)
-                    return;
-            }
-
-            int w = RowWidth;
-            CuiElementContainer container = new CuiElementContainer();
-            for (int i = Instance.Cfg.UIConfig.Rows - 1; i >= 0; i--)
-            {
-                if (i < DeathRow.DeathRows.Count)
-                {
-                    int currentRowIndex = (LAST_ROW_ID + i) % Instance.Cfg.UIConfig.Rows;
-                    var row = DeathRow.DeathRows[i];
-                    int wpStart = GetWpStart(w, row.WeaponModsIcons.Count);
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex, Parent = PANEL_NAME, Components = { new CuiRectTransformComponent { OffsetMin = $"0 {-20 - (i) * 25}", OffsetMax = $"{w} {0 - (i) * 25}" }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "D" + "T", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiTextComponent { Text = row.Distance, }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "K", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiTextComponent { Text = row.Message, }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "6 0", OffsetMax = $"{wpStart - 6} 20" }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "WP", Parent = PANEL_NAME + "R" + currentRowIndex, Components = { new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{wpStart} 0", OffsetMax = $"{w - 57} 20" }, }, Update = true });
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "I" + "W", Parent = PANEL_NAME + "R" + currentRowIndex + "WP", Components = { new CuiImageComponent { ItemId = row.WeaponIcon, } }, Update = true });
-                    for (int j = 0; j < row.WeaponModsIcons.Count; j++)
-                    {
-                        container.Add(new CuiElement { Name = PANEL_NAME + "R" + currentRowIndex + "I" + "M" + (5 - j).ToString(), Parent = PANEL_NAME + "R" + currentRowIndex + "WP", Components = { new CuiImageComponent { ItemId = row.WeaponModsIcons.ElementAt(j), }, }, Update = true });
-                    }
-                }
-            }
-
-            CuiHelper.AddUi(player, container);
-        }
-
-        private string CreateUITemplate()
-        {
-            int w = RowWidth;
-            int ox = Instance.Cfg.UIConfig.OffsetX;
-            int oy = Instance.Cfg.UIConfig.OffsetY;
-            int defaultWpStart = GetWpStart(w, 0);
-
-            CuiElementContainer container = new CuiElementContainer();
-            container.Add(new CuiElement { Name = PANEL_NAME, Parent = HUD, Components = { new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = $"{-w - 5 - ox} {-250 - oy}", OffsetMax = $"{-5 - ox} {-5 - oy}" }, new CuiImageComponent { Color = "0 0 0 0" }, } });
-            for (int i = 0; i < Instance.Cfg.UIConfig.Rows; i++)
-            {
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i, Parent = PANEL_NAME, Components = { new CuiRectTransformComponent { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = $"{w} {-20 - i * 25}", OffsetMax = $"{w} {0 - i * 25}" }, new CuiImageComponent { Color = HexToRGBA(Instance.Cfg.UIConfig.RowColor) }, } });
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "D", Parent = PANEL_NAME + "R" + i, Components = { new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{w - 55} -20", OffsetMax = $"{w + 5} 40" }, new CuiRawImageComponent { Color = HexToRGBA(Instance.Cfg.UIConfig.DistanceColor), Material = "assets/icons/iconmaterial.mat", Sprite = $"assets/icons/subtract.png", }, } });
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "D" + "T", Parent = PANEL_NAME + "R" + i, Components = { new CuiTextComponent { Text = "", Color = HexToRGBA(Instance.Cfg.UIConfig.DistanceProperty.Color), Align = TextAnchor.MiddleCenter, FontSize = Instance.Cfg.UIConfig.DistanceProperty.Size, Font = "robotocondensed-bold.ttf", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{w - 55} 0", OffsetMax = $"{w + 5} 20" } } });
-                if (Instance.Cfg.UIConfig.Outline)
-                    container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "WP", Parent = PANEL_NAME + "R" + i, Components = { new CuiScrollViewComponent { Vertical = false, Horizontal = true, MovementType = UnityEngine.UI.ScrollRect.MovementType.Unrestricted, ContentTransform = new CuiRectTransform { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "0 0", OffsetMax = "128 20" }, HorizontalScrollbar = new CuiScrollbar { Size = 0, HandleColor = "0 0 0 0", HighlightColor = "0 0 0 0", PressedColor = "0 0 0 0", TrackColor = "0 0 0 0", }, VerticalScrollbar = new CuiScrollbar { Size = 0, HandleColor = "0 0 0 0", HighlightColor = "0 0 0 0", PressedColor = "0 0 0 0", TrackColor = "0 0 0 0", } }, new CuiImageComponent { Color = "0 0 0 0", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{defaultWpStart} 0", OffsetMax = $"{w - 57} 20" }, } });
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "I" + "W", Parent = PANEL_NAME + "R" + i + "WP", Components = { new CuiImageComponent { ItemId = 1545779598, Color = "1 1 1 1", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{1} 1", OffsetMax = $"{19} 19" } } });
-                if (Instance.Cfg.UIConfig.ImageOutline)
-                    container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
-                for (int j = 0; j < 6; j++)
-                {
-                    container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "I" + "M" + j, Parent = PANEL_NAME + "R" + i + "WP", Components = { new CuiImageComponent { ItemId = 952603248, Color = "1 1 1 1", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{112 - j * 18} 2", OffsetMax = $"{128 - j * 18} 18" } } });
-                    if (Instance.Cfg.UIConfig.ImageOutline)
-                        container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
-                }
-
-                container.Add(new CuiElement { Name = PANEL_NAME + "R" + i + "K", Parent = PANEL_NAME + "R" + i, Components = { new CuiTextComponent { Text = "", Color = HexToRGBA(Instance.Cfg.UIConfig.TextProperty.Color), Align = TextAnchor.MiddleRight, FontSize = Instance.Cfg.UIConfig.TextProperty.Size, Font = "robotocondensed-bold.ttf", }, new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "6 0", OffsetMax = $"{defaultWpStart - 6} 20" } } });
-                if (Instance.Cfg.UIConfig.Outline)
-                    container[container.Count - 1].Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
-            }
-
-            return container.ToJson();
-        }
-
-        private bool? SwitchHideMessages(BasePlayer player)
-        {
-            if (PlayersData.TryGetValue(player.userID, out PlayerData playerData))
-            {
-                var nowSeconds = new DateTimeOffset(DateTime.Now).ToUnixTimeMilliseconds();
-                if (playerData.LastConnectTime + 15000 > nowSeconds)
-                {
-                    SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color> Настройка ещё недоступна, подожди: <color=#FFD35C>{(playerData.LastConnectTime + 15000 - nowSeconds) / 1000}</color> сек.");
-                    return null;
-                }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-                playerData.HideMessages = !playerData.HideMessages;
-                playerData.LastConnectTime = nowSeconds;
-                if (playerData.HideMessages == false)
-                {
-                    AddTemplateUI(player);
-                    AddUIRows(player);
-                }
-                else
-                {
-                    RemoveUITemplate(player);
-                }
-            }
-            else
-            {
-                PlayersData[player.userID] = playerData = new PlayerData()
-                {
-                    HideMessages = true,
-                    HideMyName = false,
-                    LastConnectTime = new DateTimeOffset(DateTime.Now).ToUnixTimeMilliseconds()
-                };
-                RemoveUITemplate(player);
-            }
-
-            return playerData.HideMessages;
-        }
+        private void OnServerSave() => SavePlayers();
 
         private void Unload()
         {
             foreach (var player in BasePlayer.activePlayerList)
             {
-                RemoveUITemplate(player);
-                RemoveUISettings(player);
+                CuiHelper.DestroyUi(player, PanelName);
+                CuiHelper.DestroyUi(player, GearName);
+                CuiHelper.DestroyUi(player, WidgetName);
             }
-
-            Interface.Oxide.DataFileSystem.WriteObject("OctaFeed\\PlayersData", PlayersData);
-            DeathRow.DeathRows.Clear();
-            Instance = null;
+            SavePlayers();
+            _rows.Clear();
+            _i = null;
         }
 
-        private void CreateNote(string message, float distance, int weaponIcon, List<int> weaponMods)
-        {
-            new DeathRow(message, distance.ToString("F1") + "m", weaponIcon, weaponMods).Run();
-        }
-        internal Dictionary<uint, int> Prefab2Item = new Dictionary<uint, int>();
-
-        internal const string PANEL_NAME = "DM";
-
-        [Obsolete]
-        private void CreateNote(string vName, string iName, float distance, string vColor, string iColor, string weaponName, string[] weaponMods, bool isHeadshot, bool needRenameVictim, bool needRenameInitiator)
-        {
-            string message = $"<color={iColor}>{(needRenameInitiator ? Instance.GetNpcName(iName) : iName)}</color> убил <color={vColor}>{(needRenameVictim ? Instance.GetNpcName(vName) : vName)}</color>";
-            int weaponIcon = 1545779598;
-            List<int> weaponModsList = new List<int>(6);
-            if (ItemManager.itemDictionaryByName.TryGetValue(weaponName, out ItemDefinition itemDefinition))
-                weaponIcon = itemDefinition.itemid;
-            if (isHeadshot)
-                weaponModsList.Add(996293980);
-            foreach (var weaponMod in weaponMods)
-            {
-                if (ItemManager.itemDictionaryByName.TryGetValue(weaponMod, out ItemDefinition modDefinition))
-                    weaponModsList.Add(modDefinition.itemid);
-            }
-
-            CreateNote(message, distance, weaponIcon, weaponModsList);
-        }
-
-        public class DeathRow
-        {
-            public string Message { get; private set; }
-            public string Distance { get; private set; }
-            public int WeaponIcon { get; private set; }
-            public List<int> WeaponModsIcons { get; private set; }
-
-            public bool Initialized() => string.IsNullOrEmpty(this.Message) == false;
-            public static List<DeathRow> DeathRows = new List<DeathRow>();
-            public DeathRow(BasePlayer victim, BasePlayer initiator, HitInfo info)
-            {
-                FillDistance(victim, initiator);
-                FillIcons(info);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false)
-                    this.Message = string.Format(messageVariable, GetNameString(victim), GetNameString(initiator));
-            }
-
-            public DeathRow(BasePlayer victim, NPCPlayer initiator, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.PlayerKilledByNPC == false)
-                    return;
-                FillDistance(victim, initiator);
-                FillIcons(info);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false)
-                    this.Message = string.Format(messageVariable, GetNameString(victim), Instance.Cfg.CoreConfig.RenameNPC ? GetPrefabName(initiator.ShortPrefabName) : initiator.displayName);
-            }
-
-            public DeathRow(NPCPlayer victim, BasePlayer initiator, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.NPC == false)
-                    return;
-                FillDistance(victim, initiator);
-                FillIcons(info);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false)
-                    this.Message = string.Format(messageVariable, Instance.Cfg.CoreConfig.RenameNPC ? GetPrefabName(victim.ShortPrefabName) : victim.displayName, GetNameString(initiator));
-            }
-
-            public DeathRow(BaseCombatEntity victim, BasePlayer initiator, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.Animal == false)
-                    return;
-                FillDistance(victim, initiator);
-                FillIcons(info);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false)
-                    this.Message = string.Format(messageVariable, GetEntityName(victim), GetNameString(initiator));
-            }
-
-            public DeathRow(BasePlayer victim, BaseCombatEntity initiator, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.PlayerKilledByAnimal == false)
-                    return;
-                FillDistance(victim, initiator);
-                FillIcons(info);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false)
-                    this.Message = string.Format(messageVariable, GetNameString(victim), GetEntityName(initiator));
-            }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-            public DeathRow(PatrolHelicopter victim, BasePlayer initiator, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.Helicopter == false)
-                    return;
-                FillDistance(victim, initiator);
-                FillIcons(info);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false && Instance.GetNpcName(victim.ShortPrefabName) != victim.ShortPrefabName)
-                    this.Message = string.Format(messageVariable, GetPrefabName(victim.ShortPrefabName), GetNameString(initiator));
-            }
-
-            public DeathRow(BradleyAPC victim, BasePlayer initiator, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.Bradley == false)
-                    return;
-                FillDistance(victim, initiator);
-                FillIcons(info);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false && Instance.GetNpcName(victim.ShortPrefabName) != victim.ShortPrefabName)
-                    this.Message = string.Format(messageVariable, GetPrefabName(victim.ShortPrefabName), GetNameString(initiator));
-            }
-
-            public DeathRow(BasePlayer victim, DecayEntity initiator, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.PlayerKilledByEnv == false)
-                    return;
-                FillDistance(victim, initiator);
-                FillIcons(info, initiator);
-                string messageVariable = Instance.GetDeathMessage(info.damageTypes.GetMajorityDamageType());
-                if (string.IsNullOrEmpty(messageVariable) == false && Instance.GetNpcName(initiator.ShortPrefabName) != initiator.ShortPrefabName)
-                    this.Message = string.Format(messageVariable, GetNameString(victim), GetPrefabName(initiator.ShortPrefabName));
-            }
-
-            public DeathRow(BasePlayer victim, HitInfo info)
-            {
-                if (Instance.Cfg.CoreConfig.PlayerKilledByEnv == false)
-                    return;
-                FillDistance(victim, null);
-                FillIcons(info, null);
-                string messageVariable = Instance.GetDeathMessage(info?.damageTypes?.GetMajorityDamageType() ?? DamageType.Generic);
-                if (string.IsNullOrEmpty(messageVariable) == false)
-                    this.Message = string.Format(messageVariable, GetNameString(victim), "");
-            }
-
-            public DeathRow(string message, string distance, int weaponIcon, List<int> weaponMods)
-            {
-                this.Message = message;
-                this.Distance = distance;
-                this.WeaponIcon = weaponIcon;
-                this.WeaponModsIcons = weaponMods;
-            }
-
-            public void Run()
-            {
-                if (Initialized())
-                {
-                    if (DeathRows.Count == Instance.Cfg.UIConfig.Rows)
-                        DeathRows.RemoveAt(DeathRows.Count - 1);
-                    DeathRows.Insert(0, this);
-                    Instance.AddUIRow(this.Message, this.Distance, this.WeaponIcon, this.WeaponModsIcons);
-                }
-            }
-
-            private void FillDistance(BaseCombatEntity victim, BaseCombatEntity initiator = null)
-            {
-                if (initiator != null)
-                    this.Distance = $"{Vector3.Distance(victim.transform.position, initiator.transform.position).ToString("F1")}m";
-                else
-                    this.Distance = "0m";
-            }
-
-            private void FillIcons(HitInfo info, BaseCombatEntity initiator = null)
-            {
-                this.WeaponModsIcons = new List<int>(5);
-                if (info == null)
-                {
-                    this.WeaponIcon = 996293980;
-                    return;
-                }
-
-                if (info.isHeadshot)
-                    this.WeaponModsIcons.Add(996293980);
-                if (initiator != null)
-                {
-                    ItemDefinition initiatorDefinition = GetInitiatorDefinition(initiator);
-                    if (initiatorDefinition != null)
-                    {
-                        this.WeaponIcon = initiatorDefinition.itemid;
-                        Item attackItem = GetAttackItem(info);
-                        if (attackItem == null)
-                        {
-                            ItemDefinition attackDefinition = GetAttackDefinition(info);
-                            if (attackDefinition != null && attackDefinition.itemid != this.WeaponIcon)
-                                this.WeaponModsIcons.Add(attackDefinition.itemid);
-                        }
-                        else
-                        {
-                            this.WeaponModsIcons.Add(attackItem.info.itemid);
-                            this.WeaponModsIcons.AddRange(attackItem.contents.itemList.Select(x => x.info.itemid).ToList());
-                        }
-                    }
-                }
-                else
-                {
-                    Item attackItem = GetAttackItem(info);
-                    if (attackItem == null)
-                    {
-                        ItemDefinition attackDefinition = GetAttackDefinition(info);
-                        if (attackDefinition != null)
-                        {
-                            this.WeaponIcon = attackDefinition.itemid;
-                        }
-                        else
-                        {
-                            if (info.isHeadshot == false)
-                                this.WeaponIcon = 996293980;
-                        }
-                    }
-                    else
-                    {
-                        this.WeaponIcon = attackItem.info.itemid;
-                        if (attackItem.contents != null)
-                            this.WeaponModsIcons.AddRange(attackItem.contents.itemList.Select(x => x.info.itemid).ToList());
-                    }
-                }
-            }
-
-            private Item GetAttackItem(HitInfo info)
-            {
-                Item attackItem = GetWeaponFromEntity(info.Weapon);
-                if (attackItem == null)
-                    attackItem = GetWeaponFromEntity(info.WeaponPrefab);
-                if (attackItem == null)
-                    attackItem = GetWeaponFromEntity(info.ProjectilePrefab?.sourceWeaponPrefab);
-                return attackItem;
-            }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-            private ItemDefinition GetAttackDefinition(HitInfo info)
-            {
-                ItemDefinition attackDefinition = GetWeaponFromEntityName(info.Weapon);
-                if (attackDefinition == null)
-                    attackDefinition = GetWeaponFromEntityName(info.WeaponPrefab);
-                if (attackDefinition == null)
-                    attackDefinition = GetWeaponFromEntityName(info.ProjectilePrefab?.sourceWeaponPrefab);
-                if (attackDefinition == null)
-                    attackDefinition = GetWeaponFromEntityName(info.ProjectilePrefab?.sourceProjectilePrefab?.sourceWeaponPrefab);
-                return attackDefinition;
-            }
-
-            private ItemDefinition GetInitiatorDefinition(BaseCombatEntity entity)
-            {
-                return GetWeaponFromEntityName(entity);
-            }
-
-            private Item GetWeaponFromEntity(BaseEntity attackEntity)
-            {
-                if (attackEntity == null || attackEntity.GetItem() == null)
-                    return null;
-                return attackEntity.GetItem();
-            }
-
-            private ItemDefinition GetWeaponFromEntityName(BaseEntity attackEntity)
-            {
-                if (attackEntity == null)
-                    return null;
-                if (!Instance.Prefab2Item.TryGetValue(attackEntity.prefabID, out int itemID))
-                {
-                    if (!Instance.PrefabName2Item.TryGetValue(attackEntity.ShortPrefabName, out itemID))
-                    {
-                        return null;
-                    }
-                }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-                if (!ItemManager.itemDictionary.TryGetValue(itemID, out ItemDefinition item))
-                    return null;
-                return item;
-            }
-
-            private string GetNameString(BasePlayer player)
-            {
-                string playerName = player.displayName.ToString();
-                if (player.IsNpc == false && Instance.PlayersData.TryGetValue(player.userID, out PlayerData playerData) && playerData.HideMyName)
-                    playerName = RandomUsernames.Get(player.userID + (ulong)((long)UnityEngine.Random.Range(0, 100000)));
-                return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color={Instance.GetColorFor(player)}>{playerName.Substring(0, Math.Min(16, playerName.Length))}</color></size>";
-            }
-
-            private string GetEntityName(BaseCombatEntity entity)
-            {
-                if (entity == null) return "Неизвестно";
-                try
-                {
-                    string bossName = Instance.OctaBoss?.Call("GetBossName", entity) as string;
-                    if (!string.IsNullOrEmpty(bossName))
-                        return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {bossName}</color></size>";
-                }
-                catch { }
-
-                var livestock = entity as LivestockAnimal;
-                if (livestock != null && !string.IsNullOrEmpty(livestock.AnimalName))
-                    return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {livestock.AnimalName}</color></size>";
-
-                return GetPrefabName(entity.ShortPrefabName);
-            }
-
-            private string GetPrefabName(string shortPrefabName)
-            {
-                return $"<size={Instance.Cfg.UIConfig.NameProperty.Size}><color={Instance.Cfg.UIConfig.NameProperty.Color}>{Instance.GetNpcName(shortPrefabName)}</color></size>";
-            }
-        }
-        public class PlayerData
-        {
-            public double LastConnectTime = 0;
-            public bool HideMessages = false;
-            public bool HideMyName = false;
-        }
-        private bool SwitchHideMyName(BasePlayer player)
-        {
-            if (PlayersData.TryGetValue(player.userID, out PlayerData playerData))
-            {
-                playerData.HideMyName = !playerData.HideMyName;
-            }
-            else
-            {
-                PlayersData[player.userID] = new PlayerData()
-                {
-                    HideMessages = false,
-                    HideMyName = true,
-                    LastConnectTime = new DateTimeOffset(DateTime.Now).ToUnixTimeMilliseconds()
-                };
-                playerData = PlayersData[player.userID];
-            }
-
-            return playerData.HideMyName;
-        }
-
-        private void OnServerSave()
-        {
-            Interface.Oxide.DataFileSystem.WriteObject("OctaFeed\\PlayersData", PlayersData);
-        }
+        private void SavePlayers() => Interface.Oxide.DataFileSystem.WriteObject("OctaFeed\\PlayersData", PlayersData);
 
         private void OnPlayerConnected(BasePlayer player)
         {
-            AddTemplateUI(player);
-            AddUIRows(player);
-            if (PlayersData.TryGetValue(player.userID, out PlayerData playerData))
-                playerData.LastConnectTime = new DateTimeOffset(DateTime.Now).ToUnixTimeMilliseconds();
-            if (Instance.Cfg.UIConfig.EnableUISettings && Instance.Cfg.UIConfig.EnableUISettingsButton)
-                AddUISettings(player);
+            if (player == null) return;
+            if (PlayersData.TryGetValue(player.userID, out var pd))
+                pd.LastConnectTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            DrawAll(player);
         }
-
-        private void AddUISettingsWidget(BasePlayer player)
-        {
-            CuiElementContainer container = new CuiElementContainer();
-            container.Add(new CuiElement { Name = "DMUISettings", Parent = "DMUI", Components = { new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = $"{5} {-43}", OffsetMax = $"{180} {5}" }, new CuiImageComponent { Color = "1 0.95 0.85 0.2", Material = "assets/icons/iconmaterial.mat", } } });
-            Instance.PlayersData.TryGetValue(player.userID, out PlayerData playerData);
-            container.Add(new CuiButton { Button = { Command = "octafeed hidemyname", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "5 3", OffsetMax = "170 23" }, Text = { Text = playerData != null && playerData.HideMyName ? "☑ Скрывать мой ник" : "☐ Скрывать мой ник", Align = TextAnchor.MiddleLeft, Color = "1 1 1 0.8", Font = "robotocondensed-bold.ttf", FontSize = 11 }, }, "DMUISettings", "DMUISettings.HideMyName");
-            container.Add(new CuiButton { Button = { Command = "octafeed hidemessages", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "5 23", OffsetMax = "170 43" }, Text = { Text = playerData != null && playerData.HideMessages ? "☑ Скрывать киллфид" : "☐ Скрывать киллфид", Align = TextAnchor.MiddleLeft, Color = "1 1 1 0.8", Font = "robotocondensed-bold.ttf", FontSize = 11 }, }, "DMUISettings", "DMUISettings.HideMessages");
-            CuiHelper.AddUi(player, container);
-        }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-        private bool IsPlayerNameHidden(BasePlayer player)
-        {
-            return PlayersData.TryGetValue(player.userID, out PlayerData playerData) && playerData.HideMyName;
-        }
-        internal Dictionary<ulong, PlayerData> PlayersData = new Dictionary<ulong, PlayerData>();
 
         private void OnPlayerDisconnected(BasePlayer player)
         {
+            if (player != null) _settingsOpen.Remove(player.userID);
         }
 
-        private void UpdateUISettingsButton(BasePlayer player, string command)
+        // Карта prefab -> itemid для иконок. Собирается один раз на старте.
+        private void BuildItemIconMaps()
         {
-            CuiElementContainer container = new CuiElementContainer();
-            container.Add(new CuiButton { Button = { Command = $"octafeed {command}", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", }, Text = { Text = "", }, }, "DMUI", "DMUI.Button", "DMUI.Button");
-            CuiHelper.AddUi(player, container);
-        }
-
-        private bool IsPlayerHideMessages(BasePlayer player)
-        {
-            return PlayersData.TryGetValue(player.userID, out PlayerData playerData) && playerData.HideMessages;
-        }
-
-        private void SetDefaultConfig()
-        {
-            Cfg = GetDefaultConfig();
-            Config.WriteObject(Cfg, true);
-        }
-        internal const string HUD = "Hud";
-        internal string GetDeathMessage(DamageType damageType)
-        {
-            if (Cfg.CoreConfig.Messages.TryGetValue(damageType.ToString(), out List<string> variables))
-                return variables[UnityEngine.Random.Range(0, variables.Count)];
-            return null;
-        }
-
-        [ConsoleCommand("octafeed")]
-        private void CMDMain(ConsoleSystem.Arg arg)
-        {
-            if (Instance.Cfg.UIConfig.EnableUISettings == false || Instance.Cfg.UIConfig.EnableUISettingsButton == false)
-                return;
-            BasePlayer player = arg.Player();
-            if (player != null && arg.HasArgs())
+            foreach (ItemDefinition def in ItemManager.GetItemDefinitions())
             {
-                string command = arg.Args[0].ToString();
-                switch (command)
+                Item cacheItem = null;
+                try
                 {
-                    case "show":
+                    cacheItem = ItemManager.CreateByName(def.shortname, 1, 0);
+                    BaseEntity entity = cacheItem?.GetHeldEntity();
+                    if (entity != null)
                     {
-                        UpdateUISettingsButton(player, "hide");
-                        AddUISettingsWidget(player);
-                        break;
+                        _prefab2Item[entity.prefabID] = def.itemid;
+                        _prefabName2Item[entity.ShortPrefabName] = def.itemid;
+                        _prefabName2Item[entity.ShortPrefabName.Replace(".entity", ".deployed")] = def.itemid;
+                        _prefabName2Item[entity.ShortPrefabName + ".deployed"] = def.itemid;
                     }
 
-                    case "hide":
+                    if (def.HasComponent<ItemModDeployable>())
                     {
-                        CuiHelper.DestroyUi(player, "DMUISettings");
-                        UpdateUISettingsButton(player, "show");
-                        break;
-                    }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-                    case "hidemyname":
-                    {
-                        SwitchHideMyName(player);
-                        UpdateUISettingsWidget(player);
-                        break;
-                    }
-
-                    case "hidemessages":
-                    {
-                        SwitchHideMessages(player);
-                        UpdateUISettingsWidget(player);
-                        break;
+                        string deployablePrefab = def.GetComponent<ItemModDeployable>()?.entityPrefab?.resourcePath;
+                        if (!string.IsNullOrEmpty(deployablePrefab))
+                        {
+                            string shortPrefabName = GameManager.server.FindPrefab(deployablePrefab)?.GetComponent<BaseEntity>()?.ShortPrefabName;
+                            if (!string.IsNullOrEmpty(shortPrefabName))
+                                _prefabName2Item[shortPrefabName] = def.itemid;
+                        }
                     }
                 }
+                catch { }
+                finally { cacheItem?.Remove(); }
             }
         }
+
+        #endregion
+
+        #region [Роутинг смертей]
+
+        private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
+        {
+            if (entity is BasePlayer player && player.IsNonNpcPlayer() && info?.Initiator != null && info.Initiator != entity)
+            {
+                _lastAttacks[player.userID] = new RecentAttack { Hit = info, Time = UnityEngine.Time.realtimeSinceStartup };
+            }
+        }
+
         private void OnEntityDeath(BaseCombatEntity victim, HitInfo info)
         {
             if (victim == null || victim.net == null)
                 return;
 
-            DeathRow outputRow = null;
-
-            // Если жертва — живой игрок, а смертельный урон пришел без инициатора или как урон окружения
-            // (Drowned, Bleeding, Fall, Cold), проверяем последний урон от игрока/босса за 8 секунд
+            // Атрибуция: если игрок умер «от окружения» (утонул/кровотечение/холод/падение),
+            // но за последние 8 сек получал урон от кого-то — виновник тот, кто нанёс урон.
             if (victim is BasePlayer vp && vp.IsNonNpcPlayer())
             {
                 bool isEnvOrSelf = info == null || info.Initiator == null || info.Initiator == victim;
@@ -807,246 +354,584 @@ namespace Oxide.Plugins
                     if (maj == DamageType.Drowned || maj == DamageType.Bleeding || maj == DamageType.Cold)
                         isEnvOrSelf = true;
                 }
-
-                if (isEnvOrSelf)
+                if (isEnvOrSelf && _lastAttacks.TryGetValue(vp.userID, out var last) &&
+                    last.Hit?.Initiator != null && last.Hit.Initiator != victim &&
+                    UnityEngine.Time.realtimeSinceStartup - last.Time <= AssistWindow)
                 {
-                    RecentAttack lastAttack;
-                    if (LastAttacks.TryGetValue(vp.userID, out lastAttack) && lastAttack != null &&
-                        lastAttack.Hit?.Initiator != null && lastAttack.Hit.Initiator != victim)
-                    {
-                        if (UnityEngine.Time.realtimeSinceStartup - lastAttack.Time <= 8f)
-                        {
-                            info = lastAttack.Hit;
-                        }
-                    }
+                    info = last.Hit;
                 }
-                LastAttacks.Remove(vp.userID);
+                _lastAttacks.Remove(vp.userID);
             }
 
-            if (info != null && info.damageTypes != null && info.Initiator is BaseCombatEntity initiator &&
+            FeedRow row = null;
+
+            if (info?.damageTypes != null && info.Initiator is BaseCombatEntity initiator &&
                 initiator.net != null && initiator != victim)
             {
-                // Жертва — живой игрок
                 if (victim is BasePlayer victimPlayer && victimPlayer.IsNonNpcPlayer())
                 {
-                    if (initiator is BasePlayer initPlayer)
-                    {
-                        if (initPlayer.IsNpcPlayer())
-                            outputRow = new DeathRow(victimPlayer, initPlayer as NPCPlayer, info);
-                        else
-                            outputRow = new DeathRow(victimPlayer, initPlayer, info);
-                    }
-                    else if (initiator is PatrolHelicopter || initiator is BradleyAPC)
-                    {
-                        outputRow = new DeathRow(victimPlayer, initiator, info);
-                    }
-                    else
-                    {
-                        // Животное / босс / турель / ловушка убили игрока!
-                        outputRow = new DeathRow(victimPlayer, initiator, info);
-                    }
+                    // убили игрока
+                    row = BuildRow(victimPlayer, initiator, info, GateForPlayerDeath(initiator));
                 }
-                // Жертва — животное / босс / NPC / вертолет / танк, а убийца — живой игрок
-                else if (initiator is BasePlayer killerPlayer && killerPlayer.IsNonNpcPlayer())
+                else if (initiator is BasePlayer killer && killer.IsNonNpcPlayer())
                 {
-                    if (victim is NPCPlayer npcVictim)
-                        outputRow = new DeathRow(npcVictim, killerPlayer, info);
-                    else if (victim is PatrolHelicopter heli)
-                        outputRow = new DeathRow(heli, killerPlayer, info);
-                    else if (victim is BradleyAPC bradley)
-                        outputRow = new DeathRow(bradley, killerPlayer, info);
-                    else
-                    {
-                        // Игрок убил что-то прочее: в фид идут только боссы и свита OctaBoss.
-                        // Обычных животных, бочки, трупы и прочие контейнеры пропускаем.
-                        string bossName = null;
-                        try { bossName = OctaBoss?.Call("GetBossName", victim) as string; } catch { }
-                        if (!string.IsNullOrEmpty(bossName))
-                            outputRow = new DeathRow(victim, killerPlayer, info);
-                    }
+                    // игрок убил не-игрока: NPC, вертолёт, танк, боссы OctaBoss.
+                    // Обычных животных и прочие объекты в ленту не пускаем.
+                    row = BuildRow(victim, killer, info, GateForVictim(victim));
                 }
             }
 
-            // Чистая смерть без инициатора (суицид, падение, голод, чистое утопление вне боя)
-            if (outputRow == null && victim is BasePlayer player && player.IsNonNpcPlayer())
-            {
-                outputRow = new DeathRow(player, info);
-            }
+            // чистая смерть без инициатора (суицид, падение, голод)
+            if (row == null && victim is BasePlayer solo && solo.IsNonNpcPlayer())
+                row = BuildRow(solo, null, info, Cfg.CoreConfig.PlayerKilledByEnv);
 
-            outputRow?.Run();
-        }
-        public OctaFeedConfig GetDefaultConfig()
-        {
-            return new OctaFeedConfig
-            {
-                CoreConfig = new OctaFeedConfig.CoreConfiguration()
-                {
-                    Names = Names,
-                    Messages = Messages,
-                    Animal = true,
-                    NPC = true,
-                    PlayerKilledByAnimal = true,
-                    PlayerKilledByNPC = true,
-                    PlayerKilledByEnv = true,
-                    RenameNPC = true,
-                    Bradley = true,
-                    Helicopter = true,
-                },
-                UIConfig = new OctaFeedConfig.UIConfiguration
-                {
-                    NameProperty = new OctaFeedConfig.DMTextProperty()
-                    {
-                        Color = "#D3D3D3",
-                        Size = 11,
-                    },
-                    TextProperty = new OctaFeedConfig.DMTextProperty()
-                    {
-                        Color = "#F0F0F0",
-                        Size = 10,
-                    },
-                    DistanceProperty = new OctaFeedConfig.DMTextProperty()
-                    {
-                        Color = "#ffffff",
-                        Size = 11,
-                    },
-                    Colors = new Dictionary<string, string>()
-                    {
-                        ["octafeed.deluxe"] = "#7303c0",
-                        ["octafeed.vip"] = "#f9ff55",
-                        ["octafeed.premium"] = "#55ff8a",
-                    },
-                    Rows = 5,
-                    Time = 5f,
-                    Outline = true,
-                    ImageOutline = true,
-                    DistanceColor = "#FFFFFFC0",
-                    RowColor = "#00000000",
-                    OffsetX = 0,
-                    OffsetY = 0,
-                    EnableUISettings = true,
-                    EnableUISettingsButton = true
-                },
-            };
-        }
-        private void OnServerInitialized()
-        {
-            Instance = this;
-            PlayersData = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, PlayerData>>("OctaFeed\\PlayersData");
-            List<ulong> tempData = new List<ulong>();
-            foreach (var playerData in PlayersData)
-            {
-                if (playerData.Value.LastConnectTime + 604800 < new DateTimeOffset(DateTime.Now).ToUnixTimeMilliseconds())
-                    tempData.Add(playerData.Key);
-            }
-
-            foreach (var userID in tempData)
-                PlayersData.Remove(userID);
-            foreach (var groupColor in Cfg.UIConfig.Colors)
-            {
-                permission.RegisterPermission(groupColor.Key, this);
-            }
-
-            foreach (var player in BasePlayer.activePlayerList)
-            {
-                RemoveUITemplate(player);
-                AddTemplateUI(player);
-                RemoveUISettings(player);
-                if (Instance.Cfg.UIConfig.EnableUISettings && Instance.Cfg.UIConfig.EnableUISettingsButton)
-                    AddUISettings(player);
-            }
-
-            foreach (ItemDefinition itemDefinition in ItemManager.GetItemDefinitions())
-            {
-                Item cacheItem = ItemManager.CreateByName(itemDefinition.shortname, 1, 0);
-                BaseEntity entity = cacheItem.GetHeldEntity();
-                if (entity != null)
-                {
-                    Prefab2Item[entity.prefabID] = itemDefinition.itemid;
-                    PrefabName2Item[entity.ShortPrefabName] = itemDefinition.itemid;
-                    PrefabName2Item[entity.ShortPrefabName.Replace(".entity", ".deployed")] = itemDefinition.itemid;
-                    PrefabName2Item[entity.ShortPrefabName + ".deployed"] = itemDefinition.itemid;
-                }
-
-                if (itemDefinition.HasComponent<ItemModDeployable>())
-                {
-                    string deployablePrefab = itemDefinition.GetComponent<ItemModDeployable>()?.entityPrefab?.resourcePath;
-                    if (string.IsNullOrEmpty(deployablePrefab) == false)
-                    {
-                        string shortPrefabName = GameManager.server.FindPrefab(deployablePrefab)?.GetComponent<BaseEntity>()?.ShortPrefabName;
-                        if (string.IsNullOrEmpty(shortPrefabName) == false)
-                        {
-                            PrefabName2Item[shortPrefabName] = itemDefinition.itemid;
-                        }
-                    }
-                }
-
-                cacheItem.Remove();
-            }
-
-            timer.Every(1.0f, () =>
-            {
-                try
-                {
-                    RemoveLastUIRow();
-                }
-                catch (Exception ex)
-                {
-                    PrintError(ex.ToString());
-                }
-            });
+            if (row != null) PushRow(row);
         }
 
-        private void UpdateUISettingsWidget(BasePlayer player)
+        // Каким флагом конфига гейтится смерть игрока от этого инициатора
+        private bool GateForPlayerDeath(BaseCombatEntity initiator)
         {
-            CuiElementContainer container = new CuiElementContainer();
-            Instance.PlayersData.TryGetValue(player.userID, out PlayerData playerData);
-            container.Add(new CuiButton { Button = { Command = "octafeed hidemyname", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "5 3", OffsetMax = "170 23" }, Text = { Text = playerData != null && playerData.HideMyName ? "☑ Скрывать мой ник" : "☐ Скрывать мой ник", Align = TextAnchor.MiddleLeft, Color = "1 1 1 0.8", Font = "robotocondensed-bold.ttf", FontSize = 11 }, }, "DMUISettings", "DMUISettings.HideMyName", "DMUISettings.HideMyName");
-            container.Add(new CuiButton { Button = { Command = "octafeed hidemessages", Color = "0 0 0 0", }, RectTransform = { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "5 23", OffsetMax = "170 43" }, Text = { Text = playerData != null && playerData.HideMessages ? "☑ Скрывать киллфид" : "☐ Скрывать киллфид", Align = TextAnchor.MiddleLeft, Color = "1 1 1 0.8", Font = "robotocondensed-bold.ttf", FontSize = 11 }, }, "DMUISettings", "DMUISettings.HideMessages", "DMUISettings.HideMessages");
-            CuiHelper.AddUi(player, container);
+            if (initiator is BasePlayer p)
+                return p.IsNpcPlayer() ? Cfg.CoreConfig.PlayerKilledByNPC : true; // PvP — всегда
+            if (initiator is PatrolHelicopter || initiator is BradleyAPC)
+                return Cfg.CoreConfig.PlayerKilledByAnimal;
+            return Cfg.CoreConfig.PlayerKilledByAnimal; // животное/босс/турель/ловушка
         }
 
-        internal string GetNpcName(string shortPrefabName)
+        // Каким флагом гейтится смерть этой жертвы от игрока
+        private bool GateForVictim(BaseCombatEntity victim)
         {
-            if (Cfg.CoreConfig.Names.TryGetValue(shortPrefabName, out string name))
-                return name;
-            return shortPrefabName;
-        }
-
-        private void RemoveLastUIRow()
-        {
-            if (DeathRow.DeathRows.Count == 0)
-                return;
-            if ((DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds - LAST_ROW_MODIFY_TIME < Instance.Cfg.UIConfig.Time)
-                return;
-            LAST_ROW_MODIFY_TIME = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
-            int lastVisibleRowId = (LAST_ROW_ID + (DeathRow.DeathRows.Count - 1) + Instance.Cfg.UIConfig.Rows) % Instance.Cfg.UIConfig.Rows;
-            string jsonContainer = $"[{{\"name\":\"DMR{lastVisibleRowId}\",\"parent\":\"DM\",\"components\":[{{\"type\":\"RectTransform\",\"offsetmin\":\"0 100\",\"offsetmax\":\"0 100\"}}],\"update\":true}}]";
-            foreach (var player in BasePlayer.activePlayerList)
-            {
-                if (Instance.PlayersData.TryGetValue(player.userID, out PlayerData playerData))
-                {
-                    if (playerData.HideMessages)
-                        continue;
-                }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-                CuiHelper.AddUi(player, jsonContainer);
-            }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-            DeathRow.DeathRows.RemoveAt(DeathRow.DeathRows.Count - 1);
+            if (victim is NPCPlayer) return Cfg.CoreConfig.NPC;
+            if (victim is PatrolHelicopter) return Cfg.CoreConfig.Helicopter;
+            if (victim is BradleyAPC) return Cfg.CoreConfig.Bradley;
+            // прочее — только боссы и свита OctaBoss
+            try { return !string.IsNullOrEmpty(OctaBoss?.Call("GetBossName", victim) as string); }
+            catch { return false; }
         }
 
         private void OnPatrolHelicopterKill(PatrolHelicopter victim, HitInfo info)
         {
-            if (victim == null)
-                return;
-            if (info == null)
-                return;
-            if (info.damageTypes == null)
-                return;
-            if (info.InitiatorPlayer == null)
-                return;
-            new DeathRow(victim, info.InitiatorPlayer, info).Run();
+            if (victim == null || info?.damageTypes == null || info.InitiatorPlayer == null) return;
+            var row = BuildRow(victim, info.InitiatorPlayer, info, Cfg.CoreConfig.Helicopter);
+            if (row != null) PushRow(row);
         }
+
+        #endregion
+
+        #region [Построение строки]
+
+        // victim — погибший, initiator — убийца (может быть null).
+        private FeedRow BuildRow(BaseCombatEntity victim, BaseCombatEntity initiator, HitInfo info, bool allowed)
+        {
+            if (!allowed) return null;
+
+            var tpl = GetDeathMessage(info?.damageTypes?.GetMajorityDamageType() ?? DamageType.Generic);
+            if (string.IsNullOrEmpty(tpl)) return null;
+
+            var row = new FeedRow
+            {
+                Distance = FormatDistance(victim, initiator),
+                ModIcons = new List<int>(6),
+            };
+            FillIcons(row, info, initiator);
+
+            string vName = NameOf(victim);
+            string iName = NameOf(initiator);
+            row.Message = string.Format(tpl, vName, iName);
+            return row;
+        }
+
+        private string FormatDistance(BaseCombatEntity victim, BaseCombatEntity initiator)
+        {
+            if (initiator == null) return "0m";
+            return Vector3.Distance(victim.transform.position, initiator.transform.position).ToString("F1") + "m";
+        }
+
+        private string NameOf(BaseCombatEntity entity)
+        {
+            if (entity == null) return "";
+
+            var player = entity as BasePlayer;
+            if (player != null && !player.IsNpcPlayer())
+            {
+                string name = player.displayName;
+                if (PlayersData.TryGetValue(player.userID, out var pd) && pd.HideMyName)
+                    name = RandomUsernames.Get(player.userID + (ulong)UnityEngine.Random.Range(0, 100000));
+                if (name.Length > 16) name = name.Substring(0, 16);
+                return $"<size={Cfg.UIConfig.NameProperty.Size}><color={GetColorFor(player)}>{name}</color></size>";
+            }
+
+            // боссы OctaBoss и именованные животные — с золотой звездой
+            try
+            {
+                string bossName = OctaBoss?.Call("GetBossName", entity) as string;
+                if (!string.IsNullOrEmpty(bossName))
+                    return $"<size={Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {bossName}</color></size>";
+            }
+            catch { }
+
+            var livestock = entity as LivestockAnimal;
+            if (livestock != null && !string.IsNullOrEmpty(livestock.AnimalName))
+                return $"<size={Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {livestock.AnimalName}</color></size>";
+
+            // NPC/объекты — локализованное имя из конфига или имя префаба
+            string raw = entity.ShortPrefabName;
+            string nice = Cfg.CoreConfig.RenameNPC ? GetNpcName(raw) : (entity is NPCPlayer npc ? npc.displayName : raw);
+            return $"<size={Cfg.UIConfig.NameProperty.Size}><color={Cfg.UIConfig.NameProperty.Color}>{nice}</color></size>";
+        }
+
+        private void FillIcons(FeedRow row, HitInfo info, BaseCombatEntity initiator)
+        {
+            if (info == null)
+            {
+                row.WeaponIcon = IconHeadshot;
+                return;
+            }
+            if (info.isHeadshot)
+                row.ModIcons.Add(IconHeadshot);
+
+            if (initiator != null)
+            {
+                ItemDefinition initiatorDef = ItemDefOf(initiator);
+                if (initiatorDef != null)
+                {
+                    row.WeaponIcon = initiatorDef.itemid;
+                    Item attackItem = GetAttackItem(info);
+                    if (attackItem == null)
+                    {
+                        ItemDefinition attackDef = GetAttackDefinition(info);
+                        if (attackDef != null && attackDef.itemid != row.WeaponIcon)
+                            row.ModIcons.Add(attackDef.itemid);
+                    }
+                    else
+                    {
+                        row.ModIcons.Add(attackItem.info.itemid);
+                        if (attackItem.contents != null)
+                            row.ModIcons.AddRange(attackItem.contents.itemList.Select(x => x.info.itemid));
+                    }
+                }
+            }
+            else
+            {
+                Item attackItem = GetAttackItem(info);
+                if (attackItem != null)
+                {
+                    row.WeaponIcon = attackItem.info.itemid;
+                    if (attackItem.contents != null)
+                        row.ModIcons.AddRange(attackItem.contents.itemList.Select(x => x.info.itemid));
+                }
+                else
+                {
+                    ItemDefinition attackDef = GetAttackDefinition(info);
+                    row.WeaponIcon = attackDef?.itemid ?? (info.isHeadshot ? 0 : IconHeadshot);
+                }
+            }
+        }
+
+        private Item GetAttackItem(HitInfo info)
+        {
+            return GetWeaponFromEntity(info.Weapon)
+                   ?? GetWeaponFromEntity(info.WeaponPrefab)
+                   ?? GetWeaponFromEntity(info.ProjectilePrefab?.sourceWeaponPrefab);
+        }
+
+        private ItemDefinition GetAttackDefinition(HitInfo info)
+        {
+            return ItemDefOf(info.Weapon)
+                   ?? ItemDefOf(info.WeaponPrefab)
+                   ?? ItemDefOf(info.ProjectilePrefab?.sourceWeaponPrefab)
+                   ?? ItemDefOf(info.ProjectilePrefab?.sourceProjectilePrefab?.sourceWeaponPrefab);
+        }
+
+        private Item GetWeaponFromEntity(BaseEntity e) => e?.GetItem();
+
+        private ItemDefinition ItemDefOf(BaseEntity e)
+        {
+            if (e == null) return null;
+            if (!_prefab2Item.TryGetValue(e.prefabID, out int itemID) &&
+                !_prefabName2Item.TryGetValue(e.ShortPrefabName, out itemID))
+                return null;
+            return ItemManager.itemDictionary.TryGetValue(itemID, out ItemDefinition item) ? item : null;
+        }
+
+        private string GetDeathMessage(DamageType damageType)
+        {
+            if (Cfg.CoreConfig.Messages.TryGetValue(damageType.ToString(), out List<string> variants) && variants.Count > 0)
+                return variants[UnityEngine.Random.Range(0, variants.Count)];
+            return null;
+        }
+
+        internal string GetNpcName(string shortPrefabName)
+        {
+            return Cfg.CoreConfig.Names.TryGetValue(shortPrefabName, out string name) ? name : shortPrefabName;
+        }
+
+        // PluginReference залипает на старой инстанции после перезагрузки OctVIP —
+        // ищем живой плагин по имени при каждом обращении (киллы редкие, это дёшево)
+        private Plugin FindOctVIP()
+        {
+            foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
+                if (p.Name == "OctVIP" && p.IsLoaded) return p;
+            return null;
+        }
+
+        internal string GetColorFor(BasePlayer player)
+        {
+            foreach (var color in Cfg.UIConfig.Colors)
+                if (permission.UserHasPermission(player.UserIDString, color.Key))
+                    return color.Value;
+
+            // цвет ника из OctVIP, если игрок с VIP-уровнем
+            var vip = FindOctVIP();
+            if (vip != null)
+            {
+                ulong uid = (ulong)player.userID;
+                int level = vip.Call<int>("GetVipLevel", uid);
+                if (level > 0) return vip.Call<string>("GetVipColor", uid);
+            }
+            return Cfg.UIConfig.NameProperty.Color;
+        }
+
+        #endregion
+
+        #region [UI — экранные доли]
+
+        private static string Fx(float v) => v.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+        private static string HexToRGBA(string hexColor)
+        {
+            if (ColorUtility.TryParseHtmlString(hexColor, out Color color))
+                return string.Format("{0:F2} {1:F2} {2:F2} {3:F2}", color.r, color.g, color.b, color.a);
+            return "1 1 1 1";
+        }
+
+        private int RowWidth => Cfg?.UIConfig != null && Cfg.UIConfig.RowWidth > 0 ? Cfg.UIConfig.RowWidth : 480;
+
+        // Рамка ленты в долях экрана. Исходная логика: правый верхний угол,
+        // ширина RowWidth вирт.пкс, строки по 25 пкс, сдвиги OffsetX/OffsetY.
+        private void FeedBounds(out float x1, out float y1, out float x2, out float y2)
+        {
+            float ox = (Cfg?.UIConfig?.OffsetX ?? 0) / RefW;
+            float oy = (Cfg?.UIConfig?.OffsetY ?? 0) / RefH;
+            float w = RowWidth / RefW;
+            int rows = Math.Max(1, Cfg?.UIConfig?.Rows ?? 5);
+            float h = rows * 25f / RefH;
+            x2 = 1f - 0.0039f - ox;  // -5px от правого края
+            x1 = x2 - w;
+            y2 = 1f - 0.0069f - oy;  // -5px от верха
+            y1 = y2 - h;
+        }
+
+        private bool FeedVisible(BasePlayer player) =>
+            !(PlayersData.TryGetValue(player.userID, out var pd) && pd.HideMessages);
+
+        // Полная перерисовка: шестерёнка + лента текущих строк.
+        private void DrawAll(BasePlayer player)
+        {
+            DrawGear(player);
+            DrawFeed(player);
+        }
+
+        private void DrawAllForAll()
+        {
+            foreach (var p in BasePlayer.activePlayerList) DrawAll(p);
+        }
+
+        private void DrawFeed(BasePlayer player)
+        {
+            CuiHelper.DestroyUi(player, PanelName);
+            if (!FeedVisible(player) || _rows.Count == 0) return;
+
+            FeedBounds(out float x1, out float y1, out float x2, out float y2);
+            int rows = Math.Max(1, Cfg.UIConfig.Rows);
+            float rh = 1f / rows;
+
+            var container = new CuiElementContainer();
+            container.Add(new CuiElement
+            {
+                Name = PanelName,
+                Parent = "Hud",
+                Components = {
+                    new CuiRectTransformComponent { AnchorMin = $"{Fx(x1)} {Fx(y1)}", AnchorMax = $"{Fx(x2)} {Fx(y2)}" },
+                    new CuiImageComponent { Color = "0 0 0 0" },
+                }
+            });
+
+            for (int i = 0; i < _rows.Count && i < rows; i++)
+            {
+                var row = _rows[i];
+                string rowName = $"{PanelName}R{i}";
+                // строка i — сверху вниз
+                string ryMin = $"0 {Fx(1f - (i + 1) * rh)}";
+                string ryMax = $"1 {Fx(1f - i * rh)}";
+
+                container.Add(new CuiElement
+                {
+                    Name = rowName,
+                    Parent = PanelName,
+                    Components = {
+                        new CuiRectTransformComponent { AnchorMin = ryMin, AnchorMax = ryMax },
+                        new CuiImageComponent { Color = HexToRGBA(Cfg.UIConfig.RowColor) },
+                    }
+                });
+
+                // текст события: прижат вправо, вплотную к иконкам
+                var msg = new CuiElement
+                {
+                    Name = rowName + "K",
+                    Parent = rowName,
+                    Components = {
+                        new CuiTextComponent { Text = row.Message, Color = HexToRGBA(Cfg.UIConfig.TextProperty.Color),
+                            Align = TextAnchor.MiddleRight, FontSize = Cfg.UIConfig.TextProperty.Size, Font = "robotocondensed-bold.ttf" },
+                        new CuiRectTransformComponent { AnchorMin = "0.02 0", AnchorMax = "0.665 1" },
+                    }
+                };
+                if (Cfg.UIConfig.Outline)
+                    msg.Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
+                container.Add(msg);
+
+                // иконка оружия + до 5 модов — равномерные слоты правее текста
+                var icons = new List<int> { row.WeaponIcon };
+                if (row.ModIcons != null) icons.AddRange(row.ModIcons);
+                int slot = 0;
+                foreach (var icon in icons)
+                {
+                    if (icon == 0 || slot >= 6) { slot++; continue; }
+                    float ix1 = 0.675f + slot * 0.0367f;
+                    var el = new CuiElement
+                    {
+                        Name = $"{rowName}I{slot}",
+                        Parent = rowName,
+                        Components = {
+                            new CuiImageComponent { ItemId = icon, Color = "1 1 1 1" },
+                            new CuiRectTransformComponent { AnchorMin = $"{Fx(ix1)} 0.08", AnchorMax = $"{Fx(ix1 + 0.031f)} 0.92" },
+                        }
+                    };
+                    if (Cfg.UIConfig.ImageOutline)
+                        el.Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
+                    container.Add(el);
+                    slot++;
+                }
+
+                // дистанция — крайняя правая колонка
+                var dist = new CuiElement
+                {
+                    Name = rowName + "DT",
+                    Parent = rowName,
+                    Components = {
+                        new CuiTextComponent { Text = row.Distance, Color = HexToRGBA(Cfg.UIConfig.DistanceProperty.Color),
+                            Align = TextAnchor.MiddleCenter, FontSize = Cfg.UIConfig.DistanceProperty.Size, Font = "robotocondensed-bold.ttf" },
+                        new CuiRectTransformComponent { AnchorMin = "0.90 0", AnchorMax = "1 1" },
+                    }
+                };
+                if (Cfg.UIConfig.Outline)
+                    dist.Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
+                container.Add(dist);
+            }
+
+            CuiHelper.AddUi(player, container);
+        }
+
+        // Шестерёнка настроек слева от первого ряда ленты
+        private void DrawGear(BasePlayer player)
+        {
+            CuiHelper.DestroyUi(player, GearName);
+            CuiHelper.DestroyUi(player, WidgetName);
+            if (Cfg?.UIConfig == null || !Cfg.UIConfig.EnableUISettings || !Cfg.UIConfig.EnableUISettingsButton) return;
+
+            float ox = (Cfg.UIConfig.OffsetX) / RefW, oy = (Cfg.UIConfig.OffsetY) / RefH;
+            float w = RowWidth / RefW;
+            float gx2 = 1f - 0.0039f - ox - w - 0.004f; // левее ленты
+            float gx1 = gx2 - 20f / RefW;
+            float gy2 = 1f - 0.0069f - oy;
+            float gy1 = gy2 - 20f / RefH;
+
+            var container = new CuiElementContainer();
+            var gear = new CuiElement
+            {
+                Name = GearName,
+                Parent = "Overlay",
+                Components = {
+                    new CuiRectTransformComponent { AnchorMin = $"{Fx(gx1)} {Fx(gy1)}", AnchorMax = $"{Fx(gx2)} {Fx(gy2)}" },
+                    new CuiImageComponent { Color = "1 1 1 0.8", Sprite = "assets/icons/tools.png", Material = "assets/icons/iconmaterial.mat" },
+                }
+            };
+            if (Cfg.UIConfig.Outline)
+                gear.Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
+            container.Add(gear);
+            container.Add(new CuiButton
+            {
+                Button = { Command = "octafeed toggle", Color = "0 0 0 0" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+                Text = { Text = "" },
+            }, GearName, GearName + ".Button");
+            CuiHelper.AddUi(player, container);
+
+            if (_settingsOpen.Contains(player.userID))
+                DrawWidget(player);
+        }
+
+        // Всплывающая панель настроек — левее шестерёнки, долями экрана
+        private void DrawWidget(BasePlayer player)
+        {
+            CuiHelper.DestroyUi(player, WidgetName);
+
+            float ox = (Cfg.UIConfig.OffsetX) / RefW, oy = (Cfg.UIConfig.OffsetY) / RefH;
+            float w = RowWidth / RefW;
+            float gx1 = 1f - 0.0039f - ox - w - 0.004f - 20f / RefW;
+            float gy2 = 1f - 0.0069f - oy;
+            float wx2 = gx1 - 0.004f;
+            float wx1 = wx2 - 175f / RefW;
+            float wy2 = gy2 + 4f / RefH;
+            float wy1 = wy2 - 44f / RefH;
+
+            PlayersData.TryGetValue(player.userID, out var pd);
+            bool hideName = pd?.HideMyName ?? false;
+            bool hideFeed = pd?.HideMessages ?? false;
+
+            var container = new CuiElementContainer();
+            container.Add(new CuiElement
+            {
+                Name = WidgetName,
+                Parent = "Hud",
+                Components = {
+                    new CuiRectTransformComponent { AnchorMin = $"{Fx(wx1)} {Fx(wy1)}", AnchorMax = $"{Fx(wx2)} {Fx(wy2)}" },
+                    new CuiImageComponent { Color = "0 0 0 0.55", Material = "assets/icons/iconmaterial.mat" },
+                }
+            });
+            container.Add(new CuiButton
+            {
+                Button = { Command = "octafeed hidemessages", Color = "0 0 0 0" },
+                RectTransform = { AnchorMin = "0.03 0.52", AnchorMax = "0.97 0.95" },
+                Text = { Text = hideFeed ? "☑ Скрывать киллфид" : "☐ Скрывать киллфид",
+                    Align = TextAnchor.MiddleLeft, Color = "1 1 1 0.9", Font = "robotocondensed-bold.ttf", FontSize = 11 },
+            }, WidgetName, WidgetName + ".HideMessages");
+            container.Add(new CuiButton
+            {
+                Button = { Command = "octafeed hidemyname", Color = "0 0 0 0" },
+                RectTransform = { AnchorMin = "0.03 0.05", AnchorMax = "0.97 0.48" },
+                Text = { Text = hideName ? "☑ Скрывать мой ник" : "☐ Скрывать мой ник",
+                    Align = TextAnchor.MiddleLeft, Color = "1 1 1 0.9", Font = "robotocondensed-bold.ttf", FontSize = 11 },
+            }, WidgetName, WidgetName + ".HideMyName");
+            CuiHelper.AddUi(player, container);
+        }
+
+        // Новая строка: вставляем сверху, обрезаем хвост, перерисовываем всем
+        private void PushRow(FeedRow row)
+        {
+            row.ExpiresAt = UnityEngine.Time.realtimeSinceStartup + Math.Max(1f, Cfg.UIConfig.Time);
+            _rows.Insert(0, row);
+            int cap = Math.Max(1, Cfg.UIConfig.Rows);
+            while (_rows.Count > cap) _rows.RemoveAt(_rows.Count - 1);
+            DrawAllForAll();
+        }
+
+        // Снимаем истёкшие строки каждую секунду; перерисовываем только если что-то сняли
+        private void ExpireRows()
+        {
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            int removed = _rows.RemoveAll(r => now > r.ExpiresAt);
+            if (removed > 0)
+                foreach (var p in BasePlayer.activePlayerList) DrawFeed(p);
+
+            // устаревшие «последние атаки» тоже чистим — словарь не растёт бесконечно
+            if (_lastAttacks.Count > 0)
+            {
+                var stale = _lastAttacks.Where(kv => now - kv.Value.Time > AssistWindow).Select(kv => kv.Key).ToList();
+                foreach (var k in stale) _lastAttacks.Remove(k);
+            }
+        }
+
+        #endregion
+
+        #region [Команды]
+
+        [ChatCommand("dm")]
+        private void CmdDm(BasePlayer player, string cmd, string[] args)
+        {
+            if (!Cfg.UIConfig.EnableUISettings) return;
+            if (args.Length > 0)
+            {
+                switch (args[0])
+                {
+                    case "hidemyname": SwitchHideMyName(player); break;
+                    case "hidemessages": SwitchHideMessages(player); break;
+                }
+            }
+            PlayersData.TryGetValue(player.userID, out var pd);
+            SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color>\nЛента: {(pd != null && pd.HideMessages ? "скрыта" : "видна")}\nСкрытие ника: {(pd != null && pd.HideMyName ? "вкл" : "выкл")}\nИспользование: /dm hidemessages|hidemyname");
+        }
+
+        [ConsoleCommand("octafeed")]
+        private void CmdConsole(ConsoleSystem.Arg arg)
+        {
+            if (!Cfg.UIConfig.EnableUISettings || !Cfg.UIConfig.EnableUISettingsButton) return;
+            var player = arg.Player();
+            if (player == null || !arg.HasArgs()) return;
+
+            switch (arg.Args[0].ToString())
+            {
+                case "toggle":
+                    if (!_settingsOpen.Remove(player.userID)) { _settingsOpen.Add(player.userID); DrawWidget(player); }
+                    else CuiHelper.DestroyUi(player, WidgetName);
+                    break;
+                case "show": _settingsOpen.Add(player.userID); DrawWidget(player); break;
+                case "hide": _settingsOpen.Remove(player.userID); CuiHelper.DestroyUi(player, WidgetName); break;
+                case "hidemyname": SwitchHideMyName(player); DrawWidget(player); break;
+                case "hidemessages": SwitchHideMessages(player); DrawWidget(player); break;
+            }
+        }
+
+        private bool SwitchHideMyName(BasePlayer player)
+        {
+            if (!PlayersData.TryGetValue(player.userID, out var pd))
+                pd = PlayersData[player.userID] = new PlayerData();
+            pd.HideMyName = !pd.HideMyName;
+            return pd.HideMyName;
+        }
+
+        private bool? SwitchHideMessages(BasePlayer player)
+        {
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (!PlayersData.TryGetValue(player.userID, out var pd))
+                pd = PlayersData[player.userID] = new PlayerData();
+
+            if (pd.LastConnectTime + 15000 > nowMs)
+            {
+                SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color> Настройка ещё недоступна, подожди: <color=#FFD35C>{(pd.LastConnectTime + 15000 - nowMs) / 1000}</color> сек.");
+                return null;
+            }
+            pd.HideMessages = !pd.HideMessages;
+            pd.LastConnectTime = nowMs;
+            DrawFeed(player);
+            return pd.HideMessages;
+        }
+
+        // Совместимость со старым API: внешние плагины могут класть строки в ленту
+        private void CreateNote(string message, float distance, int weaponIcon, List<int> weaponMods)
+        {
+            var row = new FeedRow { Message = message, Distance = distance.ToString("F1") + "m", WeaponIcon = weaponIcon, ModIcons = weaponMods ?? new List<int>() };
+            PushRow(row);
+        }
+
+        [Obsolete]
+        private void CreateNote(string vName, string iName, float distance, string vColor, string iColor, string weaponName, string[] weaponMods, bool isHeadshot, bool needRenameVictim, bool needRenameInitiator)
+        {
+            string message = $"<color={iColor}>{(needRenameInitiator ? GetNpcName(iName) : iName)}</color> убил <color={vColor}>{(needRenameVictim ? GetNpcName(vName) : vName)}</color>";
+            int weaponIcon = IconDefaultWeapon;
+            var modsList = new List<int>(6);
+            if (ItemManager.itemDictionaryByName.TryGetValue(weaponName, out ItemDefinition itemDefinition))
+                weaponIcon = itemDefinition.itemid;
+            if (isHeadshot) modsList.Add(IconHeadshot);
+            foreach (var weaponMod in weaponMods)
+                if (ItemManager.itemDictionaryByName.TryGetValue(weaponMod, out ItemDefinition modDefinition))
+                    modsList.Add(modDefinition.itemid);
+            CreateNote(message, distance, weaponIcon, modsList);
+        }
+
+        #endregion
+
+        #region [Конфиг]
+
         public class OctaFeedConfig
         {
             public class CoreConfiguration
@@ -1080,6 +965,7 @@ namespace Oxide.Plugins
                 [JsonProperty("[2] Цвет")]
                 public string Color = "#FFFFFF";
             }
+
             [JsonProperty("[1] Настройки плагина")]
             public CoreConfiguration CoreConfig = new CoreConfiguration();
 
@@ -1095,7 +981,7 @@ namespace Oxide.Plugins
                 public Dictionary<string, string> Colors = new Dictionary<string, string>();
                 [JsonProperty("[3] Количество строк")]
                 public int Rows = 5;
-                [JsonProperty("[4] Время, через которое пропадёт последняя строка")]
+                [JsonProperty("[4] Время жизни строки в секундах")]
                 public float Time = 5;
                 [JsonProperty("[5.1] Включить обводку текста")]
                 public bool Outline = true;
@@ -1105,200 +991,65 @@ namespace Oxide.Plugins
                 public string RowColor = "#00000000";
                 [JsonProperty("[7] Цвет панели с дистанцией")]
                 public string DistanceColor = "#FFFFFFC0";
-                [JsonProperty("[8.1] Отступ сверху в пикселях (при разрешении 1360x768)")]
+                [JsonProperty("[8.1] Отступ сверху в вирт.пкс (сетка 1280x720)")]
                 public int OffsetY = 0;
-                [JsonProperty("[8.2] Отступ сбоку в пикселях (при разрешении 1360x768)")]
+                [JsonProperty("[8.2] Отступ сбоку в вирт.пкс (сетка 1280x720)")]
                 public int OffsetX = 0;
-                [JsonProperty("[8.3] Ширина строки киллфида в пикселях")]
+                [JsonProperty("[8.3] Ширина строки киллфида в вирт.пкс (сетка 1280x720)")]
                 public int RowWidth = 480;
                 [JsonProperty("[9.1] Включить настройку плагина")]
                 public bool EnableUISettings = true;
                 [JsonProperty("[9.2] Включить кнопку настроек плагина")]
                 public bool EnableUISettingsButton = true;
             }
+
             [JsonProperty("[2] Настройки UI")]
             public UIConfiguration UIConfig = new UIConfiguration();
         }
 
-        private void SwitchPlayerNameHidden(BasePlayer player)
+        public OctaFeedConfig GetDefaultConfig()
         {
-            SwitchHideMyName(player);
-        }
-		   		 		  						  	   		  	   		  	 				  		 			  	 		
-        public OctaFeedConfig Cfg;
-
-        private void Init()
-        {
-            Cfg = Config.ReadObject<OctaFeedConfig>();
-            if (Cfg.CoreConfig == null || Cfg.UIConfig == null || Cfg.CoreConfig.Names == null || Cfg.CoreConfig.Names.Count == 0 || Cfg.CoreConfig.Messages == null || Cfg.CoreConfig.Messages.Count == 0 || Cfg.UIConfig.Colors == null)
+            return new OctaFeedConfig
             {
-                SetDefaultConfig();
-                return;
-            }
-
-            Config.WriteObject(Cfg, true);
-        }
-        internal double LAST_ROW_MODIFY_TIME = 0;
-
-        // PluginReference залипает на старой инстанции после перезагрузки OctVIP —
-        // ищем живой плагин по имени при каждом обращении (киллы редкие, это дёшево)
-        private Plugin FindOctVIP()
-        {
-            foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
-            {
-                if (p.Name == "OctVIP" && p.IsLoaded)
-                    return p;
-            }
-            return null;
-        }
-
-        internal static OctaFeed Instance;
-        internal string TEMPLATE_JSON_CONTAINER = string.Empty;
-
-        protected override void LoadDefaultConfig()
-        {
-            Config.WriteObject(GetDefaultConfig(), true);
-        }
-
-        private void AddTemplateUI(BasePlayer player)
-        {
-            if (Instance.PlayersData.TryGetValue(player.userID, out PlayerData playerData))
-            {
-                if (playerData.HideMessages)
-                    return;
-            }
-
-            if (string.IsNullOrEmpty(TEMPLATE_JSON_CONTAINER))
-                TEMPLATE_JSON_CONTAINER = CreateUITemplate();
-            CuiHelper.AddUi(player, TEMPLATE_JSON_CONTAINER);
-        }
-        internal Dictionary<string, List<string>> Messages = new Dictionary<string, List<string>>()
-        {
-            ["AntiVehicle"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Arrow"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Bite"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Bleeding"] = new List<string>()
-            {
-                "{0} умер от кровотечения"
-            },
-            ["Blunt"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Bullet"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Cold"] = new List<string>()
-            {
-                "{0} замерз"
-            },
-            ["ColdExposure"] = new List<string>()
-            {
-                "{0} замерз"
-            },
-            ["Collision"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Decay"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Drowned"] = new List<string>()
-            {
-                "{0} утонул"
-            },
-            ["ElectricShock"] = new List<string>()
-            {
-                "{0} заискрился"
-            },
-            ["Explosion"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Fall"] = new List<string>()
-            {
-                "{0} упал с высоты"
-            },
-            ["Fun_Water"] = new List<string>()
-            {
-                "{0} погиб"
-            },
-            ["Generic"] = new List<string>()
-            {
-                "{0} погиб"
-            },
-            ["Heat"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Hunger"] = new List<string>()
-            {
-                "{0} умер от голода"
-            },
-            ["Poison"] = new List<string>()
-            {
-                "{0} умер от отравления"
-            },
-            ["Radiation"] = new List<string>()
-            {
-                "{0} умер от радиации"
-            },
-            ["RadiationExposure"] = new List<string>()
-            {
-                "{0} умер от радиации"
-            },
-            ["Slash"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Stab"] = new List<string>()
-            {
-                "{1} убил {0}"
-            },
-            ["Suicide"] = new List<string>()
-            {
-                "{0} убил себя"
-            },
-            ["Thirst"] = new List<string>()
-            {
-                "{0} умер от жажды"
-            },
-        };
-
-        internal string GetColorFor(BasePlayer player)
-        {
-            foreach (var color in Instance.Cfg.UIConfig.Colors)
-            {
-                if (Instance.permission.UserHasPermission(player.UserIDString, color.Key))
+                CoreConfig = new OctaFeedConfig.CoreConfiguration
                 {
-                    return color.Value;
-                }
-            }
-
-            // цвет ника из OctVIP, если игрок с VIP-уровнем
-            // userID = EncryptedValue<ulong> — в Call обязателен явный каст
-            Plugin vip = FindOctVIP();
-            if (vip != null)
-            {
-                ulong uid = (ulong)player.userID;
-                int level = vip.Call<int>("GetVipLevel", uid);
-                if (level > 0)
-                    return vip.Call<string>("GetVipColor", uid);
-            }
-
-            return Instance.Cfg.UIConfig.NameProperty.Color;
+                    Names = Names,
+                    Messages = Messages,
+                    Animal = true,
+                    NPC = true,
+                    PlayerKilledByAnimal = true,
+                    PlayerKilledByNPC = true,
+                    PlayerKilledByEnv = true,
+                    RenameNPC = true,
+                    Bradley = true,
+                    Helicopter = true,
+                },
+                UIConfig = new OctaFeedConfig.UIConfiguration
+                {
+                    NameProperty = new OctaFeedConfig.DMTextProperty { Color = "#D3D3D3", Size = 11 },
+                    TextProperty = new OctaFeedConfig.DMTextProperty { Color = "#F0F0F0", Size = 10 },
+                    DistanceProperty = new OctaFeedConfig.DMTextProperty { Color = "#ffffff", Size = 11 },
+                    Colors = new Dictionary<string, string>
+                    {
+                        ["octafeed.deluxe"] = "#7303c0",
+                        ["octafeed.vip"] = "#f9ff55",
+                        ["octafeed.premium"] = "#55ff8a",
+                    },
+                    Rows = 5,
+                    Time = 5f,
+                    Outline = true,
+                    ImageOutline = true,
+                    DistanceColor = "#FFFFFFC0",
+                    RowColor = "#00000000",
+                    OffsetX = 0,
+                    OffsetY = 0,
+                    RowWidth = 480,
+                    EnableUISettings = true,
+                    EnableUISettingsButton = true,
+                },
+            };
         }
-        internal int LAST_ROW_ID = 0;
+
+        #endregion
     }
 }
