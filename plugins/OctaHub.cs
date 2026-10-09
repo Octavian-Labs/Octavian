@@ -153,25 +153,26 @@ namespace Oxide.Plugins
             public Vector3 Pos;             // квадрат первой найденной
             public string Note;             // «респавн ожидается», «выключено в конфиге»
         }
-        // Иконки — официальные игровые иконки событий (300x300, из rustplusplus)
-        private const string EvtImg = "https://raw.githubusercontent.com/alexemanuelol/rustplusplus/master/src/resources/images/";
+        // Иконки — фирменные тайлы (Gemini-спрайт 4x3, нарезка в images/events/tiles),
+        // хостятся в ассет-репозитории: raw.githubusercontent.com/Octavian-Labs/qk7f2m9x
+        private const string EvtImg = "https://raw.githubusercontent.com/Octavian-Labs/qk7f2m9x/main/w4k/";
         private readonly List<WorldEvtCat> _worldCats = new List<WorldEvtCat>
         {
-            new WorldEvtCat { Key = "bradley", Title = "БРЭДЛИ", Image = EvtImg + "events/bradley_apc_logo.png",
+            new WorldEvtCat { Key = "bradley", Title = "БРЭДЛИ", Image = EvtImg + "bradley.png",
                 Desc = "Боевой БТР патрулирует монумент: броня, пулемёт, ракеты. Добыча — элитные ящики и запчасти. Взрывчатка решает." },
-            new WorldEvtCat { Key = "heli", Title = "ПАТРУЛЬНЫЙ ВЕРТОЛЁТ", Image = EvtImg + "events/patrol_helicopter_logo.png",
+            new WorldEvtCat { Key = "heli", Title = "ПАТРУЛЬНЫЙ ВЕРТОЛЁТ", Image = EvtImg + "heli.png",
                 Desc = "Летающий кошмар с ракетами и пулемётом. Нападает на вооружённых. Сбитый — оставляет ящики с топ-лутом." },
-            new WorldEvtCat { Key = "chinook", Title = "ЧИНУК", Image = EvtImg + "events/chinook_47_logo.png",
+            new WorldEvtCat { Key = "chinook", Title = "ЧИНУК", Image = EvtImg + "chinook.png",
                 Desc = "Транспортник сбрасывает защищённый ящик на монумент. Догони точку высадки и дождись расшифровки." },
-            new WorldEvtCat { Key = "cargo", Title = "ГРУЗОВОЕ СУДНО", Image = EvtImg + "events/cargoship_logo.png",
+            new WorldEvtCat { Key = "cargo", Title = "ГРУЗОВОЕ СУДНО", Image = EvtImg + "cargo.png",
                 Desc = "Корабль с охраной-учёными и тремя защищёнными ящиками. Подплывай на лодке — лестница с кормы." },
-            new WorldEvtCat { Key = "crate", Title = "ЗАЩИЩЁННЫЙ ЯЩИК", Image = EvtImg + "events/locked_crate_logo.png",
+            new WorldEvtCat { Key = "crate", Title = "ЗАЩИЩЁННЫЙ ЯЩИК", Image = EvtImg + "crate.png",
                 Desc = "Ящик с таймером расшифровки — процесс шумный и долгий. Лут уровня заправки или нефтевышки." },
-            new WorldEvtCat { Key = "airdrop", Title = "ГРУЗОВОЙ САМОЛЁТ", Image = EvtImg + "events/airdrop_logo.png",
+            new WorldEvtCat { Key = "airdrop", Title = "ГРУЗОВОЙ САМОЛЁТ", Image = EvtImg + "airdrop.png",
                 Desc = "Самолёт сбрасывает контейнер — по сигнальной гранате или по расписанию. Жди точку падения." },
-            new WorldEvtCat { Key = "ghost", Title = "ПРИЗРАЧНЫЙ КОРАБЛЬ", Image = EvtImg + "events/cargoship_logo.png",
+            new WorldEvtCat { Key = "ghost", Title = "ПРИЗРАЧНЫЙ КОРАБЛЬ", Image = EvtImg + "ghost.png",
                 Desc = "Судно-призрак из глубоководья — появляется в открытом море, на борту лут и опасность." },
-            new WorldEvtCat { Key = "city", Title = "ПЛАВУЧИЙ ГОРОД", Image = "",
+            new WorldEvtCat { Key = "city", Title = "ПЛАВУЧИЙ ГОРОД", Image = EvtImg + "city.png",
                 Desc = "Плавучий город в открытом море: торговля, терминалы, мини-игры. Туда — только на лодке." },
         };
         private string _worldSig = "";
@@ -392,10 +393,11 @@ namespace Oxide.Plugins
                 if (url != null && (url.StartsWith("http") || url.StartsWith("www")))
                     ImageLibrary.Call("AddImage", url, url);
             }
-            // иконки категорий событий — игровые маркеры из rustplusplus
+            // иконки категорий событий — фирменные тайлы с ассет-репозитория
             foreach (var c in _worldCats)
                 if (c.Image.StartsWith("http"))
                     ImageLibrary.Call("AddImage", c.Image, c.Image);
+            ImageLibrary.Call("AddImage", EvtImg + "bosses.png", EvtImg + "bosses.png");
         }
 
         private string Img2(int tabNumber)
@@ -1345,7 +1347,8 @@ namespace Oxide.Plugins
                 if (ci == 0)
                 {
                     name = "БОССЫ ОСТРОВА";
-                    status = BossAggStatus(out active, out img);
+                    status = BossAggStatus(out active, out _);
+                    img = EvtImg + "bosses.png";
                     cmd = "octahub_evt bosses";
                 }
                 else
