@@ -19,7 +19,7 @@ namespace Oxide.Plugins
     // Строки — список с индивидуальным TTL; перерисовка целиком (это дёшево:
     // до N строк по несколько элементов), вместо кольцевого буфера и утаскивания
     // элементов за край экрана.
-    [Info("OctaFeed", "Octavian", "2.0.0")]
+    [Info("OctaFeed", "Octavian", "2.1.0")]
     [Description("Киллфид: кто кого убил, оружие, дистанция. Поддержка боссов OctaBoss")]
     public class OctaFeed : RustPlugin
     {
@@ -33,7 +33,8 @@ namespace Oxide.Plugins
         // Персистентные настройки игроков (data/OctaFeed/PlayersData.json)
         public class PlayerData
         {
-            public double LastConnectTime = 0;
+            public double LastConnectTime = 0; // последняя активность — ключ автоочистки (7 дней)
+            public double LastToggleTime = 0;  // кулдаун переключения «скрывать ленту»
             public bool HideMessages = false;
             public bool HideMyName = false;
         }
@@ -50,15 +51,46 @@ namespace Oxide.Plugins
         }
         private readonly List<FeedRow> _rows = new List<FeedRow>(8);
 
-        // Последний урон по игроку — для атрибуции «смерти от окружения»
-        // (утонул/замёрз/истёк кровью через 8 сек после выстрела — засчитываем киллеру).
+        // Снимок последнего удара по игроку — для атрибуции «смерти от окружения»
+        // (утонул/замёрз/упал/истёк кровью вскоре после выстрела — засчитываем киллеру).
+        // Храним снимок, а не HitInfo: объект удара и сущности могут мутировать/умирать.
         private class RecentAttack
         {
-            public HitInfo Hit;
+            public bool FromPlayer;      // атаковал реальный игрок — его не перезаписывает NPC-урон
+            public bool Allowed;         // гейт конфига для этого типа атакующего
+            public string AttackerName;  // готовое rich-имя на момент удара
+            public Vector3 AttackerPos;
+            public DamageType MajType;
+            public int WeaponIcon;
+            public List<int> ModIcons;
             public float Time;
         }
         private readonly Dictionary<ulong, RecentAttack> _lastAttacks = new Dictionary<ulong, RecentAttack>();
-        private const float AssistWindow = 8f;
+        private float AssistWindowSec =>
+            Cfg?.CoreConfig != null && Cfg.CoreConfig.AssistWindowSec > 0 ? Cfg.CoreConfig.AssistWindowSec : 8f;
+
+        // Типы урона, при которых смерть считается «от окружения» — кандидат на ассист.
+        private static readonly HashSet<DamageType> EnvDamage = new HashSet<DamageType>
+        {
+            DamageType.Bleeding, DamageType.Cold, DamageType.ColdExposure, DamageType.Drowned,
+            DamageType.Fall, DamageType.Hunger, DamageType.Thirst, DamageType.Poison,
+            DamageType.Radiation, DamageType.RadiationExposure, DamageType.Suicide,
+            DamageType.Fun_Water, DamageType.Generic,
+        };
+
+        // Дедупликация смертей: OnEntityDeath и OnPatrolHelicopterKill могут
+        // сработать на одну смерть. net.ID -> время обработанной смерти.
+        private readonly Dictionary<ulong, float> _handledDeaths = new Dictionary<ulong, float>();
+
+        // Возвращает false, если смерть этой сущности уже давала строку за последние 3 сек
+        private bool MarkDeath(BaseCombatEntity e)
+        {
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            ulong id = e.net.ID.Value;
+            if (_handledDeaths.TryGetValue(id, out float t) && now - t < 3f) return false;
+            _handledDeaths[id] = now;
+            return true;
+        }
 
         // Кому сейчас открыт виджет настроек (временное состояние, не сохраняем)
         private readonly HashSet<ulong> _settingsOpen = new HashSet<ulong>();
@@ -292,6 +324,12 @@ namespace Oxide.Plugins
             if (player != null) _settingsOpen.Remove(player.userID);
         }
 
+        // Страховка: клиент может сбрасывать HUD при респавне — перерисуем
+        private void OnPlayerRespawned(BasePlayer player)
+        {
+            if (player != null) DrawAll(player);
+        }
+
         // Карта prefab -> itemid для иконок. Собирается один раз на старте.
         private void BuildItemIconMaps()
         {
@@ -332,10 +370,34 @@ namespace Oxide.Plugins
 
         private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
         {
-            if (entity is BasePlayer player && player.IsNonNpcPlayer() && info?.Initiator != null && info.Initiator != entity)
+            if (!(entity is BasePlayer player) || !player.IsNonNpcPlayer()) return;
+            if (info?.Initiator == null || info.Initiator == entity) return;
+            if (info.damageTypes == null || info.damageTypes.Total() <= 0f) return;
+
+            var attacker = info.Initiator as BaseCombatEntity;
+            if (attacker == null || attacker.net == null) return;
+
+            bool fromPlayer = attacker is BasePlayer ap && ap.IsNonNpcPlayer();
+            // Урон от NPC/объекта не должен перезаписывать свежую атаку реального игрока
+            if (!fromPlayer && _lastAttacks.TryGetValue(player.userID, out var prev)
+                && prev.FromPlayer && UnityEngine.Time.realtimeSinceStartup - prev.Time <= AssistWindowSec)
+                return;
+
+            var atk = new RecentAttack
             {
-                _lastAttacks[player.userID] = new RecentAttack { Hit = info, Time = UnityEngine.Time.realtimeSinceStartup };
-            }
+                FromPlayer = fromPlayer,
+                Allowed = GateForPlayerDeath(attacker),
+                AttackerName = NameOf(attacker),
+                AttackerPos = attacker.transform.position,
+                MajType = info.damageTypes.GetMajorityDamageType(),
+                ModIcons = new List<int>(6),
+                Time = UnityEngine.Time.realtimeSinceStartup,
+            };
+            // Иконки — снимок на момент удара: у игрока это оружие из HitInfo,
+            // у объекта (турель/ловушка) — сама сущность, если мапится на предмет.
+            var iconSrc = !fromPlayer && ItemDefOf(attacker) != null ? attacker : null;
+            atk.WeaponIcon = ResolveIcons(info, iconSrc, atk.ModIcons);
+            _lastAttacks[player.userID] = atk;
         }
 
         private void OnEntityDeath(BaseCombatEntity victim, HitInfo info)
@@ -343,27 +405,28 @@ namespace Oxide.Plugins
             if (victim == null || victim.net == null)
                 return;
 
-            // Атрибуция: если игрок умер «от окружения» (утонул/кровотечение/холод/падение),
-            // но за последние 8 сек получал урон от кого-то — виновник тот, кто нанёс урон.
+            FeedRow row = null;
+
+            // Атрибуция «смерти от окружения»: утопление/кровотечение/холод/падение/голод,
+            // но в окне ассиста был реальный урон — виновник тот, кто наносил урон.
             if (victim is BasePlayer vp && vp.IsNonNpcPlayer())
             {
                 bool isEnvOrSelf = info == null || info.Initiator == null || info.Initiator == victim;
-                if (!isEnvOrSelf && info.damageTypes != null)
-                {
-                    var maj = info.damageTypes.GetMajorityDamageType();
-                    if (maj == DamageType.Drowned || maj == DamageType.Bleeding || maj == DamageType.Cold)
-                        isEnvOrSelf = true;
-                }
-                if (isEnvOrSelf && _lastAttacks.TryGetValue(vp.userID, out var last) &&
-                    last.Hit?.Initiator != null && last.Hit.Initiator != victim &&
-                    UnityEngine.Time.realtimeSinceStartup - last.Time <= AssistWindow)
-                {
-                    info = last.Hit;
-                }
-                _lastAttacks.Remove(vp.userID);
-            }
+                if (!isEnvOrSelf && info.damageTypes != null &&
+                    EnvDamage.Contains(info.damageTypes.GetMajorityDamageType()))
+                    isEnvOrSelf = true;
 
-            FeedRow row = null;
+                if (isEnvOrSelf && _lastAttacks.TryGetValue(vp.userID, out var last) &&
+                    UnityEngine.Time.realtimeSinceStartup - last.Time <= AssistWindowSec)
+                    row = BuildRowFromAssist(vp, last); // null по гейту → упадём в обычную env-ветку
+                _lastAttacks.Remove(vp.userID);
+
+                if (row != null)
+                {
+                    if (MarkDeath(vp)) PushRow(row);
+                    return;
+                }
+            }
 
             if (info?.damageTypes != null && info.Initiator is BaseCombatEntity initiator &&
                 initiator.net != null && initiator != victim)
@@ -375,8 +438,7 @@ namespace Oxide.Plugins
                 }
                 else if (initiator is BasePlayer killer && killer.IsNonNpcPlayer())
                 {
-                    // игрок убил не-игрока: NPC, вертолёт, танк, боссы OctaBoss.
-                    // Обычных животных и прочие объекты в ленту не пускаем.
+                    // игрок убил не-игрока: NPC, вертолёт, танк, боссы OctaBoss, животных
                     row = BuildRow(victim, killer, info, GateForVictim(victim));
                 }
             }
@@ -385,7 +447,23 @@ namespace Oxide.Plugins
             if (row == null && victim is BasePlayer solo && solo.IsNonNpcPlayer())
                 row = BuildRow(solo, null, info, Cfg.CoreConfig.PlayerKilledByEnv);
 
-            if (row != null) PushRow(row);
+            if (row != null && MarkDeath(victim)) PushRow(row);
+        }
+
+        // Строка из снимка последнего удара: игрок умер от окружения,
+        // но килл засчитываем последнему атаковавшему в окне ассиста.
+        private FeedRow BuildRowFromAssist(BasePlayer victim, RecentAttack atk)
+        {
+            if (!atk.Allowed) return null;
+            var tpl = GetDeathMessage(atk.MajType);
+            if (string.IsNullOrEmpty(tpl)) return null;
+            return new FeedRow
+            {
+                Message = string.Format(tpl, NameOf(victim), atk.AttackerName),
+                Distance = Vector3.Distance(victim.transform.position, atk.AttackerPos).ToString("F1") + "m",
+                WeaponIcon = atk.WeaponIcon,
+                ModIcons = atk.ModIcons ?? new List<int>(),
+            };
         }
 
         // Каким флагом конфига гейтится смерть игрока от этого инициатора
@@ -404,16 +482,18 @@ namespace Oxide.Plugins
             if (victim is NPCPlayer) return Cfg.CoreConfig.NPC;
             if (victim is PatrolHelicopter) return Cfg.CoreConfig.Helicopter;
             if (victim is BradleyAPC) return Cfg.CoreConfig.Bradley;
-            // прочее — только боссы и свита OctaBoss
-            try { return !string.IsNullOrEmpty(OctaBoss?.Call("GetBossName", victim) as string); }
-            catch { return false; }
+            // боссы и свита OctaBoss — всегда
+            try { if (!string.IsNullOrEmpty(OctaBoss?.Call("GetBossName", victim) as string)) return true; } catch { }
+            // обычные животные — по флагу [3.1]
+            if (victim is BaseAnimalNPC || victim is LivestockAnimal) return Cfg.CoreConfig.Animal;
+            return false;
         }
 
         private void OnPatrolHelicopterKill(PatrolHelicopter victim, HitInfo info)
         {
             if (victim == null || info?.damageTypes == null || info.InitiatorPlayer == null) return;
             var row = BuildRow(victim, info.InitiatorPlayer, info, Cfg.CoreConfig.Helicopter);
-            if (row != null) PushRow(row);
+            if (row != null && MarkDeath(victim)) PushRow(row);
         }
 
         #endregion
@@ -457,7 +537,7 @@ namespace Oxide.Plugins
             var player = entity as BasePlayer;
             if (player != null && !player.IsNpcPlayer())
             {
-                string name = player.displayName;
+                string name = SanitizeRich(player.displayName);
                 if (PlayersData.TryGetValue(player.userID, out var pd) && pd.HideMyName)
                     name = RandomUsernames.Get(player.userID + (ulong)UnityEngine.Random.Range(0, 100000));
                 if (name.Length > 16) name = name.Substring(0, 16);
@@ -475,60 +555,55 @@ namespace Oxide.Plugins
 
             var livestock = entity as LivestockAnimal;
             if (livestock != null && !string.IsNullOrEmpty(livestock.AnimalName))
-                return $"<size={Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {livestock.AnimalName}</color></size>";
+                return $"<size={Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {SanitizeRich(livestock.AnimalName)}</color></size>";
 
             // NPC/объекты — локализованное имя из конфига или имя префаба
             string raw = entity.ShortPrefabName;
-            string nice = Cfg.CoreConfig.RenameNPC ? GetNpcName(raw) : (entity is NPCPlayer npc ? npc.displayName : raw);
+            string nice = Cfg.CoreConfig.RenameNPC ? GetNpcName(raw) : (entity is NPCPlayer npc ? SanitizeRich(npc.displayName) : raw);
             return $"<size={Cfg.UIConfig.NameProperty.Size}><color={Cfg.UIConfig.NameProperty.Color}>{nice}</color></size>";
         }
 
-        private void FillIcons(FeedRow row, HitInfo info, BaseCombatEntity initiator)
-        {
-            if (info == null)
-            {
-                row.WeaponIcon = IconHeadshot;
-                return;
-            }
-            if (info.isHeadshot)
-                row.ModIcons.Add(IconHeadshot);
+        private void FillIcons(FeedRow row, HitInfo info, BaseCombatEntity iconInitiator)
+            => row.WeaponIcon = ResolveIcons(info, iconInitiator, row.ModIcons);
 
-            if (initiator != null)
+        // Возвращает itemid основной иконки и наполняет modIcons (хедшот/обвесы).
+        // iconInitiator — сущность с маппингом на предмет (турель/ловушка), иначе null.
+        private int ResolveIcons(HitInfo info, BaseCombatEntity iconInitiator, List<int> modIcons)
+        {
+            if (info == null) return IconHeadshot;
+            if (info.isHeadshot) modIcons.Add(IconHeadshot);
+
+            if (iconInitiator != null)
             {
-                ItemDefinition initiatorDef = ItemDefOf(initiator);
+                ItemDefinition initiatorDef = ItemDefOf(iconInitiator);
                 if (initiatorDef != null)
                 {
-                    row.WeaponIcon = initiatorDef.itemid;
                     Item attackItem = GetAttackItem(info);
                     if (attackItem == null)
                     {
                         ItemDefinition attackDef = GetAttackDefinition(info);
-                        if (attackDef != null && attackDef.itemid != row.WeaponIcon)
-                            row.ModIcons.Add(attackDef.itemid);
+                        if (attackDef != null && attackDef.itemid != initiatorDef.itemid)
+                            modIcons.Add(attackDef.itemid);
                     }
                     else
                     {
-                        row.ModIcons.Add(attackItem.info.itemid);
+                        modIcons.Add(attackItem.info.itemid);
                         if (attackItem.contents != null)
-                            row.ModIcons.AddRange(attackItem.contents.itemList.Select(x => x.info.itemid));
+                            modIcons.AddRange(attackItem.contents.itemList.Select(x => x.info.itemid));
                     }
+                    return initiatorDef.itemid;
                 }
             }
-            else
+
+            Item item = GetAttackItem(info);
+            if (item != null)
             {
-                Item attackItem = GetAttackItem(info);
-                if (attackItem != null)
-                {
-                    row.WeaponIcon = attackItem.info.itemid;
-                    if (attackItem.contents != null)
-                        row.ModIcons.AddRange(attackItem.contents.itemList.Select(x => x.info.itemid));
-                }
-                else
-                {
-                    ItemDefinition attackDef = GetAttackDefinition(info);
-                    row.WeaponIcon = attackDef?.itemid ?? (info.isHeadshot ? 0 : IconHeadshot);
-                }
+                if (item.contents != null)
+                    modIcons.AddRange(item.contents.itemList.Select(x => x.info.itemid));
+                return item.info.itemid;
             }
+            ItemDefinition def = GetAttackDefinition(info);
+            return def?.itemid ?? (info.isHeadshot ? 0 : IconHeadshot);
         }
 
         private Item GetAttackItem(HitInfo info)
@@ -569,12 +644,24 @@ namespace Oxide.Plugins
             return Cfg.CoreConfig.Names.TryGetValue(shortPrefabName, out string name) ? name : shortPrefabName;
         }
 
+        // Вырезаем rich-теги из динамических имён — иначе <color>/<size> в нике
+        // ломают разметку строки ленты
+        private static string SanitizeRich(string s) =>
+            string.IsNullOrEmpty(s) ? s : s.Replace("<", "‹").Replace(">", "›");
+
         // PluginReference залипает на старой инстанции после перезагрузки OctVIP —
-        // ищем живой плагин по имени при каждом обращении (киллы редкие, это дёшево)
+        // держим кэш живой ссылки; при отсутствии плагина ищем не чаще раза в 10 сек.
+        private Plugin _vip;
+        private float _vipMissedAt;
         private Plugin FindOctVIP()
         {
+            if (_vip != null && _vip.IsLoaded) return _vip;
+            _vip = null;
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            if (now - _vipMissedAt < 10f) return null;
             foreach (var p in Interface.Oxide.RootPluginManager.GetPlugins())
-                if (p.Name == "OctVIP" && p.IsLoaded) return p;
+                if (p.Name == "OctVIP" && p.IsLoaded) { _vip = p; return _vip; }
+            _vipMissedAt = now;
             return null;
         }
 
@@ -723,7 +810,17 @@ namespace Oxide.Plugins
                     container.Add(el);
                 }
 
-                // дистанция — крайняя правая колонка 55px
+                // дистанция — крайняя правая колонка 55px с собственной подложкой
+                container.Add(new CuiElement
+                {
+                    Name = rowName + "DB",
+                    Parent = rowName,
+                    Components = {
+                        new CuiImageComponent { Color = HexToRGBA(Cfg.UIConfig.DistanceColor),
+                            Sprite = "assets/content/ui/ui.background.transparent.linear.psd" },
+                        new CuiRectTransformComponent { AnchorMin = $"{Fx((w - 55f) / w)} 0", AnchorMax = "1 1" },
+                    }
+                });
                 var dist = new CuiElement
                 {
                     Name = rowName + "DT",
@@ -840,11 +937,16 @@ namespace Oxide.Plugins
             if (removed > 0)
                 foreach (var p in BasePlayer.activePlayerList) DrawFeed(p);
 
-            // устаревшие «последние атаки» тоже чистим — словарь не растёт бесконечно
+            // устаревшие «последние атаки» и метки смертей чистим — словари не растут
             if (_lastAttacks.Count > 0)
             {
-                var stale = _lastAttacks.Where(kv => now - kv.Value.Time > AssistWindow).Select(kv => kv.Key).ToList();
+                var stale = _lastAttacks.Where(kv => now - kv.Value.Time > AssistWindowSec).Select(kv => kv.Key).ToList();
                 foreach (var k in stale) _lastAttacks.Remove(k);
+            }
+            if (_handledDeaths.Count > 0)
+            {
+                var stale = _handledDeaths.Where(kv => now - kv.Value > 3f).Select(kv => kv.Key).ToList();
+                foreach (var k in stale) _handledDeaths.Remove(k);
             }
         }
 
@@ -902,13 +1004,14 @@ namespace Oxide.Plugins
             if (!PlayersData.TryGetValue(player.userID, out var pd))
                 pd = PlayersData[player.userID] = new PlayerData();
 
-            if (pd.LastConnectTime + 15000 > nowMs)
+            if (pd.LastToggleTime + 15000 > nowMs)
             {
-                SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color> Настройка ещё недоступна, подожди: <color=#FFD35C>{(pd.LastConnectTime + 15000 - nowMs) / 1000}</color> сек.");
+                SendReply(player, $"<color=#E8B84B>◆ OctaFeed</color> Настройка ещё недоступна, подожди: <color=#FFD35C>{(pd.LastToggleTime + 15000 - nowMs) / 1000}</color> сек.");
                 return null;
             }
             pd.HideMessages = !pd.HideMessages;
-            pd.LastConnectTime = nowMs;
+            pd.LastToggleTime = nowMs;
+            pd.LastConnectTime = nowMs; // активность — чтобы запись не вычищалась автоочисткой
             DrawFeed(player);
             return pd.HideMessages;
         }
@@ -959,6 +1062,8 @@ namespace Oxide.Plugins
                 public bool PlayerKilledByNPC = true;
                 [JsonProperty("[4.3] Показывать, когда животные убивают игрока")]
                 public bool PlayerKilledByAnimal = true;
+                [JsonProperty("[4.4] Окно ассиста для смерти от окружения, сек")]
+                public float AssistWindowSec = 8f;
                 [JsonProperty("[3.4] Показывать смерть BradleyAPC")]
                 public bool Bradley = true;
                 [JsonProperty("[2] Варианты сообщений для киллбара")]
