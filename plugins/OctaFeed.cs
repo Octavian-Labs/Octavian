@@ -69,6 +69,18 @@ namespace Oxide.Plugins
         private float AssistWindowSec =>
             Cfg?.CoreConfig != null && Cfg.CoreConfig.AssistWindowSec > 0 ? Cfg.CoreConfig.AssistWindowSec : 8f;
 
+        // Причина последнего экологического урона без атакующего (падение, холод...).
+        // Нужна для формулировки смерти после нокдауна: финальный удар там обычно
+        // Generic/Bleeding, а реальная причина — исходный урон. Окно шире ассиста:
+        // в нокнутом состоянии можно лежать до минуты.
+        private class EnvHit
+        {
+            public DamageType Type;
+            public float Time;
+        }
+        private readonly Dictionary<ulong, EnvHit> _envHits = new Dictionary<ulong, EnvHit>();
+        private const float EnvCauseWindow = 60f;
+
         // Типы урона, при которых смерть считается «от окружения» — кандидат на ассист.
         private static readonly HashSet<DamageType> EnvDamage = new HashSet<DamageType>
         {
@@ -371,9 +383,23 @@ namespace Oxide.Plugins
         private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
         {
             if (!(entity is BasePlayer player) || !player.IsNonNpcPlayer()) return;
-            if (info?.Initiator == null || info.Initiator == entity) return;
-            if (info.damageTypes == null || info.damageTypes.Total() <= 0f) return;
+            if (info?.damageTypes == null || info.damageTypes.Total() <= 0f) return;
 
+            // Запоминаем причину экологического урона: у финального удара смерти
+            // после нокдауна тип будет Bleeding/Generic — без этой записи вышло бы
+            // «погиб» вместо «упал с высоты». В нокнутом состоянии не перезаписываем:
+            // тики кровотечения там — следствие исходной причины, а не новая.
+            if ((info.Initiator == null || info.Initiator == entity) &&
+                EnvDamage.Contains(info.damageTypes.GetMajorityDamageType()) && !player.IsWounded())
+            {
+                _envHits[player.userID] = new EnvHit
+                {
+                    Type = info.damageTypes.GetMajorityDamageType(),
+                    Time = UnityEngine.Time.realtimeSinceStartup,
+                };
+            }
+
+            if (info.Initiator == null || info.Initiator == entity) return;
             var attacker = info.Initiator as BaseCombatEntity;
             if (attacker == null || attacker.net == null) return;
 
@@ -445,7 +471,16 @@ namespace Oxide.Plugins
 
             // чистая смерть без инициатора (суицид, падение, голод)
             if (row == null && victim is BasePlayer solo && solo.IsNonNpcPlayer())
-                row = BuildRow(solo, null, info, Cfg.CoreConfig.PlayerKilledByEnv);
+            {
+                // Если недавно был экологический урон — берём его тип, иначе тип
+                // самого финального удара: «упал с высоты» вместо безликого «погиб».
+                DamageType dtype = info?.damageTypes?.GetMajorityDamageType() ?? DamageType.Generic;
+                if (_envHits.TryGetValue(solo.userID, out var eh) &&
+                    UnityEngine.Time.realtimeSinceStartup - eh.Time <= EnvCauseWindow)
+                    dtype = eh.Type;
+                _envHits.Remove(solo.userID);
+                row = BuildRow(solo, null, info, Cfg.CoreConfig.PlayerKilledByEnv, dtype);
+            }
 
             if (row != null && MarkDeath(victim)) PushRow(row);
         }
@@ -501,11 +536,12 @@ namespace Oxide.Plugins
         #region [Построение строки]
 
         // victim — погибший, initiator — убийца (может быть null).
-        private FeedRow BuildRow(BaseCombatEntity victim, BaseCombatEntity initiator, HitInfo info, bool allowed)
+        // dtype — явный тип смерти; если не задан, берётся из HitInfo.
+        private FeedRow BuildRow(BaseCombatEntity victim, BaseCombatEntity initiator, HitInfo info, bool allowed, DamageType? dtype = null)
         {
             if (!allowed) return null;
 
-            var tpl = GetDeathMessage(info?.damageTypes?.GetMajorityDamageType() ?? DamageType.Generic);
+            var tpl = GetDeathMessage(dtype ?? info?.damageTypes?.GetMajorityDamageType() ?? DamageType.Generic);
             if (string.IsNullOrEmpty(tpl)) return null;
 
             var row = new FeedRow
@@ -947,6 +983,11 @@ namespace Oxide.Plugins
             {
                 var stale = _handledDeaths.Where(kv => now - kv.Value > 3f).Select(kv => kv.Key).ToList();
                 foreach (var k in stale) _handledDeaths.Remove(k);
+            }
+            if (_envHits.Count > 0)
+            {
+                var stale = _envHits.Where(kv => now - kv.Value.Time > EnvCauseWindow).Select(kv => kv.Key).ToList();
+                foreach (var k in stale) _envHits.Remove(k);
             }
         }
 
