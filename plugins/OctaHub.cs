@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaHub", "Octavian", "1.0.0")]
+    [Info("OctaHub", "Octavian", "1.1.0")]
     [Description("Приветственная панель Octavian с нуля — каркас админки OctaBoss поверх OctaUI: экранные якоря вместо пиксельного бокса, рейл вкладок, частичная перерисовка, наборы, многостраничный контент, страницы боссов")]
 
     public class OctaHub : RustPlugin
@@ -81,7 +81,10 @@ namespace Oxide.Plugins
             return s;
         }
 
-        private List<string> tabList = new List<string>() { "Tab1", "Tab2", "Tab3", "Tab4", "Tab5", "Tab6", "Tab7", "Tab8", "Tab9", "Tab10" };
+        // Количество вкладок — единая константа для рейла, пермишенов и клампов
+        private const int TabCount = 11;
+
+        private List<string> tabList = new List<string>() { "Tab1", "Tab2", "Tab3", "Tab4", "Tab5", "Tab6", "Tab7", "Tab8", "Tab9", "Tab10", "Tab11" };
 
         // «Показано один раз за вайп» — персистится в data/OctaHub/Seen.json
         private List<ulong> _seen = new List<ulong>();
@@ -103,6 +106,7 @@ namespace Oxide.Plugins
             LoadSeen();
             LoadPageData();
             WritePageEntry();
+            SeedVipPages();
             PopulateBossPages();
             DependencyWarnings();
             RegisterCommands();
@@ -230,7 +234,7 @@ namespace Oxide.Plugins
         private void DownloadImages()
         {
             if (ImageLibrary == null) return;
-            for (int i = 1; i <= 10; i++)
+            for (int i = 1; i <= TabCount; i++)
             {
                 var url = TabCfg(i).tabImageUrl;
                 if (url != null && (url.StartsWith("http") || url.StartsWith("www")))
@@ -348,12 +352,12 @@ namespace Oxide.Plugins
 
         #region [Functions & Methods]
 
-        private static int ClampTab(int n) => n < 1 ? 1 : (n > 10 ? 10 : n);
+        private static int ClampTab(int n) => n < 1 ? 1 : (n > TabCount ? TabCount : n);
 
         private void RegisterPerms()
         {
             if (config?.generalSettings?.permsEnabled != true) return;
-            for (int i = 1; i < 11; i++)
+            for (int i = 1; i <= TabCount; i++)
                 permission.RegisterPermission($"octawelcome.tab{i}", this); // имя оставлено — старые выдачи работают
         }
 
@@ -386,6 +390,7 @@ namespace Oxide.Plugins
                 case 8: return config.tab8Settings;
                 case 9: return config.tab9Settings;
                 case 10: return config.tab10Settings;
+                case 11: return config.tab11Settings;
                 default: return config.tab1Settings;
             }
         }
@@ -556,9 +561,10 @@ namespace Oxide.Plugins
                 $"online {BasePlayer.activePlayerList.Count()}/{ConVar.Server.maxplayers}", 11,
                 "0.72 0", "0.945 1", TextAnchor.MiddleRight, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
+            // квадратная кнопка-крест: не клипает текст на любых настройках ширины
             string closeTxt = StripSize(config?.buttonSettings?.closeBtnText ?? "✕");
-            CUIClass.CreateButton(ref ui, "oh_hdr_close", UiHdr, "red", $"<b>{closeTxt}</b>", 14,
-                "0.95 0.14", "0.992 0.90", "octahub_close", UiRoot, "white", 0f, TextAnchor.MiddleCenter,
+            CUIClass.CreateButton(ref ui, "oh_hdr_close", UiHdr, "red", $"<b>{closeTxt}</b>", 16,
+                "0.955 0.14", "0.992 0.90", "octahub_close", UiRoot, "white", 0f, TextAnchor.MiddleCenter,
                 config?.buttonSettings?.btnFontStyle ?? "robotocondensed-bold.ttf");
         }
 
@@ -567,8 +573,10 @@ namespace Oxide.Plugins
             var st = St(player);
             CUIClass.CreatePanel(ref ui, UiNav, UiRoot, "panel", "0.008 0.014", "0.178 0.908", false, 0f, Mat);
 
-            const float pitch = 0.0965f, h = 0.086f, top = 0.985f;
-            for (int i = 1; i <= 10; i++)
+            // Шаг и высота кнопок подгоняются под число вкладок — рейл всегда заполнен равномерно
+            float pitch = 0.965f / TabCount, h = pitch * 0.89f;
+            const float top = 0.985f;
+            for (int i = 1; i <= TabCount; i++)
             {
                 var t = TabCfg(i);
                 if (t == null || !t.btnEnabled) continue;
@@ -632,11 +640,48 @@ namespace Oxide.Plugins
             }
 
             var lines = st.Page >= 2 ? PageLines(st.Tab, st.Page) : tab.textLines;
-            string textContent = R(player, string.Join("\n", lines ?? new List<string>()));
+            var ls = lines ?? new List<string>();
 
-            CUIClass.CreateText(ref ui, "oh_cnt_text", UiCnt, tab.mainFontColor, textContent,
-                tab.mainFontSize, "0.015 0.02", "0.985 0.985", tab.mainAlign,
-                tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
+            // Структурная разметка страницы: [H]заголовок / [h]подзаголовок / [F]строка-футер.
+            // Остальные строки — тело. Страницы без маркеров рисуются как раньше, одним блоком.
+            string headTitle = null, headSub = null;
+            var body = new List<string>(); var foot = new List<string>();
+            foreach (var l in ls)
+            {
+                if (l.StartsWith("[H]")) headTitle = l.Substring(3);
+                else if (l.StartsWith("[h]")) headSub = l.Substring(3);
+                else if (l.StartsWith("[F]")) foot.Add(l.Substring(3));
+                else body.Add(l);
+            }
+
+            if (headTitle != null || headSub != null)
+            {
+                // хеадер: большой заголовок + среднее уточнение + золотая линейка
+                if (headTitle != null)
+                    CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(headTitle), 26,
+                        "0.035 0.865", "0.965 0.985", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                if (headSub != null)
+                    CUIClass.CreateText(ref ui, "oh_cnt_sub", UiCnt, "muted", StripSize(headSub), 13,
+                        "0.035 0.80", "0.965 0.875", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.792", "0.965 0.795", false, 0f, Mat);
+
+                // боди: наглядный текст — центрируется по align вкладки
+                CUIClass.CreateText(ref ui, "oh_cnt_text", UiCnt, tab.mainFontColor, R(player, string.Join("\n", body)),
+                    tab.mainFontSize, "0.035 0.115", "0.965 0.785", tab.mainAlign,
+                    tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
+
+                // футер страницы: мелкая строка-подсказка над зоной стрелок
+                if (foot.Count > 0)
+                    CUIClass.CreateText(ref ui, "oh_cnt_foot", UiCnt, "muted", R(player, string.Join("\n", foot)), 11,
+                        "0.035 0.055", "0.875 0.11", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+            }
+            else
+            {
+                string textContent = R(player, string.Join("\n", ls));
+                CUIClass.CreateText(ref ui, "oh_cnt_text", UiCnt, tab.mainFontColor, textContent,
+                    tab.mainFontSize, "0.015 0.02", "0.985 0.985", tab.mainAlign,
+                    tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
+            }
 
             // пагинация страниц — нижний правый угол контента, доли панели CNT
             if (st.Page > 1)
@@ -1071,6 +1116,76 @@ namespace Oxide.Plugins
         // Заполняем только пустые страницы (ручные правки админа не трогаем),
         // принудительная регенерация — octahub_bosses_refresh.
         private const int BossTabIndex = 10;
+
+        // Вкладка «VIP»: стр.2..5 — по уровню OctVIP (Bronze/Silver/Gold/Brilliant).
+        // Сидим только в пустые страницы — правки админа в PageData.json сохраняются.
+        private const int VipTabIndex = 5;
+
+        private void SeedVipPages()
+        {
+            if (pageData == null) return;
+            var tab = $"Tab{VipTabIndex}";
+            if (!pageData.ContainsKey(tab)) pageData[tab] = new PageData();
+            var d = pageData[tab];
+            if (d.page2 != null && d.page2.Count > 0) return;
+
+            d.page2 = new List<string>
+            {
+                "[H]<color=#CD7F32>VIP BRONZE</color>",
+                "[h]первый уровень привилегий — базовый набор бонусов",
+                "<size=18><color=#E8B84B>ЧТО ТЫ ПОЛУЧАЕШЬ</color></size>",
+                "",
+                "<size=16><color=#CD7F32>◆</color> Иконка статуса <color=#CD7F32>BRONZE</color> перед ником в чате</size>",
+                "<size=16><color=#CD7F32>◆</color> Приветствие при входе — статус виден сразу</size>",
+                "<size=16><color=#CD7F32>◆</color> VIP-наборы уровня BRONZE — вкладка НАБОРЫ</size>",
+                "<size=16><color=#CD7F32>◆</color> Приоритет в очереди при заходе на сервер</size>",
+                "",
+                "[F]следующий уровень → SILVER · оформление — в ДИСКОРД или у администрации"
+            };
+            d.page3 = new List<string>
+            {
+                "[H]<color=#C0C0C0>VIP SILVER</color>",
+                "[h]всё из BRONZE — и больше инфы при входе",
+                "<size=18><color=#E8B84B>ЧТО ТЫ ПОЛУЧАЕШЬ</color></size>",
+                "",
+                "<size=16><color=#C0C0C0>◆</color> Всё из статуса BRONZE</size>",
+                "<size=16><color=#C0C0C0>◆</color> Серебряная иконка <color=#C0C0C0>SILVER</color> в чате</size>",
+                "<size=16><color=#C0C0C0>◆</color> При входе видишь свой клан и сколько соратников онлайн</size>",
+                "<size=16><color=#C0C0C0>◆</color> Расширенные наборы уровня SILVER</size>",
+                "",
+                "[F]следующий уровень → GOLD · оформление — в ДИСКОРД"
+            };
+            d.page4 = new List<string>
+            {
+                "[H]<color=#FFD700>VIP GOLD</color>",
+                "[h]всё из SILVER — плюс заметность и контроль базы",
+                "<size=18><color=#E8B84B>ЧТО ТЫ ПОЛУЧАЕШЬ</color></size>",
+                "",
+                "<size=16><color=#FFD700>◆</color> Всё из статуса SILVER</size>",
+                "<size=16><color=#FFD700>◆</color> Золотая иконка <color=#FFD700>GOLD</color> — заметна в любом чате</size>",
+                "<size=16><color=#FFD700>◆</color> При входе видишь количество своих шкафов на карте</size>",
+                "<size=16><color=#FFD700>◆</color> Твой заход на сервер анонсируется в общий чат</size>",
+                "<size=16><color=#FFD700>◆</color> Наборы уровня GOLD</size>",
+                "",
+                "[F]максимум → BRILLIANT · оформление — в ДИСКОРД"
+            };
+            d.page5 = new List<string>
+            {
+                "[H]<color=#4FC3F7>VIP BRILLIANT</color>",
+                "[h]максимальный игровой статус — вершина линейки",
+                "<size=18><color=#E8B84B>ЧТО ТЫ ПОЛУЧАЕШЬ</color></size>",
+                "",
+                "<size=16><color=#4FC3F7>◆</color> Всё из статуса GOLD</size>",
+                "<size=16><color=#4FC3F7>◆</color> Уникальная бриллиантовая иконка <color=#4FC3F7>BRILLIANT</color></size>",
+                "<size=16><color=#4FC3F7>◆</color> Максимальный приоритет в очереди</size>",
+                "<size=16><color=#4FC3F7>◆</color> Топовые наборы уровня BRILLIANT</size>",
+                "<size=16><color=#4FC3F7>◆</color> Высший игровой статус — дальше только персонал</size>",
+                "",
+                "[F]оформление — в ДИСКОРД или у администрации"
+            };
+            SavePageData();
+            Puts($"Страницы VIP-уровней сгенерированы → Tab{VipTabIndex} (page2..5).");
+        }
 
         private static string JStr(JObject o, string key, string def = "") =>
             o?[key]?.ToString() ?? def;
@@ -1570,6 +1685,9 @@ namespace Oxide.Plugins
             [JsonProperty(PropertyName = "Tab #10 Settings")]
             public TabSettings tab10Settings { get; set; }
 
+            [JsonProperty(PropertyName = "Tab #11 Settings")]
+            public TabSettings tab11Settings { get; set; }
+
             
             [JsonProperty(PropertyName = "Addons")]
             public Extension extension { get; set; }
@@ -1605,6 +1723,9 @@ namespace Oxide.Plugins
 
                 [JsonProperty("Tab 10")]
                 public string tab10 { get; set; }
+
+                [JsonProperty("Tab 11")]
+                public string tab11 { get; set; }
             }
 
 
@@ -1630,7 +1751,8 @@ namespace Oxide.Plugins
                                 "shop",
                                 "admins",
                                 "news",
-                                "bosses"
+                                "bosses",
+                                "commands"
                             }
 
                     },
@@ -1639,7 +1761,7 @@ namespace Oxide.Plugins
                     {
 
                         btnFontStyle = "robotocondensed-bold.ttf",
-                        closeBtnText = "✘ CLOSE",
+                        closeBtnText = "✕",
                         mainAlign = TextAnchor.MiddleCenter,
                         btnIconAnchor = new List<string>
                                 {
@@ -1674,15 +1796,18 @@ namespace Oxide.Plugins
                         mainAlign = TextAnchor.UpperLeft,
                         textLines = new List<string>
                                 {
-                                "<size=45><color=#E8B84B>OCTAVIAN</color></size> ",
-                                "<size=25>ВАЙПЫ <color=#83b8c7>ЕЖЕНЕДЕЛЬНЫЕ</color></size>",
-                                "<size=25>РЕЙТЫ <color=#83b8c7>x5 ДОБЫЧА</color> | <color=#83b8c7>x5 ЛУТ</color></size> ",
-                                "<size=25>КАРТА <color=#83b8c7>4200</color></size> ",
+                                "[H]ДОБРО ПОЖАЛОВАТЬ НА <color=#E8B84B>OCTAVIAN</color>",
+                                "[h]рейты x5 · вайпы карт еженедельно · EU · карта 4200 · онлайн {online}/{maxplayers}",
+                                "<size=18><color=#E8B84B>ПОЧЕМУ У НАС ИНТЕРЕСНО</color></size>",
+                                "<size=15><color=#E8B84B>◆ БОССЫ-ЗВЕРИ</color> — наш флагман: гигантские звери с AI-управлением.</size>",
+                                "<size=15>   Маркер на карте покажет логово — награда вносит больше урона.</size>",
+                                "<size=15><color=#E8B84B>◆ AI-АНТИЧИТ</color> — система анализа поведения отлавливает читеров.</size>",
+                                "<size=15><color=#E8B84B>◆ СВОИ ПЛАГИНЫ</color> — наборы, телепорты, апгрейд баз, VIP — под баланс сервера.</size>",
                                 "",
-                                "<size=15>Сервер в EU. Вайп карт — еженедельно, чертежи — ежемесячно.</size>",
-                                "<size=15>Вкладки слева: правила, наборы, VIP, боссы и контакты.</size>",
-                                "",
-                                "<size=15><color=#83b8c7>Наборы — вкладка НАБОРЫ или /kits • Боссы — вкладка БОССЫ или /bosses</color></size>"
+                                "<size=18><color=#E8B84B>ЧТО ГДЕ ЛЕЖИТ</color></size>",
+                                "<size=14><color=#83b8c7>ПРАВИЛА</color> — законы острова · <color=#83b8c7>НАБОРЫ</color> — киты · <color=#83b8c7>ВАЙПЫ</color> — расписание · <color=#83b8c7>VIP</color> — привилегии</size>",
+                                "<size=14><color=#83b8c7>КОМАНДЫ</color> — команды чата · <color=#83b8c7>БОССЫ</color> — кто гуляет по острову · <color=#83b8c7>ДИСКОРД</color> — связь и новости</size>",
+                                "[F]первые шаги: /kit — набор · /sethome — точка дома · /tpr ник — телепорт к другу"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -1799,16 +1924,16 @@ namespace Oxide.Plugins
                         mainAlign = TextAnchor.MiddleCenter,
                         textLines = new List<string>
                                 {
-                                    "<size=40><color=#E8B84B>VIP СТАТУСЫ</color></size>",
+                                    "[H]VIP СТАТУСЫ",
+                                    "[h]4 уровня привилегий — у каждого своя страница, листай стрелками",
+                                    "<size=20><color=#CD7F32>BRONZE</color> → <color=#C0C0C0>SILVER</color> → <color=#FFD700>GOLD</color> → <color=#4FC3F7>BRILLIANT</color></size>",
                                     "",
-                                    "<size=20><color=#83b8c7>BRONZE → SILVER → GOLD → BRILLIANT</color></size>",
+                                    "<size=16><color=#83b8c7>◆</color> Иконка статуса в чате и приветствие при входе</size>",
+                                    "<size=16><color=#83b8c7>◆</color> Приоритет в очереди и VIP-наборы на свой уровень</size>",
+                                    "<size=16><color=#83b8c7>◆</color> Чем выше статус — тем больше полезного видишь при заходе</size>",
                                     "",
-                                    "<size=16><color=#83b8c7>◆</color> Приоритет входа в очередь</size>",
-                                    "<size=16><color=#83b8c7>◆</color> Ускоренный крафт и печи</size>",
-                                    "<size=16><color=#83b8c7>◆</color> Расширенные наборы /kits</size>",
-                                    "<size=16><color=#83b8c7>◆</color> Увеличенный рюкзак</size>",
-                                    "",
-                                    "<size=14>Оформить — в ДИСКОРД или у администрации.</size>"
+                                    "<size=14>Стрелки внизу справа — каждый статус на своей странице.</size>",
+                                    "[F]оформление — в ДИСКОРД или у администрации"
                                 },
                         tabImageUrl = "",
                         tabImageAnchor = new List<string>
@@ -1973,6 +2098,43 @@ namespace Oxide.Plugins
                                 }
                     },
 
+                    tab11Settings = new OctaHub.Configuration.TabSettings
+                    {
+                        btnEnabled = true,
+                        btnTitle = "<size=22>КОМАНДЫ</size>",
+                        btnIcon = "you can change icons in data/cuiData.json",
+                        mainFontSize = 15,
+                        mainFontColor = "1 1 1 1",
+                        fontOutlineColor = "0 0 0 1",
+                        fontOutlineThick = "0.5",
+                        mainFontStyle = "robotocondensed-regular.ttf",
+                        mainAlign = TextAnchor.MiddleCenter,
+                        textLines = new List<string>
+                                {
+                                    "[H]КОМАНДЫ СЕРВЕРА",
+                                    "[h]всё, что можно писать в чат — и что это делает",
+                                    "<size=17><color=#E8B84B>ОБЩЕЕ</color></size>",
+                                    "<size=14>/octahub — эта панель · /kit — наборы · /vip — мой статус · /gather — рейты · /dm — лента убийств</size>",
+                                    "",
+                                    "<size=17><color=#E8B84B>ТЕЛЕПОРТ</color></size>",
+                                    "<size=14>/tpr ник — запрос к игроку · /tpa — принять · /home имя — домой</size>",
+                                    "<size=14>/sethome имя — сохранить дом · /listhomes — список · /removehome имя — удалить</size>",
+                                    "",
+                                    "<size=17><color=#E8B84B>СТРОЙКА</color></size>",
+                                    "<size=14>/up /down — блок перед лицом · /upall /downall — вся база · /remove — вернуть свой объект</size>",
+                                    "",
+                                    "<size=17><color=#E8B84B>БОССЫ</color></size>",
+                                    "<size=14>/bosstimer — расписание · /bossinfo — кто жив · /bosslast — киллеры</size>",
+                                    "[F]шорткаты вкладок: /info /rules /kits /wipe /vipinfo /discord /shop /admins /news /bosses"
+                                },
+                        tabImageUrl = "",
+                        tabImageAnchor = new List<string>
+                                {
+                                "0 0",
+                                "1 1"
+                                }
+                    },
+
                     extension = new OctaHub.Configuration.Extension
                     {
                         tab1 = "null",
@@ -1985,6 +2147,7 @@ namespace Oxide.Plugins
                         tab8 = "null",
                         tab9 = "null",
                         tab10 = "null",
+                        tab11 = "null",
                     },
 
 
