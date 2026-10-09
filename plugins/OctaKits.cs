@@ -426,7 +426,7 @@ namespace Oxide.Plugins
             // Админам — кнопка создания набора в шапке (открывает наш редактор)
             bool isAdmin = IsKitsAdmin(player);
             if (isAdmin)
-                CUIClass.CreateButton(ref ui, "octakits_adm_create", "octakits_header", GlassRow, "<color=#FFD35C><b>+ НОВЫЙ</b></color>", 11, "0.13 0.15", "0.245 0.85", "octakits_admin_create", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_adm_create", "octakits_header", GlassRow, "<color=@accent><b>+ НОВЫЙ</b></color>", 11, "0.13 0.15", "0.245 0.85", "octakits_admin_create", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
             var kitList = GetVisibleKits(player);
             if (config?.debugMode == true)
@@ -558,18 +558,18 @@ namespace Oxide.Plugins
                     // Правая колонка текста: левый край задан в px (108px) — гарантированно правее 96px иконки
                     // title
                     CUIClass.CreatePanel(ref ui, $"kit_tp_{i}", $"kitpanel_{i}", "0 0 0 0", "0 0.68", "0.76 0.92", false, 0f, 0f, "assets/icons/iconmaterial.mat", "108 0", "0 0");
-                        CUIClass.CreateText(ref ui, "kitname", $"kit_tp_{i}", TWhite, $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>", 13, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", 0.0f);
+                        CUIClass.CreateText(ref ui, "kitname", $"kit_tp_{i}", TWhite, $"<color=@accent><b>{kitname.ToUpper()}</b></color>", 13, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", 0.0f);
                     // description
                     CUIClass.CreatePanel(ref ui, $"kit_dp_{i}", $"kitpanel_{i}", "0 0 0 0", "0 0.44", "0.985 0.66", false, 0f, 0f, "assets/icons/iconmaterial.mat", "108 0", "0 0");
-                        CUIClass.CreateText(ref ui, "kitdesc", $"kit_dp_{i}", TWhite, $"<size=10><color=#9E9482>{kitDescr}</color></size>", 10, "0 0", "1 1", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", 0.0f);
+                        CUIClass.CreateText(ref ui, "kitdesc", $"kit_dp_{i}", TWhite, $"<size=10><color=@muted>{kitDescr}</color></size>", 10, "0 0", "1 1", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", 0.0f);
                     // meta: кулдаун / лимит
                     CUIClass.CreatePanel(ref ui, $"kit_mp_{i}", $"kitpanel_{i}", "0 0 0 0", "0 0.27", "0.985 0.42", false, 0f, 0f, "assets/icons/iconmaterial.mat", "108 0", "0 0");
                         CUIClass.CreateText(ref ui, "kitmeta", $"kit_mp_{i}", TWhite,
-                            $"<size=10><color=#8E8777>КД:</color> <color=#FFD35C>{cooldown}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesleft}</color></size>",
+                            $"<size=10><color=@muted>КД:</color> <color=@accent>{cooldown}</color>   <color=@muted>Лимит:</color> <color=@accent>{usesleft}</color></size>",
                             10, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", 0.0f);
 
                     // Нижний ряд кнопок: ОБЗОР под иконкой, ПОЛУЧИТЬ — на оставшуюся ширину
-                    CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}", GlassHov, "<color=#FFD35C>ОБЗОР</color>", 11, "0.035 0.05", "0.29 0.24", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CUIClass.CreateButton(ref ui, $"kit_viewbtn_{i}", $"kitpanel_{i}", GlassHov, "<color=@accent>ОБЗОР</color>", 11, "0.035 0.05", "0.29 0.24", $"octakits_viewkit {kitname.Replace(" ", "%")} {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
 
                     string[] btn_props = Button_Cooldown_Text(player, kitname).Split('%');
                     if (btn_props.Length >= 2)
@@ -590,10 +590,10 @@ namespace Oxide.Plugins
             if (totalPages > 1)
             {
                 if (page > 0)
-                    CUIClass.CreateButton(ref ui, "octakits_pg_back", "octakits_header", GlassRow, "<size=14><color=#FFD35C>‹</color></size>", 12, "0.775 0.15", "0.825 0.85", $"octakits_page {page - 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CUIClass.CreateButton(ref ui, "octakits_pg_back", "octakits_header", GlassRow, "<size=14><color=@accent>‹</color></size>", 12, "0.775 0.15", "0.825 0.85", $"octakits_page {page - 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                 CUIClass.CreateText(ref ui, "octakits_pg_label", "octakits_header", TMuted, $"{page + 1}/{totalPages}", 11, "0.825 0.15", "0.885 0.85", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
                 if (page + 1 < totalPages)
-                    CUIClass.CreateButton(ref ui, "octakits_pg_next", "octakits_header", GlassRow, "<size=14><color=#FFD35C>›</color></size>", 12, "0.885 0.15", "0.935 0.85", $"octakits_page {page + 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                    CUIClass.CreateButton(ref ui, "octakits_pg_next", "octakits_header", GlassRow, "<size=14><color=@accent>›</color></size>", 12, "0.885 0.15", "0.935 0.85", $"octakits_page {page + 1}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             }
 
             CuiHelper.AddUi(player, ui);
@@ -781,13 +781,13 @@ namespace Oxide.Plugins
                     cost = $"{kitObj.SelectToken("Cost")} {CurrencyLabel}";
 
                 string permReq = (string)kitObj.SelectToken("RequiredPermission");
-                string permStatus = string.IsNullOrEmpty(permReq) ? "<color=#A3E06C>Разрешён</color>" :
-                                    (HasKitPermission(player, permReq) ? "<color=#A3E06C>Разрешён</color>" : "<color=#E05A47>Требуется привилегия</color>");
+                string permStatus = string.IsNullOrEmpty(permReq) ? "<color=@green>Разрешён</color>" :
+                                    (HasKitPermission(player, permReq) ? "<color=@green>Разрешён</color>" : "<color=@red>Требуется привилегия</color>");
 
-                string infoText = $"<color=#8E8777>• Кулдаун:</color>  <color=#FFD35C>{cooldown}</color>\n" +
-                                  $"<color=#8E8777>• Доступно:</color>  <color=#FFD35C>{usesleft}</color>\n" +
-                                  $"<color=#8E8777>• Стоимость:</color> <color=#FFD35C>{cost}</color>\n" +
-                                  $"<color=#8E8777>• Статус:</color>    {permStatus}";
+                string infoText = $"<color=@muted>• Кулдаун:</color>  <color=@accent>{cooldown}</color>\n" +
+                                  $"<color=@muted>• Доступно:</color>  <color=@accent>{usesleft}</color>\n" +
+                                  $"<color=@muted>• Стоимость:</color> <color=@accent>{cost}</color>\n" +
+                                  $"<color=@muted>• Статус:</color>    {permStatus}";
 
                 CUIClass.CreateText(ref ui, "kit_info_block", "octakits_viewkit_info", TWhite, infoText, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", 0.0f);
                 CUIClass.CreatePanel(ref ui, "octakits_v_div2", "octakits_viewkit_info", GoldDark, "0.06 0.635", "0.94 0.638", false, 0f, 0f, "assets/icons/iconmaterial.mat");
@@ -796,7 +796,7 @@ namespace Oxide.Plugins
                 if (string.IsNullOrEmpty(descText)) descText = "Описание набора не указано.";
                 CUIClass.CreateText(ref ui, "kit_description", "octakits_viewkit_info", TMuted, descText, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", 0.0f);  
                 
-                CUIClass.CreateButton(ref ui, "octakits_btn_back", "octakits_viewkit_info", GlassRow, "<color=#FFD35C>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16", $"octakits_page {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_btn_back", "octakits_viewkit_info", GlassRow, "<color=@accent>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16", $"octakits_page {page}", "", TWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                 
                 string[] btn_props = Button_Cooldown_Text(player, kitname).Split('%');
                 if (btn_props.Length < 2)
@@ -840,19 +840,19 @@ namespace Oxide.Plugins
             CUIClass.CreatePanel(ref ui, "octakits_background", "Overlay", "0 0 0 0.8", "0 0", "1 1", true, 0.0f, 0f, "assets/content/ui/uibackgroundblur.mat", "0 0", "0 0");
             CUIClass.PullFromAssets(ref ui, "overlay", "octakits_background", "0 0 0 1", "assets/content/ui/ui.background.transparent.radial.psd", 0.0f, 0f, "0 0", "1 1");
             
-            CUIClass.CreatePanel(ref ui, "octakits_main", "octakits_background", "0.11 0.11 0.11 1", "0.5 0.5", "0.5 0.5", false, 0.1f, 0f, "assets/content/ui/uibackgroundblur.mat", $"-300 -170", "300 170");
-            CUIClass.CreatePanel(ref ui, "octakits_title", "octakits_main", "0.07 0.07 0.07 1", "0 1", "1 1.1", false, 0.1f, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreatePanel(ref ui, "octakits_main", "octakits_background", "panel", "0.5 0.5", "0.5 0.5", false, 0.1f, 0f, "assets/content/ui/uibackgroundblur.mat", $"-300 -170", "300 170");
+            CUIClass.CreatePanel(ref ui, "octakits_title", "octakits_main", "bg", "0 1", "1 1.1", false, 0.1f, 0f, "assets/content/ui/uibackgroundblur.mat");
                 CUIClass.CreateText(ref ui, "titletext", "octakits_title", "1 1 1 0.6", "ИМПОРТ НАБОРОВ", 15, "0.02 0.00", "1 1", TextAnchor.MiddleLeft, $"robotocondensed-bold.ttf", 0.0f);  
-                CUIClass.CreateButton(ref ui, "octakits_closeimportbtn", "octakits_title", "0.80 0.25 0.16 0.85", "", 11, "0.945 0.16", $"0.992 0.82", $"octakits_closeImportMenu", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_closeimportbtn", "octakits_title", "red", "", 11, "0.945 0.16", $"0.992 0.82", $"octakits_closeImportMenu", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                 CUIClass.PullFromAssets(ref ui, "octakits_closeimportbtn_icon", "octakits_closeimportbtn", "1 1 1 0.8", "assets/icons/vote_down.png", 0.1f, 0f, "0 0", "1 1");
             
             
             if (page > 0) 
-                CUIClass.CreateButton(ref ui, "octakits_main_btn_back", "octakits_main", "0.11 0.11 0.11 1", "< НАЗАД", 11, "0 -0.1", $"0.15 -0.02", $"octakits_importpage {page - 1}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_main_btn_back", "octakits_main", "panel", "< НАЗАД", 11, "0 -0.1", $"0.15 -0.02", $"octakits_importpage {page - 1}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             
 
             if (page < allKits.Length / 14) 
-                CUIClass.CreateButton(ref ui, "octakits_main_btn_back", "octakits_main", "0.11 0.11 0.11 1", "ДАЛЕЕ >", 11, "0.85 -0.1", $"1 -0.02", $"octakits_importpage {page + 1}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui, "octakits_main_btn_back", "octakits_main", "panel", "ДАЛЕЕ >", 11, "0.85 -0.1", $"1 -0.02", $"octakits_importpage {page + 1}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
             
 
             CuiHelper.DestroyUi(player, "octakits_background"); 
@@ -894,7 +894,7 @@ namespace Oxide.Plugins
                 CUIClass.CreateImage(ref ui2, "img", $"octakits_kit_FI{index}", $"{Img(GetKitImage(kitname))}", "0.02 0.12", "0.27 0.95", 0.5f);
                 CUIClass.CreateText(ref ui2, "kitname", $"octakits_kit_FI{index}", "1 1 1 0.6", kitname, 15, "0.30 0.5", "1 1", TextAnchor.MiddleLeft, $"robotocondensed-bold.ttf", 0.0f);  
                 CUIClass.CreateButton(ref ui2, $"octakits_btnimport_{index}", $"octakits_kit_FI{index}", btnColor, btnText, 11, "0.29 0.08", "0.775 0.45", $"octakits_import {kitname.Replace(" ", "%")} {index}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
-                CUIClass.CreateButton(ref ui2, $"octakits_btn_viewkit", $"octakits_kit_FI{index}", "0.11 0.11 0.11 1", "", 11, "0.80 0.08", "0.97 0.45", $"octakits_lookupkit {kitname.Replace(" ", "%")}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
+                CUIClass.CreateButton(ref ui2, $"octakits_btn_viewkit", $"octakits_kit_FI{index}", "panel", "", 11, "0.80 0.08", "0.97 0.45", $"octakits_lookupkit {kitname.Replace(" ", "%")}", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/icons/iconmaterial.mat");
                     CUIClass.CreateImage(ref ui2, "img", "octakits_btn_viewkit", Img("https://rustplugins.net/products/welcomepanel/new/file-find.png"), "0.20 0.20", "0.80 0.80", 0.0f);
 
             CuiHelper.DestroyUi(player, $"octakits_kit_FI{index}");
@@ -1704,7 +1704,7 @@ namespace Oxide.Plugins
             ulong uid = (ulong)player.userID;
             string toast = _editorToast.TryGetValue(uid, out string t) ? t : null;
             if (!string.IsNullOrEmpty(toast))
-                CUIClass.CreateText(ref ui, "octaedit_toast", "octakits_content", "0.98 0.80 0.35 1", toast, 11, "0.01 0.905", "0.99 0.945", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", 0f);
+                CUIClass.CreateText(ref ui, "octaedit_toast", "octakits_content", "accent", toast, 11, "0.01 0.905", "0.99 0.945", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", 0f);
 
             // ── Левая колонка: параметры набора ──
             CUIClass.CreatePanel(ref ui, "octaedit_fields", "octakits_content", GlassBg, "0.01 0.03", "0.345 0.90", false, 0f, 0f, "assets/icons/iconmaterial.mat");
@@ -1744,7 +1744,7 @@ namespace Oxide.Plugins
             var belt = draft?.SelectToken("BeltItems") as JArray;
             var wear = draft?.SelectToken("WearItems") as JArray;
 
-            CUIClass.CreateText(ref ui, "octaedit_sec_main", "octaedit_items", Gold, $"◆ <b>ОСНОВНОЙ ИНВЕНТАРЬ</b>  <size=9><color=#8a7f66>{main?.Count ?? 0} шт.</color></size>", 11, "0.03 0.93", "0.97 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "octaedit_sec_main", "octaedit_items", Gold, $"◆ <b>ОСНОВНОЙ ИНВЕНТАРЬ</b>  <size=9><color=@muted>{main?.Count ?? 0} шт.</color></size>", 11, "0.03 0.93", "0.97 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
             CUIClass.CreatePanel(ref ui, "octaedit_div_main", "octaedit_items", GoldDark, "0.03 0.925", "0.97 0.928", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "octaedit_grid_main", "octaedit_items", "0 0 0 0.0", "0.02 0.44", "0.98 0.91", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             for (int i = 0; i < mainA.Length; i++)
@@ -1754,7 +1754,7 @@ namespace Oxide.Plugins
                 DrawEditorItem(ref ui, $"octaedit_mitem{i}", main, i);
             }
 
-            CUIClass.CreateText(ref ui, "octaedit_sec_belt", "octaedit_items", Gold, $"◆ <b>БЫСТРЫЙ ДОСТУП</b>  <size=9><color=#8a7f66>{belt?.Count ?? 0} шт.</color></size>", 11, "0.03 0.38", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "octaedit_sec_belt", "octaedit_items", Gold, $"◆ <b>БЫСТРЫЙ ДОСТУП</b>  <size=9><color=@muted>{belt?.Count ?? 0} шт.</color></size>", 11, "0.03 0.38", "0.97 0.42", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
             CUIClass.CreatePanel(ref ui, "octaedit_div_belt", "octaedit_items", GoldDark, "0.03 0.375", "0.97 0.378", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "octaedit_grid_belt", "octaedit_items", "0 0 0 0.0", "0.02 0.24", "0.98 0.36", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             for (int i = 0; i < beltA.Length; i++)
@@ -1764,7 +1764,7 @@ namespace Oxide.Plugins
                 DrawEditorItem(ref ui, $"octaedit_bitem{i}", belt, i);
             }
 
-            CUIClass.CreateText(ref ui, "octaedit_sec_wear", "octaedit_items", Gold, $"◆ <b>ЭКИПИРОВКА</b>  <size=9><color=#8a7f66>{wear?.Count ?? 0} шт.</color></size>", 11, "0.03 0.19", "0.97 0.23", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
+            CUIClass.CreateText(ref ui, "octaedit_sec_wear", "octaedit_items", Gold, $"◆ <b>ЭКИПИРОВКА</b>  <size=9><color=@muted>{wear?.Count ?? 0} шт.</color></size>", 11, "0.03 0.19", "0.97 0.23", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf");
             CUIClass.CreatePanel(ref ui, "octaedit_div_wear", "octaedit_items", GoldDark, "0.03 0.185", "0.97 0.188", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "octaedit_grid_wear", "octaedit_items", "0 0 0 0.0", "0.02 0.05", "0.98 0.17", false, 0f, 0f, "assets/icons/iconmaterial.mat");
             for (int i = 0; i < clothA.Length; i++)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Oxide.Core;
@@ -37,7 +38,7 @@ namespace Oxide.Plugins
     // Редактор с браузером тем — чат /octaui.
     // ============================================================================
 
-    [Info("OctaUI", "Octavian", "1.1.0")]
+    [Info("OctaUI", "Octavian", "1.2.0")]
     [Description("Общий UI-фреймворк Octavian: тема, примитивы CUI, композиты, layout-пресеты, ImageLibrary")]
     public class OctaUI : RustPlugin
     {
@@ -169,6 +170,37 @@ namespace Oxide.Plugins
             if (v.Length == 0) return "";
             var tok = TokenValue(v);
             return tok ?? v;
+        }
+
+        // <color=@токен> в rich-тексте → hex цвета из темы текущего вызова.
+        // Плагины пишут "<color=@accent>ТЕКСТ</color>" — привязки/темы красят и встроенные теги.
+        private static readonly Regex _reColorMacro = new Regex(@"<color\s*=\s*@([\w\.]+)>", RegexOptions.Compiled);
+
+        private string MacroText(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.IndexOf('@') < 0) return text;
+            return _reColorMacro.Replace(text, m =>
+            {
+                var rgba = ResolveColor(m.Groups[1].Value, null);
+                var hex = RgbaToHex(rgba);
+                return hex != null ? "<color=#" + hex + ">" : m.Value;
+            });
+        }
+
+        private static string RgbaToHex(string rgba)
+        {
+            if (string.IsNullOrEmpty(rgba)) return null;
+            var parts = rgba.Split(' ');
+            if (parts.Length < 3) return null;
+            float r, g, b, a = 1f;
+            if (!float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out r)) return null;
+            if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out g)) return null;
+            if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out b)) return null;
+            if (parts.Length > 3) float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out a);
+            var hex = string.Format(CultureInfo.InvariantCulture, "{0:X2}{1:X2}{2:X2}",
+                (int)(Mathf.Clamp01(r) * 255f), (int)(Mathf.Clamp01(g) * 255f), (int)(Mathf.Clamp01(b) * 255f));
+            if (a < 0.999f) hex += string.Format(CultureInfo.InvariantCulture, "{0:X2}", (int)(Mathf.Clamp01(a) * 255f));
+            return hex;
         }
 
         private static string HexToRgba(string hex)
@@ -516,7 +548,7 @@ namespace Oxide.Plugins
                 {
                     new CuiTextComponent
                     {
-                        Text = S(p, "text"),
+                        Text = MacroText(S(p, "text")),
                         FontSize = I(p, "size", 11),
                         Align = AlignOf(S(p, "align")),
                         Color = ResolveColor(S(p, "color"), Th.Text),
@@ -559,7 +591,7 @@ namespace Oxide.Plugins
                 },
                 Text =
                 {
-                    Text = S(p, "text"),
+                    Text = MacroText(S(p, "text")),
                     FontSize = I(p, "size", 11),
                     Align = AlignOf(S(p, "align")),
                     Color = ResolveColor(S(p, "textColor"), Th.White),

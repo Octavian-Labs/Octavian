@@ -9,12 +9,13 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaWelcome", "Octavian", "2.0.0")]
-    [Description("Приветственная панель Octavian на фреймворке OctaUI: 10 вкладок, UX-пресеты и редактор позиций через layout-слоты, страницы боссов из OctaBoss")]
+    [Info("OctaWelcome", "Octavian", "2.1.0")]
+    [Description("Приветственная панель Octavian на фреймворке OctaUI: 10 вкладок, 8 UX-пресетов через layout-слоты, редактор позиций с HUD, страницы боссов из OctaBoss")]
 
     public class OctaWelcome : RustPlugin
     {
@@ -345,6 +346,8 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, "l_background");
             DestroyPopUi(player);
             DestroyEditPanelUi(player);
+            EditClear(player);
+            isPlayerEditing[player.userID] = false;
             CloseAddOn_API(player);
         }
 
@@ -360,9 +363,11 @@ namespace Oxide.Plugins
 
             isPlayerEditing[player.userID] = true;
             panelNameEdit = args[0];
+            anchor = 0;
             DestroyEditPanelUi(player);
             CreateCui(player, false);
             CreateTab(player, 1, 1);
+            EditFeedback(player);
             //Puts($"{isPlayerEditing[player.userID]}");
         }
 
@@ -403,9 +408,9 @@ namespace Oxide.Plugins
             if (args.Length < 1) return;
             if (!player.IsAdmin) return;
 
-            moveValue = Convert.ToSingle(args[0]);
-            if (moveValue > 0.3) player.ConsoleMessage($"(!) Большой шаг — панели будут двигаться значительно.");
-            player.ConsoleMessage($"Шаг перемещения установлен: {moveValue}");
+            moveValue = ParseF(args[0].Replace(',', '.'), 0.01f);
+            if (moveValue > 0.3f) player.ConsoleMessage($"(!) Большой шаг — панели будут двигаться значительно.");
+            player.ConsoleMessage($"Шаг перемещения установлен: {FS(moveValue)}");
         }
 
         [ChatCommand("octa_edit")]
@@ -495,61 +500,22 @@ namespace Oxide.Plugins
                 if (input.WasJustPressed(BUTTON.FIRE_PRIMARY) || input.WasJustPressed(BUTTON.FIRE_SECONDARY))
                 {
                     float dir = input.WasJustPressed(BUTTON.FIRE_PRIMARY) ? 1f : -1f;
-                    float anchorValue = 0f;
-                    if (anchor == 1)
+                    if (anchor >= 1 && anchor <= 4 && panelNameEdit != null && cuiData.ContainsKey(panelNameEdit))
                     {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 0);
-                        anchorValue = anchorValue + dir * moveValue;
-                        cuiData[panelNameEdit].anchorMin = $"{anchorValue} {GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 1)}";
-                        SaveSlot(panelNameEdit);
+                        NudgeSlot(dir);
+                        CreateCui(player, false, true);
+                        CreateTab(player, 1, 2);
                     }
-                    if (anchor == 2)
-                    {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 1);
-                        anchorValue = anchorValue + dir * moveValue;
-                        cuiData[panelNameEdit].anchorMin = $"{GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 0)} {anchorValue}";
-                        SaveSlot(panelNameEdit);
-                    }
-                    if (anchor == 3)
-                    {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 0);
-                        anchorValue = anchorValue + dir * moveValue;
-                        cuiData[panelNameEdit].anchorMax = $"{anchorValue} {GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 1)}";
-                        SaveSlot(panelNameEdit);
-                    }
-                    if (anchor == 4)
-                    {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 1);
-                        anchorValue = anchorValue + dir * moveValue;
-                        cuiData[panelNameEdit].anchorMax = $"{GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 0)} {anchorValue}";
-                        SaveSlot(panelNameEdit);
-                    }
-                    CreateCui(player, false, true);
-                    CreateTab(player, 1, 2);
+                    EditFeedback(player);
                     return;
                 }
-                if (input.WasJustPressed(BUTTON.FORWARD))
-                {
-                    anchor = 4;
-                    return;
-                }
-                if (input.WasJustPressed(BUTTON.BACKWARD))
-                {
-                    anchor = 2;
-                    return;
-                }
-                if (input.WasJustPressed(BUTTON.LEFT))
-                {
-                    anchor = 1;
-                    return;
-                }
-                if (input.WasJustPressed(BUTTON.RIGHT))
-                {
-                    anchor = 3;
-                    return;
-                }
+                if (input.WasJustPressed(BUTTON.FORWARD)) { anchor = 4; EditFeedback(player); return; }
+                if (input.WasJustPressed(BUTTON.BACKWARD)) { anchor = 2; EditFeedback(player); return; }
+                if (input.WasJustPressed(BUTTON.LEFT)) { anchor = 1; EditFeedback(player); return; }
+                if (input.WasJustPressed(BUTTON.RIGHT)) { anchor = 3; EditFeedback(player); return; }
                 if (input.WasJustPressed(BUTTON.RELOAD))
                 {
+                    EditClear(player);
                     DestroyPage(player);
                     DestroyCui(player);
                     CreateEditPanelMenu(player);
@@ -561,18 +527,71 @@ namespace Oxide.Plugins
             }
         }
 
-        private float GetSingleAnchor(string anchor, int index)
+        // Инвариантные числа — ru-RU культура сервера иначе ломает анкоры (точка/запятая)
+        private static float ParseF(string s, float def = 0f)
         {
-            //if (anchor == null) return null;
-            string[] splitter = anchor.Split(' ');
-            float converted = 0;
+            float v;
+            return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v) ? v : def;
+        }
 
-            if (splitter[index] != null)
+        private static string FS(float v) => v.ToString("0.#####", CultureInfo.InvariantCulture);
+
+        // Сдвиг одной грани слота: 1=minX(лево) 2=minY(низ) 3=maxX(право) 4=maxY(верх)
+        private void NudgeSlot(float dir)
+        {
+            var d = cuiData[panelNameEdit];
+            var min = (d.anchorMin ?? "0 0").Split(' ');
+            var max = (d.anchorMax ?? "0 0").Split(' ');
+            if (min.Length < 2 || max.Length < 2) return;
+            switch (anchor)
             {
-                converted = Convert.ToSingle(splitter[index]);
+                case 1: min[0] = FS(ParseF(min[0]) + dir * moveValue); break;
+                case 2: min[1] = FS(ParseF(min[1]) + dir * moveValue); break;
+                case 3: max[0] = FS(ParseF(max[0]) + dir * moveValue); break;
+                case 4: max[1] = FS(ParseF(max[1]) + dir * moveValue); break;
             }
+            d.anchorMin = $"{min[0]} {min[1]}";
+            d.anchorMax = $"{max[0]} {max[1]}";
+            SaveSlot(panelNameEdit);
+        }
 
-            return converted;
+        // HUD редактора + красная рамка вокруг редактируемого слота — видно что выбрано и куда двигается
+        private void EditFeedback(BasePlayer player)
+        {
+            EditClear(player);
+            bool on;
+            if (!isPlayerEditing.TryGetValue(player.userID, out on) || !on
+                || string.IsNullOrEmpty(panelNameEdit) || !cuiData.ContainsKey(panelNameEdit)) return;
+
+            var d = cuiData[panelNameEdit];
+            var ui = new CuiElementContainer();
+
+            string side = anchor == 1 ? "ЛЕВО" : anchor == 2 ? "НИЗ" : anchor == 3 ? "ПРАВО" : anchor == 4 ? "ВЕРХ" : "WASD — выбери сторону";
+            CUIClass.CreatePanel(ref ui, "owed_hud", "Overlay", "bg", "0.18 0.004", "0.82 0.045", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreateText(ref ui, "owed_hud_t", "owed_hud", "text",
+                $"РЕДАКТОР  <color=@accent>{panelNameEdit}</color>   ·   сторона: <color=@accent>{side}</color>   ·   min <color=@muted>{d.anchorMin}</color>   ·   max <color=@muted>{d.anchorMax}</color>   ·   шаг <color=@accent>{FS(moveValue)}</color>      WASD — сторона · ЛКМ/ПКМ — ±шаг · R — назад",
+                10, "0.02 0", "0.98 1", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+
+            var amin = (d.anchorMin ?? "").Split(' ');
+            var amax = (d.anchorMax ?? "").Split(' ');
+            if (amin.Length == 2 && amax.Length == 2)
+            {
+                float x0 = ParseF(amin[0]), y0 = ParseF(amin[1]), x1 = ParseF(amax[0]), y1 = ParseF(amax[1]);
+                const string c = "1 0.3 0.2 0.95";
+                const float t = 0.004f;
+                CUIClass.CreatePanel(ref ui, "owed_frame", "Overlay", "0 0 0 0", "0 0", "1 1", false, 0f);
+                CUIClass.CreatePanel(ref ui, "owed_fT", "owed_frame", c, $"{FS(x0)} {FS(y1)}", $"{FS(x1)} {FS(y1 + t)}", false, 0f);
+                CUIClass.CreatePanel(ref ui, "owed_fB", "owed_frame", c, $"{FS(x0)} {FS(y0 - t)}", $"{FS(x1)} {FS(y0)}", false, 0f);
+                CUIClass.CreatePanel(ref ui, "owed_fL", "owed_frame", c, $"{FS(x0 - t)} {FS(y0)}", $"{FS(x0)} {FS(y1)}", false, 0f);
+                CUIClass.CreatePanel(ref ui, "owed_fR", "owed_frame", c, $"{FS(x1)} {FS(y0)}", $"{FS(x1 + t)} {FS(y1)}", false, 0f);
+            }
+            CuiHelper.AddUi(player, ui);
+        }
+
+        private void EditClear(BasePlayer player)
+        {
+            CuiHelper.DestroyUi(player, "owed_hud");
+            CuiHelper.DestroyUi(player, "owed_frame");
         }
 
         #endregion
@@ -979,6 +998,8 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, "btn_next");
             CuiHelper.DestroyUi(player, "btn_prev");
             CuiHelper.DestroyUi(player, "contentText");
+            // Добиваем элементы вкладки наборов — каскад родителя между батчами ненадёжен
+            KitsTab_Destroy(player);
         }
 
         // Строки дополнительной страницы вкладки (page2..page10 из PageData.json)
@@ -1012,6 +1033,29 @@ namespace Oxide.Plugins
             else return "0 0 0 0.75";
         }
 
+        // Мини-каркас пресета внутри карточки меню: rect'ы слотов ужимаются в область превью
+        private void LayoutPreviewWire(ref CuiElementContainer c, string card, int n)
+        {
+            var slots = PresetSlots(n);
+            CUIClass.CreatePanel(ref c, $"{card}_wbg", card, "0.02 0.02 0.03 0.6", "0.03 0.3", "0.97 0.95", false, 0f, "assets/icons/iconmaterial.mat");
+            var keys = new List<string> { "mainPanel", "sidePanel", "contentPanel", "titlePanel" };
+            for (int i = 1; i <= 10; i++) keys.Add($"menuBtn{i}");
+            keys.Add("nextButton"); keys.Add("previousButton"); keys.Add("closeButton");
+            foreach (var s in keys)
+            {
+                var rect = slots[s]?["rect"]?.ToString();
+                if (string.IsNullOrEmpty(rect)) continue;
+                var p = rect.Split(' ');
+                if (p.Length < 4) continue;
+                float x0 = ParseF(p[0]), y0 = ParseF(p[1]), x1 = ParseF(p[2]), y1 = ParseF(p[3]);
+                if (x1 - x0 < 0.015f || y1 - y0 < 0.015f) continue;
+                float ax0 = 0.03f + x0 * 0.94f, ay0 = 0.30f + y0 * 0.65f;
+                float ax1 = 0.03f + x1 * 0.94f, ay1 = 0.30f + y1 * 0.65f;
+                string col = s == "mainPanel" ? "panel" : s.StartsWith("menuBtn") ? "accent.dim" : "row";
+                CUIClass.CreatePanel(ref c, $"{card}_w_{s}", card, col, $"{FS(ax0)} {FS(ay0)}", $"{FS(ax1)} {FS(ay1)}", false, 0f);
+            }
+        }
+
         private void CreateLayoutMenu(BasePlayer player)
         {
             SyncSlots();
@@ -1028,29 +1072,41 @@ namespace Oxide.Plugins
             #region Layouts
             CUIClass.CreatePanel(ref createLayoutMenu, "l_lp_container", "l_mainPanel", "0 0 0 0", "0.02 0.05", "0.98 0.95", false, 0f, "assets/icons/iconmaterial.mat");
             //1
-            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_1", "l_lp_container", Hl_Choice(1), "0 0.51", "0.32 1", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_1", "l_lp_container", Hl_Choice(1), "0 0.67", "0.32 1", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_1", Img3("https://codefling.com/uploads/monthly_2021_07/2.PNG.393e12443a8a8186523b2dcef616ee0c.PNG"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
             CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_1", "0 0 0 0", "\n<b><size=17>DEFAULT #1</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 1", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //2
-            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_2", "l_lp_container", Hl_Choice(2), "0.33 0.51", "0.65 1", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_2", "l_lp_container", Hl_Choice(2), "0.33 0.67", "0.65 1", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_2", Img3("https://rustplugins.net/products/welcomepanel/2/template2.png"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
             CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_2", "0 0 0 0", "\n<b><size=17>FULLSCREEN #2</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 2", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //3
-            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_3", "l_lp_container", Hl_Choice(3), "0.66 0.51", "1 1", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_3", "l_lp_container", Hl_Choice(3), "0.66 0.67", "1 1", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_3", Img3("https://rustplugins.net/products/welcomepanel/3/template3.png"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
             CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_3", "0 0 0 0", "\n<b><size=17>GRAY #3</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 3", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //4
-            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_4", "l_lp_container", Hl_Choice(4), "0 0", "0.32 0.49", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_4", "l_lp_container", Hl_Choice(4), "0 0.34", "0.32 0.66", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_4", Img3("https://rustplugins.net/products/welcomepanel/4/template4.png"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
             CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_4", "0 0 0 0", "\n<b><size=17>ROUNDED #4</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 4", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //5
-            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_5", "l_lp_container", Hl_Choice(5), "0.33 0", "0.65 0.49", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_5", "l_lp_container", Hl_Choice(5), "0.33 0.34", "0.65 0.66", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_5", Img3("https://rustplugins.net/products/welcomepanel/5/template5.jpg"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
             CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_5", "0 0 0 0", "\n<b><size=17>FULLSCREEN #5</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 5", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //6
-            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_6", "l_lp_container", Hl_Choice(6), "0.66 0", "1 0.49", false, 0f, "assets/content/ui/uibackgroundblur.mat");
-            CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_6", Img3("https://rustplugins.net/products/welcomepanel/empty_template.png"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
-            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_6", "0 0 0 0", "\n<b><size=17>COMING IN NEXT UPDATE</size></b> \n\n", 9, "0 0", "1 1", $"", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_6", "l_lp_container", Hl_Choice(6), "0.66 0.34", "1 0.66", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            LayoutPreviewWire(ref createLayoutMenu, "l_layout_panel_6", 6);
+            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_6", "0 0 0 0", "\n<b><size=17>COMPACT #6</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 6", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
+            //7
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_7", "l_lp_container", Hl_Choice(7), "0 0.01", "0.32 0.33", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            LayoutPreviewWire(ref createLayoutMenu, "l_layout_panel_7", 7);
+            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_7", "0 0 0 0", "\n<b><size=17>BOTTOMBAR #7</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 7", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
+            //8
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_8", "l_lp_container", Hl_Choice(8), "0.33 0.01", "0.65 0.33", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            LayoutPreviewWire(ref createLayoutMenu, "l_layout_panel_8", 8);
+            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_8", "0 0 0 0", "\n<b><size=17>SIDEBAR #8</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 8", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
+            //9
+            CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_9", "l_lp_container", Hl_Choice(9), "0.66 0.01", "1 0.33", false, 0f, "assets/content/ui/uibackgroundblur.mat");
+            CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_9", Img3("https://rustplugins.net/products/welcomepanel/empty_template.png"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
+            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_9", "0 0 0 0", "\n<b><size=17>COMING IN NEXT UPDATE</size></b> \n\n", 9, "0 0", "1 1", $"", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
 
 
             #endregion
@@ -1344,19 +1400,19 @@ namespace Oxide.Plugins
                 // поэтому левый край в px (72px, правее 58px иконки) задают прозрачные панели-обёртки
                 CUIClass.CreatePanel(ref ui, $"owkit_tp_{i}", $"owkit_card_{i}", "0 0 0 0", "0 0.70", "0.985 0.92", false, 0f, "assets/icons/iconmaterial.mat", "", "72 0", "0 0");
                 CUIClass.CreateText(ref ui, $"owkit_title_{i}", $"owkit_tp_{i}", KTWhite,
-                    $"<color=#FFD35C><b>{kitname.ToUpper()}</b></color>", 12, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                    $"<color=@accent><b>{kitname.ToUpper()}</b></color>", 12, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
                 CUIClass.CreatePanel(ref ui, $"owkit_dp_{i}", $"owkit_card_{i}", "0 0 0 0", "0 0.44", "0.985 0.68", false, 0f, "assets/icons/iconmaterial.mat", "", "72 0", "0 0");
                 CUIClass.CreateText(ref ui, $"owkit_descr_{i}", $"owkit_dp_{i}", KTWhite,
-                    $"<size=9><color=#9E9482>{descr}</color></size>", 9, "0 0", "1 1", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    $"<size=9><color=@muted>{descr}</color></size>", 9, "0 0", "1 1", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
                 CUIClass.CreatePanel(ref ui, $"owkit_mp_{i}", $"owkit_card_{i}", "0 0 0 0", "0 0.26", "0.985 0.42", false, 0f, "assets/icons/iconmaterial.mat", "", "72 0", "0 0");
                 CUIClass.CreateText(ref ui, $"owkit_meta_{i}", $"owkit_mp_{i}", KTWhite,
-                    $"<size=9><color=#8E8777>КД:</color> <color=#FFD35C>{cdText}</color>   <color=#8E8777>Лимит:</color> <color=#FFD35C>{usesText}</color></size>",
+                    $"<size=9><color=@muted>КД:</color> <color=@accent>{cdText}</color>   <color=@muted>Лимит:</color> <color=@accent>{usesText}</color></size>",
                     9, "0 0", "1 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
                 // нижний ряд кнопок: ОБЗОР — под иконкой, клейм — на оставшуюся ширину
-                CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=#FFD35C>ОБЗОР</color>", 10, "0.035 0.05", "0.31 0.22",
+                CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=@accent>ОБЗОР</color>", 10, "0.035 0.05", "0.31 0.22",
                     $"octawelcome_kit_view {kitname.Replace(" ", "%")} {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
                 string[] btn = KitsTab_BtnState(player, kitname).Split('%');
@@ -1369,11 +1425,11 @@ namespace Oxide.Plugins
             if (totalPages > 1)
             {
                 if (page > 0)
-                    CUIClass.CreateButton(ref ui, "owkit_prev", "imagePanel", KGlassRow, "<color=#FFD35C>‹</color>", 13, "0.40 0.004", "0.46 0.048",
+                    CUIClass.CreateButton(ref ui, "owkit_prev", "imagePanel", KGlassRow, "<color=@accent>‹</color>", 13, "0.40 0.004", "0.46 0.048",
                         $"octawelcome_kit_page {page - 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
-                CUIClass.CreateText(ref ui, "owkit_pg", "imagePanel", "0.58 0.53 0.43 1", $"стр. {page + 1}/{totalPages}", 10, "0.46 0.004", "0.54 0.048", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, "owkit_pg", "imagePanel", "muted", $"стр. {page + 1}/{totalPages}", 10, "0.46 0.004", "0.54 0.048", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 if (page + 1 < totalPages)
-                    CUIClass.CreateButton(ref ui, "owkit_next", "imagePanel", KGlassRow, "<color=#FFD35C>›</color>", 13, "0.54 0.004", "0.60 0.048",
+                    CUIClass.CreateButton(ref ui, "owkit_next", "imagePanel", KGlassRow, "<color=@accent>›</color>", 13, "0.54 0.004", "0.60 0.048",
                         $"octawelcome_kit_page {page + 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
 
@@ -1443,7 +1499,7 @@ namespace Oxide.Plugins
             // левая часть — информация о наборе
             CUIClass.CreatePanel(ref ui, "owkit_view_info", "imagePanel", KGlassBg, "0.01 0.04", "0.35 0.96", false, 0f, "assets/icons/iconmaterial.mat");
             CUIClass.CreatePanel(ref ui, "owkit_v_gold", "owkit_view_info", KGold, "0 0.985", "1 1", false, 0f, "assets/icons/iconmaterial.mat");
-            CUIClass.CreateText(ref ui, "owkit_v_title", "owkit_view_info", "0.95 0.75 0.30 1", $"◆ <b>{kitname.ToUpper()}</b>", 18, "0.06 0.91", "0.94 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateText(ref ui, "owkit_v_title", "owkit_view_info", "accent", $"◆ <b>{kitname.ToUpper()}</b>", 18, "0.06 0.91", "0.94 0.97", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_v_div1", "owkit_view_info", KGoldDark, "0.06 0.895", "0.94 0.898", false, 0f, "assets/icons/iconmaterial.mat");
 
             int cooldownSec = 0, maxUses = 0, used = 0;
@@ -1464,21 +1520,21 @@ namespace Oxide.Plugins
                 try { hasPerm = Convert.ToBoolean(OctaKits.Call("HasKitPermission", player, perm)); } catch { }
             }
             string permStatus = hasPerm
-                ? "<color=#A3E06C>Разрешён</color>" : "<color=#E05A47>Требуется привилегия</color>";
+                ? "<color=@green>Разрешён</color>" : "<color=@red>Требуется привилегия</color>";
 
-            string info = $"<color=#8E8777>• Кулдаун:</color>  <color=#FFD35C>{cdText}</color>\n" +
-                          $"<color=#8E8777>• Доступно:</color>  <color=#FFD35C>{usesText}</color>\n" +
-                          $"<color=#8E8777>• Стоимость:</color> <color=#FFD35C>{costText}</color>\n" +
-                          $"<color=#8E8777>• Статус:</color>    {permStatus}";
+            string info = $"<color=@muted>• Кулдаун:</color>  <color=@accent>{cdText}</color>\n" +
+                          $"<color=@muted>• Доступно:</color>  <color=@accent>{usesText}</color>\n" +
+                          $"<color=@muted>• Стоимость:</color> <color=@accent>{costText}</color>\n" +
+                          $"<color=@muted>• Статус:</color>    {permStatus}";
             CUIClass.CreateText(ref ui, "owkit_v_info", "owkit_view_info", KTWhite, info, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_v_div2", "owkit_view_info", KGoldDark, "0.06 0.635", "0.94 0.638", false, 0f, "assets/icons/iconmaterial.mat");
 
             string descr = "";
             try { descr = OctaKits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
             if (string.IsNullOrEmpty(descr)) descr = "Описание набора не указано.";
-            CUIClass.CreateText(ref ui, "owkit_v_descr", "owkit_view_info", "0.58 0.53 0.43 1", descr, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateText(ref ui, "owkit_v_descr", "owkit_view_info", "muted", descr, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
-            CUIClass.CreateButton(ref ui, "owkit_v_back", "owkit_view_info", KGlassRow, "<color=#FFD35C>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16",
+            CUIClass.CreateButton(ref ui, "owkit_v_back", "owkit_view_info", KGlassRow, "<color=@accent>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16",
                 $"octawelcome_kit_page {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
             string[] btn = KitsTab_BtnState(player, kitname).Split('%');
@@ -1634,13 +1690,16 @@ namespace Oxide.Plugins
                 case 3: return "gray";
                 case 4: return "rounded";
                 case 5: return "topbar";
+                case 6: return "compact";
+                case 7: return "bottombar";
+                case 8: return "sidebar";
                 default: return "classic";
             }
         }
 
         private void ApplyPreset(int presetNumber)
         {
-            if (presetNumber < 1 || presetNumber > 5) presetNumber = 1;
+            if (presetNumber < 1 || presetNumber > 8) presetNumber = 1;
             OctaUI?.Call("LayoutApply", Name, PresetName(presetNumber));
             PresetConfigPatch(presetNumber);
             SaveConfig();
@@ -1652,7 +1711,7 @@ namespace Oxide.Plugins
         {
             if (OctaUI == null) return;
 
-            for (int i = 1; i <= 5; i++)
+            for (int i = 1; i <= 8; i++)
                 OctaUI.Call("LayoutPreset", Name, PresetName(i), PresetSlots(i));
 
             var pd = presetData[$"{Name}"];
@@ -1689,7 +1748,7 @@ namespace Oxide.Plugins
             if (layout == null || layout.Count == 0)
             {
                 int n = pd.presetNumber;
-                if (n < 1 || n > 5) n = 1;
+                if (n < 1 || n > 8) n = 1;
                 OctaUI.Call("LayoutImport", Name, PresetSlots(n));
             }
         }
@@ -1771,6 +1830,22 @@ namespace Oxide.Plugins
                 config.tab9Settings.btnTitle = "TEMPLATE #5 supports only 7 buttons by default";
                 config.tab10Settings.btnTitle = "TEMPLATE #5 supports only 7 buttons by default";
                 config.titleSettings.titleText = "This template is partialy made from image \n you have to made your own in order to use this layout.";
+            }
+            // Новые шаблоны OctaUI — русские заголовки, акцент через @-токен темы
+            if (presetNumber >= 6 && presetNumber <= 8)
+            {
+                config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
+                config.tab1Settings.btnTitle = "ГЛАВНАЯ";
+                config.tab2Settings.btnTitle = "ПРАВИЛА";
+                config.tab3Settings.btnTitle = "НАБОРЫ";
+                config.tab4Settings.btnTitle = "ВАЙПЫ";
+                config.tab5Settings.btnTitle = "VIP";
+                config.tab6Settings.btnTitle = "ДИСКОРД";
+                config.tab7Settings.btnTitle = "МАГАЗИН";
+                config.tab8Settings.btnTitle = "АДМИНЫ";
+                config.tab9Settings.btnTitle = "НОВОСТИ";
+                config.tab10Settings.btnTitle = "БОССЫ";
+                config.titleSettings.titleText = "<size=18><color=@accent>◆ OCTAVIAN</color></size>";
             }
         }
 
@@ -1909,9 +1984,86 @@ namespace Oxide.Plugins
                 ["previousButton"] = new JObject { ["rect"] = "0.99 0.488 1.01 0.975", ["color"] = "0.25 0.23 0.22 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/5/btn-pageup.png", ["fade"] = 0f },
             };
 
+            // ─── Пресет 6 «compact»: компактное окно по центру, узкая колонка вкладок слева ───
+            case 6 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.72", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.30 0.16 0.70 0.84", ["color"] = "0.02 0.02 0.03 0.85", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["sidePanel"] = new JObject { ["rect"] = "0.31 0.17 0.40 0.83", ["color"] = "0.02 0.02 0.03 0.6", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.36 0.79 0.65 0.83", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.312 0.79 0.35 0.83", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["closeButton"] = new JObject { ["rect"] = "0.655 0.795 0.69 0.83", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.405 0.17 0.69 0.78", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.16 0.34 0.49 1", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.312 0.718 0.398 0.77", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.312 0.661 0.398 0.713", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.312 0.604 0.398 0.656", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.312 0.547 0.398 0.599", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.312 0.490 0.398 0.542", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.312 0.433 0.398 0.485", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.312 0.376 0.398 0.428", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.312 0.319 0.398 0.371", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.312 0.262 0.398 0.314", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.312 0.205 0.398 0.257", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.655 0.175 0.688 0.215", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.62 0.175 0.653 0.215", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+            };
 
+            // ─── Пресет 7 «bottombar»: HUD-панель внизу экрана, вкладки горизонтальной полосой, без затемнения ───
+            case 7 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.08 0.03 0.92 0.32", ["color"] = "0.01 0.01 0.015 0.88", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["sidePanel"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.085 0.33 0.40 0.37", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.60 0.33 0.87 0.37", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["closeButton"] = new JObject { ["rect"] = "0.893 0.335 0.913 0.368", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.085 0.04 0.915 0.24", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.13 0.16 0.22 0.95", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.087 0.245 0.166 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.170 0.245 0.249 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.253 0.245 0.332 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.336 0.245 0.415 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.419 0.245 0.498 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.502 0.245 0.581 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.585 0.245 0.664 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.668 0.245 0.747 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.751 0.245 0.830 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.834 0.245 0.913 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.875 0.045 0.915 0.078", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.835 0.045 0.875 0.078", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+            };
 
-
+            // ─── Пресет 8 «sidebar»: высокая панель у правого края, навигация колонкой внутри ───
+            case 8 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.55", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.60 0.06 0.995 0.94", ["color"] = "0.02 0.02 0.03 0.82", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["sidePanel"] = new JObject { ["rect"] = "0.61 0.07 0.70 0.87", ["color"] = "0.02 0.02 0.03 0.6", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.71 0.885 0.95 0.93", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.613 0.885 0.697 0.94", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["closeButton"] = new JObject { ["rect"] = "0.955 0.885 0.99 0.93", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.71 0.07 0.99 0.87", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.13 0.16 0.22 0.95", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.613 0.762 0.697 0.82", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.613 0.686 0.697 0.744", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.613 0.610 0.697 0.668", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.613 0.534 0.697 0.592", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.613 0.458 0.697 0.516", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.613 0.382 0.697 0.440", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.613 0.306 0.697 0.364", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.613 0.230 0.697 0.288", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.613 0.154 0.697 0.212", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.613 0.078 0.697 0.136", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.955 0.075 0.985 0.115", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.92 0.075 0.95 0.115", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+            };
             }
             return new JObject();
         }
