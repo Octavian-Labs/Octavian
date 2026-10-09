@@ -1243,6 +1243,7 @@ namespace Oxide.Plugins
                 var c = new CuiElementContainer();
                 Ui?.Call("Panel", c, "Overlay", _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
                     ["cursor"] = _cursorOn, ["fadeIn"] = _fade, ["mat"] = _mat
                 });
@@ -1253,6 +1254,7 @@ namespace Oxide.Plugins
             {
                 Ui?.Call("Panel", _container, _parent, _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["offset"] = Off(_OffsetMin, _OffsetMax),
                     ["color"] = _color, ["cursor"] = _cursorOn, ["fadeIn"] = _fadeIn,
                     ["fadeOut"] = _fadeOut, ["mat"] = _mat2, ["keyboard"] = keyboard
@@ -1263,6 +1265,7 @@ namespace Oxide.Plugins
             {
                 Ui?.Call("Image", _container, _parent, _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["offset"] = Off(_OffsetMin, _OffsetMax),
                     ["src"] = _image, ["fadeIn"] = _fadeIn, ["fadeOut"] = _fadeOut
                 });
@@ -1273,6 +1276,7 @@ namespace Oxide.Plugins
             {
                 Ui?.Call("ItemIcon", _container, _parent, _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["item"] = _shortname,
                     ["skin"] = _skin, ["amount"] = _amount, ["fadeIn"] = _fadeIn
                 });
@@ -1282,6 +1286,7 @@ namespace Oxide.Plugins
             {
                 Ui?.Call("Sprite", _container, _parent, _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["sprite"] = _sprite,
                     ["color"] = _color, ["fadeIn"] = _fadeIn, ["fadeOut"] = _fadeOut, ["mat"] = _material
                 });
@@ -1291,6 +1296,7 @@ namespace Oxide.Plugins
             {
                 Ui?.Call("Input", _container, _parent, _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
                     ["text"] = _defaultText, ["size"] = _size, ["align"] = AlignStr(_align),
                     ["font"] = _font, ["cmd"] = _command, ["limit"] = _charsLimit, ["readOnly"] = _readOnly
@@ -1301,6 +1307,7 @@ namespace Oxide.Plugins
             {
                 Ui?.Call("Text", _container, _parent, _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
                     ["text"] = _text, ["size"] = _size, ["align"] = AlignStr(_align),
                     ["font"] = _font, ["fadeIn"] = _fadeIn, ["fadeOut"] = _fadeOut,
@@ -1312,6 +1319,7 @@ namespace Oxide.Plugins
             {
                 Ui?.Call("Button", _container, _parent, _name, new JObject
                 {
+                    ["plugin"] = "OctaKits",
                     ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
                     ["text"] = _text, ["size"] = _size, ["align"] = AlignStr(_align),
                     ["font"] = _font, ["cmd"] = _command, ["close"] = _close,

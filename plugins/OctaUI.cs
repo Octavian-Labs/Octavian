@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -27,9 +28,16 @@ namespace Oxide.Plugins
     // сырыми "r g b a" или #RRGGBB[AA]. Наборы акцента для композитов:
     // "gold" (дефолт), "red", "green", "blue" либо произвольный "r g b a"/#hex —
     // яркий/приглушённый/тёмный/стеклянный оттенки выводятся автоматически.
+    //
+    // Библиотека тем: data/OctaUI/themes/<имя>.json (default = эталон).
+    //   props["theme"]  — явная тема для вызова;
+    //   props["plugin"] — авто-выбор темы, привязанной к плагину (ThemeBind);
+    //   без обоих — базовая тема из configs/OctaUI.json.
+    // API: ThemeList/ThemeGet/ThemeSet/ThemeDelete/ThemeBind/ThemeApply.
+    // Редактор с браузером тем — чат /octaui.
     // ============================================================================
 
-    [Info("OctaUI", "Octavian", "1.0.0")]
+    [Info("OctaUI", "Octavian", "1.1.0")]
     [Description("Общий UI-фреймворк Octavian: тема, примитивы CUI, композиты, layout-пресеты, ImageLibrary")]
     public class OctaUI : RustPlugin
     {
@@ -69,6 +77,18 @@ namespace Oxide.Plugins
 
         private PluginConfig _cfg;
 
+        // ── Библиотека тем ──────────────────────────────────────────────────
+        // themes/<имя>.json — именованные темы; "_ct" — тема текущего вызова
+        // (props["theme"] → привязка плагина → базовая _cfg.Theme).
+        private ThemeCfg _ct;
+        private ThemeCfg Th => _ct ?? _cfg.Theme;
+        private ThemeCfg _editTheme;            // черновик редактора /octaui
+        private string _editName = "default";   // имя черновика
+        private readonly Dictionary<string, ThemeCfg> _themes = new Dictionary<string, ThemeCfg>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, string> _binds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); // plugin → theme
+        private const string ThemesDir = "OctaUI/themes";
+        private const string BindsFile = "OctaUI/binds";
+
         protected override void LoadConfig()
         {
             base.LoadConfig();
@@ -83,10 +103,21 @@ namespace Oxide.Plugins
 
         protected override void SaveConfig() => Config.WriteObject(_cfg, true);
 
+        // Тема для вызова: явная props["theme"] → привязка props["plugin"] → базовая
+        private ThemeCfg ThemeFor(JObject p)
+        {
+            var tName = S(p, "theme");
+            if (!string.IsNullOrEmpty(tName) && _themes.TryGetValue(tName, out var tx)) return tx;
+            var plugin = S(p, "plugin");
+            if (!string.IsNullOrEmpty(plugin) && _binds.TryGetValue(plugin, out var bn)
+                && _themes.TryGetValue(bn, out var bt)) return bt;
+            return _cfg.Theme;
+        }
+
         // Токены → поля темы (короткие имена + псевдонимы "gold.*" для привычности)
         private string TokenValue(string name)
         {
-            var t = _cfg?.Theme;
+            var t = Th;
             if (t == null || string.IsNullOrEmpty(name)) return null;
             switch (name)
             {
@@ -126,7 +157,7 @@ namespace Oxide.Plugins
         // Разрешение шрифта/материала через те же токены
         private string ResolveFont(string v)
         {
-            if (string.IsNullOrEmpty(v)) return _cfg.Theme.Font;
+            if (string.IsNullOrEmpty(v)) return Th.Font;
             var tok = TokenValue(v);
             return tok ?? v;
         }
@@ -134,7 +165,7 @@ namespace Oxide.Plugins
         private string ResolveMat(string v)
         {
             // null — параметр не задан → тематический материал; "" — явно без материала
-            if (v == null) return _cfg.Theme.Mat;
+            if (v == null) return Th.Mat;
             if (v.Length == 0) return "";
             var tok = TokenValue(v);
             return tok ?? v;
@@ -157,7 +188,7 @@ namespace Oxide.Plugins
         // Принимает имя ("gold","red","green","blue") или произвольный цвет.
         private JObject AccentSet(string spec)
         {
-            var t = _cfg.Theme;
+            var t = Th;
             string bright;
             switch (spec ?? "accent")
             {
@@ -292,15 +323,19 @@ namespace Oxide.Plugins
         private string API_UiName(string prefix, string part) => prefix + "_" + part;
 
         [HookMethod("Token")]
-        private object API_Token(string name) => TokenValue(name);
+        private object API_Token(string name) { _ct = null; return TokenValue(name); }
 
         [HookMethod("Resolve")]
-        private object API_Resolve(string colorOrToken) => ResolveColor(colorOrToken);
+        private object API_Resolve(string colorOrToken) { _ct = null; return ResolveColor(colorOrToken); }
 
+        // Theme() → токены базовой темы; Theme("name") → токены именованной
         [HookMethod("Theme")]
-        private object API_Theme()
+        private object API_Theme(string name = null)
         {
-            var t = _cfg.Theme;
+            _ct = null;
+            ThemeCfg t;
+            if (!string.IsNullOrEmpty(name) && _themes.TryGetValue(name, out t)) { }
+            else t = _cfg.Theme;
             return new JObject
             {
                 ["accent"] = t.Accent, ["accent.dim"] = t.AccentDim, ["accent.dark"] = t.AccentDark,
@@ -311,8 +346,83 @@ namespace Oxide.Plugins
             };
         }
 
+        // ── API тем: список/чтение/запись/удаление/привязки ──────────────────
+
+        // ThemeList() → JArray имён тем ("default" первой)
+        [HookMethod("ThemeList")]
+        private object API_ThemeList()
+        {
+            var arr = new JArray();
+            if (_themes.ContainsKey("default")) arr.Add("default");
+            foreach (var n in _themes.Keys.Where(k => k != "default" && !k.StartsWith("_")).OrderBy(k => k)) arr.Add(n);
+            return arr;
+        }
+
+        // ThemeGet("name") → JObject полей темы или null
+        [HookMethod("ThemeGet")]
+        private object API_ThemeGet(string name)
+        {
+            ThemeCfg t;
+            return _themes.TryGetValue(name ?? "", out t) ? JObject.FromObject(t) : null;
+        }
+
+        // ThemeSet("name", JObject) — создать/обновить тему из словаря полей;
+        // принимает и токен-ключи ("accent","bg",...) и JsonProperty-имена.
+        [HookMethod("ThemeSet")]
+        private object API_ThemeSet(string name, JObject fields)
+        {
+            if (string.IsNullOrEmpty(name) || name.StartsWith("_")) return false;
+            ThemeCfg t;
+            if (!_themes.TryGetValue(name, out t)) t = new ThemeCfg();
+            ApplyThemeFields(t, fields);
+            _themes[name] = t;
+            SaveThemeFile(name, t);
+            return true;
+        }
+
+        // ThemeDelete("name") — удалить файл темы (кроме "default")
+        [HookMethod("ThemeDelete")]
+        private object API_ThemeDelete(string name)
+        {
+            if (string.IsNullOrEmpty(name) || name == "default" || name.StartsWith("_")) return false;
+            _themes.Remove(name);
+            var doomed = _binds.Where(kv => kv.Value == name).Select(kv => kv.Key).ToList();
+            foreach (var k in doomed) _binds.Remove(k);
+            if (doomed.Count > 0) SaveBinds();
+            var f = ThemeFilePath(name);
+            if (File.Exists(f)) File.Delete(f);
+            return true;
+        }
+
+        // ThemeBind("OctaKits","emerald") — плагин рисуется этой темой;
+        // ThemeBind(plugin, null/"") — отвязка. Персистится в binds.json.
+        [HookMethod("ThemeBind")]
+        private object API_ThemeBind(string plugin, string theme)
+        {
+            if (string.IsNullOrEmpty(plugin)) return false;
+            if (string.IsNullOrEmpty(theme)) _binds.Remove(plugin);
+            else
+            {
+                if (!_themes.ContainsKey(theme)) return false;
+                _binds[plugin] = theme;
+            }
+            SaveBinds();
+            return true;
+        }
+
+        // ThemeApply("name") — копирует именованную тему в базовую (глобально)
+        [HookMethod("ThemeApply")]
+        private object API_ThemeApply(string name)
+        {
+            ThemeCfg t;
+            if (!_themes.TryGetValue(name ?? "", out t)) return false;
+            CopyTheme(t, _cfg.Theme);
+            SaveConfig();
+            return true;
+        }
+
         [HookMethod("Accent")]
-        private object API_Accent(string name) => AccentSet(name);
+        private object API_Accent(string name) { _ct = null; return AccentSet(name); }
 
         [HookMethod("Show")]
         private void API_Show(BasePlayer player, CuiElementContainer c) => CuiHelper.AddUi(player, c);
@@ -372,6 +482,7 @@ namespace Oxide.Plugins
         [HookMethod("Panel")]
         private object API_Panel(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
@@ -392,6 +503,7 @@ namespace Oxide.Plugins
         [HookMethod("Text")]
         private object API_Text(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
@@ -407,7 +519,7 @@ namespace Oxide.Plugins
                         Text = S(p, "text"),
                         FontSize = I(p, "size", 11),
                         Align = AlignOf(S(p, "align")),
-                        Color = ResolveColor(S(p, "color"), _cfg.Theme.Text),
+                        Color = ResolveColor(S(p, "color"), Th.Text),
                         Font = ResolveFont(S(p, "font")),
                         FadeIn = F(p, "fadeIn", 0f)
                     },
@@ -431,6 +543,7 @@ namespace Oxide.Plugins
         [HookMethod("Button")]
         private object API_Button(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
@@ -439,7 +552,7 @@ namespace Oxide.Plugins
                 Button =
                 {
                     Command = S(p, "cmd"),
-                    Color = ResolveColor(S(p, "color"), _cfg.Theme.Panel),
+                    Color = ResolveColor(S(p, "color"), Th.Panel),
                     Material = ResolveMat(S(p, "mat", "mat.btn")),
                     FadeIn = F(p, "fadeIn", 0f),
                     Close = S(p, "close")
@@ -449,7 +562,7 @@ namespace Oxide.Plugins
                     Text = S(p, "text"),
                     FontSize = I(p, "size", 11),
                     Align = AlignOf(S(p, "align")),
-                    Color = ResolveColor(S(p, "textColor"), _cfg.Theme.White),
+                    Color = ResolveColor(S(p, "textColor"), Th.White),
                     Font = ResolveFont(S(p, "font")),
                     FadeIn = F(p, "fadeIn", 0f)
                 },
@@ -464,6 +577,7 @@ namespace Oxide.Plugins
         [HookMethod("Image")]
         private object API_Image(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
@@ -534,6 +648,7 @@ namespace Oxide.Plugins
         [HookMethod("Sprite")]
         private object API_Sprite(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             var q = (JObject)p?.DeepClone() ?? new JObject();
             q["src"] = "sprite:" + S(p, "sprite");
             return API_Image(c, parent, name, q);
@@ -543,6 +658,7 @@ namespace Oxide.Plugins
         [HookMethod("ItemIcon")]
         private object API_ItemIcon(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
@@ -577,6 +693,7 @@ namespace Oxide.Plugins
         [HookMethod("Input")]
         private object API_Input(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
@@ -591,7 +708,7 @@ namespace Oxide.Plugins
                     {
                         Text = S(p, "text"),
                         CharsLimit = I(p, "limit", 200),
-                        Color = ResolveColor(S(p, "color"), _cfg.Theme.White),
+                        Color = ResolveColor(S(p, "color"), Th.White),
                         IsPassword = B(p, "password"),
                         Command = S(p, "cmd"),
                         Font = ResolveFont(S(p, "font", "font.hand")),
@@ -613,6 +730,7 @@ namespace Oxide.Plugins
         [HookMethod("Outline")]
         private object API_Outline(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
@@ -622,7 +740,7 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax, OffsetMin = oMin, OffsetMax = oMax }
             }, parent, name ?? "");
 
-            var col = ResolveColor(S(p, "color"), _cfg.Theme.Accent);
+            var col = ResolveColor(S(p, "color"), Th.Accent);
             var th = F(p, "thick", 0.03f);
             var tx = F(p, "thickX", th);
             var fmt = CultureInfo.InvariantCulture;
@@ -648,18 +766,19 @@ namespace Oxide.Plugins
         [HookMethod("Bar")]
         private object API_Bar(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
             var el = c.Add(new CuiPanel
             {
-                Image = { Color = ResolveColor(S(p, "bg"), _cfg.Theme.BarBg) },
+                Image = { Color = ResolveColor(S(p, "bg"), Th.BarBg) },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax, OffsetMin = oMin, OffsetMax = oMax }
             }, parent, name ?? "");
             var v = Mathf.Clamp01(F(p, "value", 0f));
             c.Add(new CuiPanel
             {
-                Image = { Color = ResolveColor(S(p, "color"), _cfg.Theme.AccentDim) },
+                Image = { Color = ResolveColor(S(p, "color"), Th.AccentDim) },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = v.ToString("0.###", CultureInfo.InvariantCulture) + " 1" }
             }, el);
             return el;
@@ -675,6 +794,7 @@ namespace Oxide.Plugins
         [HookMethod("Root")]
         private object API_Root(CuiElementContainer c, JObject spec)
         {
+            _ct = ThemeFor(spec);
             var name = S(spec, "name", "OctaUI_Root");
             var acc = AccentSet(S(spec, "accent"));
             string aMin, aMax;
@@ -682,7 +802,7 @@ namespace Oxide.Plugins
 
             var root = c.Add(new CuiPanel
             {
-                Image = { Color = _cfg.Theme.Bg, FadeIn = F(spec, "fadeIn", 0f) },
+                Image = { Color = Th.Bg, FadeIn = F(spec, "fadeIn", 0f) },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax },
                 CursorEnabled = B(spec, "cursor", true)
             }, "Overlay", name);
@@ -694,7 +814,7 @@ namespace Oxide.Plugins
             {
                 header = c.Add(new CuiPanel
                 {
-                    Image = { Color = _cfg.Theme.Panel },
+                    Image = { Color = Th.Panel },
                     RectTransform = { AnchorMin = "0 0.925", AnchorMax = "1 1" }
                 }, root, name + "_HDR");
                 c.Add(new CuiPanel
@@ -723,7 +843,7 @@ namespace Oxide.Plugins
                 c.Add(new CuiLabel
                 {
                     Text = { Text = S(spec, "title"), FontSize = I(spec, "titleSize", 15),
-                             Align = TextAnchor.MiddleLeft, Color = (string)acc["bright"], Font = _cfg.Theme.Font },
+                             Align = TextAnchor.MiddleLeft, Color = (string)acc["bright"], Font = Th.Font },
                     RectTransform = { AnchorMin = titleX + " 0.55", AnchorMax = "0.80 0.95" }
                 }, header);
                 var sub = S(spec, "subtitle");
@@ -732,7 +852,7 @@ namespace Oxide.Plugins
                     c.Add(new CuiLabel
                     {
                         Text = { Text = sub, FontSize = I(spec, "subtitleSize", 10),
-                                 Align = TextAnchor.MiddleLeft, Color = _cfg.Theme.Muted, Font = _cfg.Theme.Font },
+                                 Align = TextAnchor.MiddleLeft, Color = Th.Muted, Font = Th.Font },
                         RectTransform = { AnchorMin = titleX + " 0.10", AnchorMax = "0.80 0.55" }
                     }, header);
                 }
@@ -742,8 +862,8 @@ namespace Oxide.Plugins
                 {
                     c.Add(new CuiButton
                     {
-                        Button = { Command = closeCmd, Color = _cfg.Theme.Red },
-                        Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = _cfg.Theme.White },
+                        Button = { Command = closeCmd, Color = Th.Red },
+                        Text = { Text = "✕", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = Th.White },
                         RectTransform = { AnchorMin = "0.965 0.15", AnchorMax = "0.995 0.90" }
                     }, header);
                 }
@@ -765,6 +885,7 @@ namespace Oxide.Plugins
         [HookMethod("Section")]
         private object API_Section(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax, "0 0 1 0.05");
             Offsets(p, out oMin, out oMax);
@@ -772,7 +893,7 @@ namespace Oxide.Plugins
             c.Add(new CuiLabel
             {
                 Text = { Text = S(p, "text"), FontSize = I(p, "size", 10), Align = TextAnchor.MiddleLeft,
-                         Color = (string)acc["dim"], Font = _cfg.Theme.Font },
+                         Color = (string)acc["dim"], Font = Th.Font },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax, OffsetMin = oMin, OffsetMax = oMax }
             }, parent, name ?? "");
             // линия по нижней кромке текста
@@ -792,13 +913,14 @@ namespace Oxide.Plugins
         [HookMethod("Card")]
         private object API_Card(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin, oMax;
             Rect(p, out aMin, out aMax);
             Offsets(p, out oMin, out oMax);
             var acc = AccentSet(S(p, "accent"));
             var el = c.Add(new CuiPanel
             {
-                Image = { Color = ResolveColor(S(p, "color"), B(p, "selected") ? (string)acc["glass"] : _cfg.Theme.Row) },
+                Image = { Color = ResolveColor(S(p, "color"), B(p, "selected") ? (string)acc["glass"] : Th.Row) },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax, OffsetMin = oMin, OffsetMax = oMax }
             }, parent, name ?? "");
 
@@ -825,6 +947,7 @@ namespace Oxide.Plugins
         [HookMethod("IconBtn")]
         private object API_IconBtn(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax, oMin = "0 0", oMax = "0 0";
             var px = S(p, "px");
             if (!string.IsNullOrEmpty(px))
@@ -848,7 +971,7 @@ namespace Oxide.Plugins
 
             var el = c.Add(new CuiButton
             {
-                Button = { Command = S(p, "cmd"), Color = ResolveColor(S(p, "color"), _cfg.Theme.Panel),
+                Button = { Command = S(p, "cmd"), Color = ResolveColor(S(p, "color"), Th.Panel),
                            Material = ResolveMat(S(p, "mat", "mat.btn")), FadeIn = F(p, "fadeIn", 0f), Close = S(p, "close") },
                 Text = { Text = "", Color = "0 0 0 0" },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax, OffsetMin = oMin, OffsetMax = oMax }
@@ -860,7 +983,7 @@ namespace Oxide.Plugins
             {
                 ["rect"] = string.Format(f, "{0:0.###} {0:0.###} {1:0.###} {1:0.###}", pad, 1f - pad),
                 ["src"] = S(p, "src", "sprite:assets/icons/gear.png"),
-                ["color"] = ResolveColor(S(p, "iconColor"), _cfg.Theme.White),
+                ["color"] = ResolveColor(S(p, "iconColor"), Th.White),
                 ["fadeIn"] = F(p, "fadeIn", 0f)
             });
             return el;
@@ -871,6 +994,7 @@ namespace Oxide.Plugins
         [HookMethod("Stepper")]
         private object API_Stepper(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax;
             Rect(p, out aMin, out aMax, "0 0 1 0.088");
             var acc = AccentSet(S(p, "accent"));
@@ -878,14 +1002,14 @@ namespace Oxide.Plugins
             var edit = B(p, "edit", true);
             var row = c.Add(new CuiPanel
             {
-                Image = { Color = warn ? "0.25 0.12 0.03 0.85" : _cfg.Theme.Row },
+                Image = { Color = warn ? "0.25 0.12 0.03 0.85" : Th.Row },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax }
             }, parent, name ?? "");
 
             c.Add(new CuiLabel
             {
                 Text = { Text = S(p, "label"), FontSize = 11, Align = TextAnchor.MiddleLeft,
-                         Color = warn ? (string)acc["bright"] : _cfg.Theme.Text, Font = _cfg.Theme.Font },
+                         Color = warn ? (string)acc["bright"] : Th.Text, Font = Th.Font },
                 RectTransform = { AnchorMin = "0.02 0.45", AnchorMax = "0.52 0.97" }
             }, row);
             var warnText = S(p, "warnText");
@@ -894,13 +1018,13 @@ namespace Oxide.Plugins
                 c.Add(new CuiLabel
                 {
                     Text = { Text = "⚠ " + warnText, FontSize = 8, Align = TextAnchor.MiddleLeft,
-                             Color = (string)acc["bright"], Font = _cfg.Theme.Font },
+                             Color = (string)acc["bright"], Font = Th.Font },
                     RectTransform = { AnchorMin = "0.02 0.04", AnchorMax = "0.60 0.42" }
                 }, row);
             }
 
-            var btnC = edit ? _cfg.Theme.Hover : _cfg.Theme.Panel;
-            var txtC = edit ? _cfg.Theme.White : _cfg.Theme.Muted;
+            var btnC = edit ? Th.Hover : Th.Panel;
+            var txtC = edit ? Th.White : Th.Muted;
             c.Add(new CuiButton
             {
                 Button = { Command = edit ? S(p, "cmdMinus") : "", Color = btnC },
@@ -920,7 +1044,7 @@ namespace Oxide.Plugins
                 Parent = row, Name = valName,
                 Components =
                 {
-                    new CuiImageComponent { Color = edit ? _cfg.Theme.Bg : "0.03 0.03 0.03 0.6" },
+                    new CuiImageComponent { Color = edit ? Th.Bg : "0.03 0.03 0.03 0.6" },
                     new CuiRectTransformComponent { AnchorMin = "0.715 0.15", AnchorMax = "0.865 0.90" }
                 }
             });
@@ -937,7 +1061,7 @@ namespace Oxide.Plugins
                         new CuiInputFieldComponent
                         {
                             Text = valStr, Command = S(p, "cmdSet"), FontSize = 12,
-                            Align = TextAnchor.MiddleCenter, Color = warn ? (string)acc["bright"] : _cfg.Theme.White,
+                            Align = TextAnchor.MiddleCenter, Color = warn ? (string)acc["bright"] : Th.White,
                             CharsLimit = I(p, "limit", 12), NeedsKeyboard = true
                         },
                         new CuiNeedsCursorComponent()
@@ -949,7 +1073,7 @@ namespace Oxide.Plugins
                 c.Add(new CuiLabel
                 {
                     Text = { Text = valStr + " 🔒", FontSize = 10, Align = TextAnchor.MiddleCenter,
-                             Color = _cfg.Theme.Muted, Font = _cfg.Theme.Font },
+                             Color = Th.Muted, Font = Th.Font },
                     RectTransform = { AnchorMin = "0.715 0.15", AnchorMax = "0.865 0.90" }
                 }, row);
             }
@@ -975,6 +1099,7 @@ namespace Oxide.Plugins
         [HookMethod("Toggle")]
         private object API_Toggle(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax;
             Rect(p, out aMin, out aMax, "0 0 1 0.058");
             var acc = AccentSet(S(p, "accent"));
@@ -982,20 +1107,20 @@ namespace Oxide.Plugins
             var edit = B(p, "edit", true);
             var row = c.Add(new CuiPanel
             {
-                Image = { Color = _cfg.Theme.Row },
+                Image = { Color = Th.Row },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax }
             }, parent, name ?? "");
             c.Add(new CuiLabel
             {
                 Text = { Text = S(p, "label"), FontSize = 11, Align = TextAnchor.MiddleLeft,
-                         Color = _cfg.Theme.Text, Font = _cfg.Theme.Font },
+                         Color = Th.Text, Font = Th.Font },
                 RectTransform = { AnchorMin = "0.02 0", AnchorMax = "0.70 1" }
             }, row);
             c.Add(new CuiButton
             {
-                Button = { Command = edit ? S(p, "cmd") : "", Color = on ? _cfg.Theme.Green : _cfg.Theme.Panel },
+                Button = { Command = edit ? S(p, "cmd") : "", Color = on ? Th.Green : Th.Panel },
                 Text = { Text = on ? "ВКЛ" : "OFF", FontSize = 10, Align = TextAnchor.MiddleCenter,
-                         Color = on ? _cfg.Theme.White : _cfg.Theme.Muted },
+                         Color = on ? Th.White : Th.Muted },
                 RectTransform = { AnchorMin = "0.74 0.16", AnchorMax = "0.97 0.84" }
             }, row);
             if (on)
@@ -1012,19 +1137,20 @@ namespace Oxide.Plugins
         [HookMethod("TextRow")]
         private object API_TextRow(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax;
             Rect(p, out aMin, out aMax, "0 0 1 0.082");
             var acc = AccentSet(S(p, "accent"));
             var edit = B(p, "edit", true);
             var row = c.Add(new CuiPanel
             {
-                Image = { Color = _cfg.Theme.Row },
+                Image = { Color = Th.Row },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax }
             }, parent, name ?? "");
             c.Add(new CuiLabel
             {
                 Text = { Text = S(p, "label"), FontSize = 10, Align = TextAnchor.MiddleLeft,
-                         Color = (string)acc["dim"], Font = _cfg.Theme.Font },
+                         Color = (string)acc["dim"], Font = Th.Font },
                 RectTransform = { AnchorMin = "0.02 0.55", AnchorMax = "0.98 0.98" }
             }, row);
             var valName = row + "_v";
@@ -1033,7 +1159,7 @@ namespace Oxide.Plugins
                 Parent = row, Name = valName,
                 Components =
                 {
-                    new CuiImageComponent { Color = edit ? _cfg.Theme.Bg : "0.03 0.03 0.03 0.6" },
+                    new CuiImageComponent { Color = edit ? Th.Bg : "0.03 0.03 0.03 0.6" },
                     new CuiRectTransformComponent { AnchorMin = "0.02 0.06", AnchorMax = "0.98 0.50" }
                 }
             });
@@ -1048,7 +1174,7 @@ namespace Oxide.Plugins
                         new CuiInputFieldComponent
                         {
                             Text = val, Command = S(p, "cmd"), FontSize = 10,
-                            Align = AlignOf(S(p, "align", "left")), Color = _cfg.Theme.White,
+                            Align = AlignOf(S(p, "align", "left")), Color = Th.White,
                             CharsLimit = I(p, "limit", 200), NeedsKeyboard = true
                         },
                         new CuiNeedsCursorComponent()
@@ -1060,7 +1186,7 @@ namespace Oxide.Plugins
                 c.Add(new CuiLabel
                 {
                     Text = { Text = (val.Length > 60 ? val.Substring(0, 60) + "…" : val) + " 🔒", FontSize = 9,
-                             Align = TextAnchor.MiddleLeft, Color = _cfg.Theme.Muted, Font = _cfg.Theme.Font },
+                             Align = TextAnchor.MiddleLeft, Color = Th.Muted, Font = Th.Font },
                     RectTransform = { AnchorMin = "0.02 0.06", AnchorMax = "0.98 0.50" }
                 }, row);
             }
@@ -1074,6 +1200,7 @@ namespace Oxide.Plugins
         [HookMethod("Toast")]
         private void API_Toast(BasePlayer player, string parentUi, string text, string color = "accent", float seconds = 2.5f)
         {
+            _ct = null;
             if (player == null || string.IsNullOrEmpty(parentUi) || string.IsNullOrEmpty(text)) return;
             var uid = player.userID;
             var key = uid;
@@ -1095,7 +1222,7 @@ namespace Oxide.Plugins
             c.Add(new CuiLabel
             {
                 Text = { Text = text, FontSize = 11, Align = TextAnchor.MiddleCenter,
-                         Color = _cfg.Theme.White, FadeIn = 0.15f, Font = _cfg.Theme.Font },
+                         Color = Th.White, FadeIn = 0.15f, Font = Th.Font },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
             }, el);
             CuiHelper.AddUi(player, c);
@@ -1113,6 +1240,7 @@ namespace Oxide.Plugins
         [HookMethod("Confirm")]
         private object API_Confirm(CuiElementContainer c, string parentUi, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             var dim = c.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0.75" },
@@ -1122,7 +1250,7 @@ namespace Oxide.Plugins
             var col = ResolveColor(S(p, "color"), (string)acc["dim"]);
             var box = c.Add(new CuiPanel
             {
-                Image = { Color = _cfg.Theme.Bg },
+                Image = { Color = Th.Bg },
                 RectTransform = { AnchorMin = "0.32 0.40", AnchorMax = "0.68 0.62" }
             }, dim, dim + "_box");
             c.Add(new CuiPanel
@@ -1133,19 +1261,19 @@ namespace Oxide.Plugins
             c.Add(new CuiLabel
             {
                 Text = { Text = S(p, "title", "Подтвердить?"), FontSize = I(p, "size", 13),
-                         Align = TextAnchor.MiddleCenter, Color = _cfg.Theme.White, Font = _cfg.Theme.Font },
+                         Align = TextAnchor.MiddleCenter, Color = Th.White, Font = Th.Font },
                 RectTransform = { AnchorMin = "0.05 0.35", AnchorMax = "0.95 0.90" }
             }, box);
             c.Add(new CuiButton
             {
-                Button = { Command = S(p, "cmdNo"), Color = _cfg.Theme.Hover },
-                Text = { Text = S(p, "no", "ОТМЕНА"), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = _cfg.Theme.Text },
+                Button = { Command = S(p, "cmdNo"), Color = Th.Hover },
+                Text = { Text = S(p, "no", "ОТМЕНА"), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = Th.Text },
                 RectTransform = { AnchorMin = "0.08 0.10", AnchorMax = "0.46 0.30" }
             }, box);
             c.Add(new CuiButton
             {
                 Button = { Command = S(p, "cmdYes"), Color = col },
-                Text = { Text = S(p, "yes", "ПОДТВЕРДИТЬ"), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = _cfg.Theme.White },
+                Text = { Text = S(p, "yes", "ПОДТВЕРДИТЬ"), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = Th.White },
                 RectTransform = { AnchorMin = "0.54 0.10", AnchorMax = "0.92 0.30" }
             }, box);
             return dim;
@@ -1156,6 +1284,7 @@ namespace Oxide.Plugins
         [HookMethod("Pagination")]
         private object API_Pagination(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax;
             Rect(p, out aMin, out aMax, "0.35 0 0.65 0.05");
             var row = c.Add(new CuiPanel
@@ -1165,20 +1294,20 @@ namespace Oxide.Plugins
             }, parent, name ?? "");
             c.Add(new CuiButton
             {
-                Button = { Command = S(p, "cmdPrev"), Color = _cfg.Theme.Hover },
-                Text = { Text = "◀", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = _cfg.Theme.Text },
+                Button = { Command = S(p, "cmdPrev"), Color = Th.Hover },
+                Text = { Text = "◀", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = Th.Text },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "0.25 1" }
             }, row);
             c.Add(new CuiLabel
             {
                 Text = { Text = string.Format(S(p, "fmt", "{0}/{1}"), I(p, "page", 1) + 1, I(p, "pages", 1)),
-                         FontSize = 11, Align = TextAnchor.MiddleCenter, Color = _cfg.Theme.Muted, Font = _cfg.Theme.Font },
+                         FontSize = 11, Align = TextAnchor.MiddleCenter, Color = Th.Muted, Font = Th.Font },
                 RectTransform = { AnchorMin = "0.25 0", AnchorMax = "0.75 1" }
             }, row);
             c.Add(new CuiButton
             {
-                Button = { Command = S(p, "cmdNext"), Color = _cfg.Theme.Hover },
-                Text = { Text = "▶", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = _cfg.Theme.Text },
+                Button = { Command = S(p, "cmdNext"), Color = Th.Hover },
+                Text = { Text = "▶", FontSize = 11, Align = TextAnchor.MiddleCenter, Color = Th.Text },
                 RectTransform = { AnchorMin = "0.75 0", AnchorMax = "1 1" }
             }, row);
             return row;
@@ -1189,12 +1318,13 @@ namespace Oxide.Plugins
         [HookMethod("ActionBar")]
         private object API_ActionBar(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax;
             Rect(p, out aMin, out aMax, "0 0 1 0.07");
             var acc = AccentSet(S(p, "accent"));
             var bar = c.Add(new CuiPanel
             {
-                Image = { Color = _cfg.Theme.Panel },
+                Image = { Color = Th.Panel },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax }
             }, parent, name ?? "");
             c.Add(new CuiPanel
@@ -1218,9 +1348,9 @@ namespace Oxide.Plugins
                 c.Add(new CuiButton
                 {
                     Button = { Command = enabled ? S(b, "cmd") : "",
-                               Color = enabled ? ResolveColor(S(b, "color"), (string)acc["dim"]) : _cfg.Theme.Bg },
+                               Color = enabled ? ResolveColor(S(b, "color"), (string)acc["dim"]) : Th.Bg },
                     Text = { Text = S(b, "text"), FontSize = I(b, "size", 11), Align = TextAnchor.MiddleCenter,
-                             Color = enabled ? _cfg.Theme.White : _cfg.Theme.Muted, Font = _cfg.Theme.Font },
+                             Color = enabled ? Th.White : Th.Muted, Font = Th.Font },
                     RectTransform = { AnchorMin = x.ToString("0.###", fmt) + " 0.18",
                                       AnchorMax = (x + bw).ToString("0.###", fmt) + " 0.82" }
                 }, bar);
@@ -1234,12 +1364,13 @@ namespace Oxide.Plugins
         [HookMethod("TabStrip")]
         private object API_TabStrip(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax;
             Rect(p, out aMin, out aMax);
             var acc = AccentSet(S(p, "accent"));
             var strip = c.Add(new CuiPanel
             {
-                Image = { Color = _cfg.Theme.Panel },
+                Image = { Color = Th.Panel },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax }
             }, parent, name ?? "");
             var tabs = p?["tabs"] as JArray;
@@ -1270,7 +1401,7 @@ namespace Oxide.Plugins
                     Button = { Command = S(t, "cmd"), Color = sel ? (string)acc["glass"] : "0 0 0 0" },
                     Text = { Text = (vertical ? (sel ? "▸ " : "   ") : "") + S(t, "label"),
                              FontSize = I(t, "size", 10), Align = vertical ? TextAnchor.MiddleLeft : TextAnchor.MiddleCenter,
-                             Color = sel ? (string)acc["bright"] : _cfg.Theme.Muted, Font = _cfg.Theme.Font },
+                             Color = sel ? (string)acc["bright"] : Th.Muted, Font = Th.Font },
                     RectTransform = { AnchorMin = ta0, AnchorMax = ta1 }
                 }, strip);
             }
@@ -1282,6 +1413,7 @@ namespace Oxide.Plugins
         [HookMethod("ListCard")]
         private object API_ListCard(CuiElementContainer c, string parent, string name, JObject p)
         {
+            _ct = ThemeFor(p);
             string aMin, aMax;
             Rect(p, out aMin, out aMax);
             var acc = AccentSet(S(p, "accent"));
@@ -1290,20 +1422,20 @@ namespace Oxide.Plugins
             var card = c.Add(new CuiButton
             {
                 Button = { Command = enabled ? S(p, "cmd") : "",
-                           Color = sel ? (string)acc["glass"] : _cfg.Theme.Row },
+                           Color = sel ? (string)acc["glass"] : Th.Row },
                 Text = { Text = "", Color = "0 0 0 0" },
                 RectTransform = { AnchorMin = aMin, AnchorMax = aMax }
             }, parent, name ?? "");
             c.Add(new CuiPanel
             {
-                Image = { Color = ResolveColor(S(p, "strip"), enabled ? (string)acc["dim"] : _cfg.Theme.Muted) },
+                Image = { Color = ResolveColor(S(p, "strip"), enabled ? (string)acc["dim"] : Th.Muted) },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "0.025 1" }
             }, card);
             c.Add(new CuiLabel
             {
                 Text = { Text = S(p, "title"), FontSize = I(p, "size", 12), Align = TextAnchor.MiddleLeft,
-                         Color = sel ? (string)acc["bright"] : enabled ? _cfg.Theme.Text : _cfg.Theme.Muted,
-                         Font = _cfg.Theme.Font },
+                         Color = sel ? (string)acc["bright"] : enabled ? Th.Text : Th.Muted,
+                         Font = Th.Font },
                 RectTransform = { AnchorMin = "0.07 0.50", AnchorMax = "0.98 0.98" }
             }, card);
             var sub = S(p, "sub");
@@ -1312,7 +1444,7 @@ namespace Oxide.Plugins
                 c.Add(new CuiLabel
                 {
                     Text = { Text = sub, FontSize = 9, Align = TextAnchor.MiddleLeft,
-                             Color = _cfg.Theme.Muted, Font = _cfg.Theme.Font },
+                             Color = Th.Muted, Font = Th.Font },
                     RectTransform = { AnchorMin = "0.07 0.05", AnchorMax = "0.98 0.52" }
                 }, card);
             }
@@ -1531,11 +1663,124 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Библиотека тем: файлы, сиды, привязки
+
+        private static string ThemeFilePath(string name)
+            => Interface.Oxide.DataFileSystem.GetFile(ThemesDir + "/" + name).Filename;
+
+        private static void SaveThemeFile(string name, ThemeCfg t)
+        {
+            try { Directory.CreateDirectory(Path.GetDirectoryName(ThemeFilePath(name))); } catch { }
+            Interface.Oxide.DataFileSystem.GetFile(ThemesDir + "/" + name).WriteObject(t);
+        }
+
+        // Сканирует data/OctaUI/themes/*.json; сиды создают файлы при отсутствии
+        private void LoadThemes()
+        {
+            _themes.Clear();
+            try
+            {
+                var dir = Path.GetDirectoryName(ThemeFilePath("_"));
+                if (Directory.Exists(dir))
+                    foreach (var f in Directory.GetFiles(dir, "*.json"))
+                    {
+                        var n = Path.GetFileNameWithoutExtension(f);
+                        if (string.IsNullOrEmpty(n) || n.StartsWith("_")) continue;
+                        try
+                        {
+                            var t = Interface.Oxide.DataFileSystem.ReadObject<ThemeCfg>(ThemesDir + "/" + n);
+                            if (t != null) _themes[n] = t;
+                        }
+                        catch { }
+                    }
+            }
+            catch { }
+            SeedTheme("default", new ThemeCfg());
+            SeedTheme("emerald", Themed("0.35 0.80 0.45 1"));
+            SeedTheme("crimson", Themed("0.88 0.28 0.30 1"));
+            SeedTheme("ice",     Themed("0.40 0.68 0.95 1"));
+            SeedTheme("violet",  Themed("0.68 0.48 0.92 1"));
+        }
+
+        // Тема-вариация: фирменная база + пересчитанный акцент
+        private static ThemeCfg Themed(string bright)
+        {
+            var t = new ThemeCfg();
+            t.Accent = bright;
+            t.AccentDim = MulRgba(bright, 0.86f);
+            t.AccentDark = MulRgba(bright, 0.55f);
+            t.AccentGlass = AlphaRgba(bright, 0.18f);
+            return t;
+        }
+
+        private void SeedTheme(string name, ThemeCfg t)
+        {
+            if (_themes.ContainsKey(name)) return;
+            _themes[name] = t;
+            SaveThemeFile(name, t);
+        }
+
+        private void LoadBinds()
+        {
+            try
+            {
+                if (Interface.Oxide.DataFileSystem.ExistsDatafile(BindsFile))
+                    _binds = new Dictionary<string, string>(
+                        Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, string>>(BindsFile)
+                        ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+            }
+            catch { }
+        }
+
+        private void SaveBinds() => Interface.Oxide.DataFileSystem.WriteObject(BindsFile, _binds);
+
+        private static ThemeCfg CloneTheme(ThemeCfg t)
+            => JsonConvert.DeserializeObject<ThemeCfg>(JsonConvert.SerializeObject(t));
+
+        private static void CopyTheme(ThemeCfg src, ThemeCfg dst) => ApplyThemeFields(dst, JObject.FromObject(src));
+
+        // Массовое применение полей темы: ключи — токены, C#-имена и JsonProperty-подписи
+        private static void ApplyThemeFields(ThemeCfg t, JObject o)
+        {
+            if (t == null || o == null) return;
+            foreach (var kv in o.Properties())
+            {
+                var v = kv.Value?.ToString();
+                if (string.IsNullOrEmpty(v)) continue;
+                switch (kv.Name)
+                {
+                    case "Accent": case "accent": case "Акцент яркий": t.Accent = v; break;
+                    case "AccentDim": case "accent.dim": case "Акцент": t.AccentDim = v; break;
+                    case "AccentDark": case "accent.dark": case "Акцент тёмный": t.AccentDark = v; break;
+                    case "AccentGlass": case "accent.glass": case "Акцент стекло": t.AccentGlass = v; break;
+                    case "Bg": case "bg": case "Фон": t.Bg = v; break;
+                    case "Panel": case "panel": case "Панель": t.Panel = v; break;
+                    case "Row": case "row": case "Строка": t.Row = v; break;
+                    case "Hover": case "hover": case "Наведение": t.Hover = v; break;
+                    case "Text": case "text": case "Текст": t.Text = v; break;
+                    case "Muted": case "muted": case "Текст приглушённый": case "Приглушённый текст": t.Muted = v; break;
+                    case "White": case "white": case "Белый": t.White = v; break;
+                    case "Green": case "green": case "Зелёный": t.Green = v; break;
+                    case "Red": case "red": case "Красный": t.Red = v; break;
+                    case "Blue": case "blue": case "Синий": t.Blue = v; break;
+                    case "BarBg": case "barbg": case "Фон шкалы": t.BarBg = v; break;
+                    case "Font": case "font": case "Шрифт": t.Font = v; break;
+                    case "FontHand": case "font.hand": case "Шрифт рукописный": t.FontHand = v; break;
+                    case "Mat": case "mat": case "Материал панелей": t.Mat = v; break;
+                    case "MatBtn": case "mat.btn": case "Материал кнопок": t.MatBtn = v; break;
+                }
+            }
+        }
+
+        #endregion
+
         #region Админка темы (/octaui)
 
         private void Loaded()
         {
             permission.RegisterPermission(PermAdmin, this);
+            LoadThemes();
+            LoadBinds();
         }
 
         private bool CanEdit(BasePlayer p) => p != null && (p.IsAdmin || permission.UserHasPermission(p.UserIDString, PermAdmin));
@@ -1544,7 +1789,34 @@ namespace Oxide.Plugins
         private void CmdOctaUI(BasePlayer player)
         {
             if (!CanEdit(player)) { SendReply(player, "[OctaUI] Нет прав (octaui.admin)"); return; }
+            LoadThemes(); // подхватить файлы тем, положенные вручную/через API
+            if (_editTheme == null) SetDraft(CloneTheme(_cfg.Theme), "default");
+            else _themes[DraftTheme] = _editTheme;
             DrawThemeEditor(player);
+        }
+
+        private const string DraftTheme = "__draft";
+
+        private void SetDraft(ThemeCfg t, string name)
+        {
+            _editTheme = t;
+            _editName = name;
+            _themes[DraftTheme] = t;
+        }
+
+        private void CycleDraft(int dir)
+        {
+            var names = ((JArray)API_ThemeList()).Select(x => (string)x).ToList();
+            if (names.Count == 0) return;
+            var i = names.IndexOf(_editName);
+            i = (i < 0 ? 0 : (i + dir + names.Count) % names.Count);
+            SetDraft(CloneTheme(_themes[names[i]]), names[i]);
+        }
+
+        private static string SanitizeName(string s)
+        {
+            var clean = new string((s ?? "").Where(ch => char.IsLetterOrDigit(ch) || ch == '_' || ch == '-' || ch == ' ').ToArray()).Trim();
+            return string.IsNullOrEmpty(clean) ? "theme" : clean;
         }
 
         private const string AdminUi = "OctaUI_Admin";
@@ -1564,7 +1836,7 @@ namespace Oxide.Plugins
 
         private string ThemeField(string key)
         {
-            var t = _cfg.Theme;
+            var t = _editTheme;
             switch (key)
             {
                 case "Accent": return t.Accent; case "AccentDim": return t.AccentDim;
@@ -1580,7 +1852,7 @@ namespace Oxide.Plugins
 
         private void SetThemeField(string key, string value)
         {
-            var t = _cfg.Theme;
+            var t = _editTheme;
             switch (key)
             {
                 case "Accent": t.Accent = value; break; case "AccentDim": t.AccentDim = value; break;
@@ -1598,37 +1870,40 @@ namespace Oxide.Plugins
 
         private void DrawThemeEditor(BasePlayer player)
         {
+            if (_editTheme == null) SetDraft(CloneTheme(_cfg.Theme), "default");
             CuiHelper.DestroyUi(player, AdminUi);
+            _themes[DraftTheme] = _editTheme; // черновик — источник темы для всех вызовов ниже
             var c = new CuiElementContainer();
             var fmt = CultureInfo.InvariantCulture;
+            var dr = DraftTheme;
 
             var names = (JObject)API_Root(c, new JObject
             {
-                ["name"] = AdminUi, ["rect"] = "0.20 0.06 0.80 0.94",
-                ["title"] = "◆ OCTAUI — РЕДАКТОР ТЕМЫ", ["subtitle"] = "Значения — «r g b a» (0..1) или #RRGGBBAA; шрифт/материал — путь",
+                ["theme"] = dr, ["name"] = AdminUi, ["rect"] = "0.20 0.06 0.80 0.94",
+                ["title"] = "◆ OCTAUI — РЕДАКТОР ТЕМ", ["subtitle"] = "«r g b a» (0..1) или #RRGGBBAA; изменения видны сразу в превью",
                 ["close"] = "octaui close"
             });
             var cnt = (string)names["content"];
 
             // правая колонка — живой превью-композит
-            API_Section(c, cnt, null, new JObject { ["rect"] = "0.70 0.94 0.99 0.985", ["text"] = "ПРЕВЬЮ" });
+            API_Section(c, cnt, null, new JObject { ["theme"] = dr, ["rect"] = "0.70 0.94 0.99 0.985", ["text"] = "ПРЕВЬЮ" });
             var card = (string)API_Card(c, cnt, "PRV_card", new JObject
             {
-                ["rect"] = "0.70 0.80 0.99 0.93", ["selected"] = true, ["strip"] = "accent"
+                ["theme"] = dr, ["rect"] = "0.70 0.80 0.99 0.93", ["selected"] = true, ["strip"] = "accent"
             });
             API_Text(c, card, null, new JObject
             {
-                ["rect"] = "0.08 0.55 0.95 0.95", ["text"] = "Карточка-превью", ["size"] = 12, ["align"] = "left"
+                ["theme"] = dr, ["rect"] = "0.08 0.55 0.95 0.95", ["text"] = "Карточка-превью", ["size"] = 12, ["align"] = "left"
             });
             API_Text(c, card, null, new JObject
             {
-                ["rect"] = "0.08 0.08 0.95 0.50", ["text"] = "текст приглушённый", ["size"] = 9,
+                ["theme"] = dr, ["rect"] = "0.08 0.08 0.95 0.50", ["text"] = "текст приглушённый", ["size"] = 9,
                 ["align"] = "left", ["color"] = "muted"
             });
-            API_Bar(c, cnt, null, new JObject { ["rect"] = "0.70 0.76 0.99 0.78", ["value"] = 0.62f });
+            API_Bar(c, cnt, null, new JObject { ["theme"] = dr, ["rect"] = "0.70 0.76 0.99 0.78", ["value"] = 0.62f });
             API_ActionBar(c, cnt, null, new JObject
             {
-                ["rect"] = "0.70 0.68 0.99 0.74",
+                ["theme"] = dr, ["rect"] = "0.70 0.68 0.99 0.74",
                 ["buttons"] = new JArray
                 {
                     new JObject { ["text"] = "ОК", ["cmd"] = "", ["color"] = "green" },
@@ -1637,8 +1912,58 @@ namespace Oxide.Plugins
                 }
             });
 
+            // браузер тем: ‹ имя ›, счётчик, имя для save-as, действия
+            API_Section(c, cnt, null, new JObject { ["theme"] = dr, ["rect"] = "0.70 0.645 0.99 0.685", ["text"] = "ТЕМЫ" });
+            var themeNames = ((JArray)API_ThemeList()).Select(x => (string)x).ToList();
+            var ti = themeNames.IndexOf(_editName);
+            API_Button(c, cnt, "TH_prev", new JObject
+            {
+                ["theme"] = dr, ["rect"] = "0.70 0.575 0.735 0.635", ["text"] = "◀", ["size"] = 14, ["cmd"] = "octaui prev"
+            });
+            API_Text(c, cnt, null, new JObject
+            {
+                ["theme"] = dr, ["rect"] = "0.74 0.575 0.915 0.635",
+                ["text"] = _editName + (ti >= 0 ? $"  ({ti + 1}/{themeNames.Count})" : "  (новая)"),
+                ["size"] = 12, ["align"] = "center", ["color"] = "accent"
+            });
+            API_Button(c, cnt, "TH_next", new JObject
+            {
+                ["theme"] = dr, ["rect"] = "0.92 0.575 0.955 0.635", ["text"] = "▶", ["size"] = 14, ["cmd"] = "octaui next"
+            });
+            API_Panel(c, cnt, "TH_name", new JObject { ["theme"] = dr, ["rect"] = "0.70 0.515 0.99 0.565", ["color"] = "bg" });
+            API_Input(c, "TH_name", null, new JObject
+            {
+                ["theme"] = dr, ["rect"] = "0.03 0 0.97 1", ["text"] = _editName, ["size"] = 10,
+                ["align"] = "left", ["cmd"] = "octaui name ", ["limit"] = 40
+            });
+            var boundTo = _binds.Where(kv => kv.Value == _editName).Select(kv => kv.Key).ToList();
+            if (boundTo.Count > 0)
+                API_Text(c, cnt, null, new JObject
+                {
+                    ["theme"] = dr, ["rect"] = "0.70 0.478 0.99 0.512",
+                    ["text"] = "привязано: " + string.Join(", ", boundTo), ["size"] = 8,
+                    ["align"] = "left", ["color"] = "muted"
+                });
+            API_ActionBar(c, cnt, null, new JObject
+            {
+                ["theme"] = dr, ["rect"] = "0.70 0.415 0.99 0.465",
+                ["buttons"] = new JArray
+                {
+                    new JObject { ["text"] = "СОХРАНИТЬ", ["cmd"] = "octaui save", ["color"] = "green" },
+                    new JObject { ["text"] = "В БАЗОВУЮ", ["cmd"] = "octaui base", ["color"] = "accent" },
+                    new JObject { ["text"] = "УДАЛИТЬ", ["cmd"] = "octaui delete", ["color"] = "red" },
+                    new JObject { ["text"] = "НОВАЯ", ["cmd"] = "octaui new", ["color"] = "hover" }
+                }
+            });
+            API_Text(c, cnt, null, new JObject
+            {
+                ["theme"] = dr, ["rect"] = "0.70 0.36 0.99 0.405",
+                ["text"] = "Плагин рисуется своей темой: OctaUI.Call(\"ThemeBind\",\"ИмяПлагина\",\"тема\")",
+                ["size"] = 8, ["align"] = "left", ["color"] = "muted"
+            });
+
             // левая колонка — токены в две колонки рядов
-            API_Section(c, cnt, null, new JObject { ["rect"] = "0.01 0.94 0.30 0.985", ["text"] = "ТОКЕНЫ ТЕМЫ" });
+            API_Section(c, cnt, null, new JObject { ["theme"] = dr, ["rect"] = "0.01 0.94 0.30 0.985", ["text"] = "ТОКЕНЫ ТЕМЫ" });
             var rows = TokenRows;
             var half = (rows.Length + 1) / 2;
             var rowH = 0.052f; var gap = 0.004f; var top = 0.93f;
@@ -1654,6 +1979,7 @@ namespace Oxide.Plugins
                 var rowName = $"TK_{key}";
                 API_Panel(c, cnt, rowName, new JObject
                 {
+                    ["theme"] = dr,
                     ["rect"] = string.Format(fmt, "{0:0.###} {1:0.###} {2:0.###} {3:0.###}", x0, y0, x0 + w, y1),
                     ["color"] = "row"
                 });
@@ -1661,12 +1987,12 @@ namespace Oxide.Plugins
                 {
                     API_Panel(c, rowName, rowName + "_sw", new JObject
                     {
-                        ["rect"] = "0.02 0.18 0.10 0.82", ["color"] = ThemeField(key)
+                        ["theme"] = dr, ["rect"] = "0.02 0.18 0.10 0.82", ["color"] = ThemeField(key)
                     });
                 }
                 API_Text(c, rowName, null, new JObject
                 {
-                    ["rect"] = "0.12 0.55 0.98 0.98", ["text"] = label, ["size"] = 9,
+                    ["theme"] = dr, ["rect"] = "0.12 0.55 0.98 0.98", ["text"] = label, ["size"] = 9,
                     ["align"] = "left", ["color"] = isColor ? "text" : "muted"
                 });
                 var v = rowName + "_v";
@@ -1676,26 +2002,24 @@ namespace Oxide.Plugins
                     Name = v,
                     Components =
                     {
-                        new CuiImageComponent { Color = _cfg.Theme.Bg },
+                        new CuiImageComponent { Color = _editTheme.Bg },
                         new CuiRectTransformComponent { AnchorMin = "0.12 0.08", AnchorMax = "0.98 0.50" }
                     }
                 });
                 API_Input(c, v, null, new JObject
                 {
-                    ["rect"] = "0.02 0 0.98 1", ["text"] = ThemeField(key), ["size"] = 9,
+                    ["theme"] = dr, ["rect"] = "0.02 0 0.98 1", ["text"] = ThemeField(key), ["size"] = 9,
                     ["align"] = "left", ["cmd"] = "octaui set " + key + " ", ["limit"] = 120, ["font"] = "font"
                 });
             }
 
-            // низ: сохранить / сбросить
+            // низ: сброс черновика / закрыть
             API_ActionBar(c, cnt, "TK_bar", new JObject
             {
-                ["rect"] = "0.01 0.0 0.69 0.055",
+                ["theme"] = dr, ["rect"] = "0.01 0.0 0.69 0.055",
                 ["buttons"] = new JArray
                 {
-                    new JObject { ["text"] = "СОХРАНИТЬ ТЕМУ", ["cmd"] = "octaui save", ["color"] = "green" },
-                    new JObject { ["text"] = "СБРОСИТЬ К ДЕФОЛТУ", ["cmd"] = "octaui reset", ["color"] = "red" },
-                    new JObject { ["text"] = "ПРИМЕНИТЬ", ["cmd"] = "octaui apply", ["color"] = "accent" },
+                    new JObject { ["text"] = "СБРОСИТЬ ЧЕРНОВИК", ["cmd"] = "octaui reset", ["color"] = "red" },
                     new JObject { ["text"] = "ЗАКРЫТЬ", ["cmd"] = "octaui close", ["color"] = "hover" }
                 }
             });
@@ -1710,6 +2034,7 @@ namespace Oxide.Plugins
             if (player == null || !CanEdit(player)) return;
             var args = arg.Args;
             if (args == null || args.Length == 0) return;
+            if (_editTheme == null) SetDraft(CloneTheme(_cfg.Theme), "default");
 
             switch (args[0].ToString().ToLowerInvariant())
             {
@@ -1724,19 +2049,59 @@ namespace Oxide.Plugins
                     SetThemeField(key, resolved);
                     DrawThemeEditor(player); // перерисовка с новым значением
                     return;
-                case "save":
-                    SaveConfig();
-                    API_Toast(player, AdminUi, "Тема сохранена в configs/OctaUI.json", "green");
-                    return;
-                case "apply":
+                case "save": // черновик → файл темы themes/<_editName>.json
+                    _themes[_editName] = CloneTheme(_editTheme);
+                    SaveThemeFile(_editName, _editTheme);
                     DrawThemeEditor(player);
-                    API_Toast(player, AdminUi, "Изменения применены к экрану (не забудь СОХРАНИТЬ)", "accent");
+                    API_Toast(player, AdminUi, $"Тема '{_editName}' → data/OctaUI/themes/", "green");
+                    return;
+                case "base": // черновик → базовая тема (глобально для всех плагинов)
+                    CopyTheme(_editTheme, _cfg.Theme);
+                    SaveConfig();
+                    DrawThemeEditor(player);
+                    API_Toast(player, AdminUi, "Базовая тема обновлена — все плагины без привязки", "accent");
                     return;
                 case "reset":
-                    _cfg.Theme = new ThemeCfg();
-                    SaveConfig();
+                    SetDraft(new ThemeCfg(), _editName);
                     DrawThemeEditor(player);
-                    API_Toast(player, AdminUi, "Тема сброшена к значениям по умолчанию", "red");
+                    API_Toast(player, AdminUi, "Черновик сброшен к эталону", "red");
+                    return;
+                case "new":
+                    SetDraft(new ThemeCfg(), SanitizeName(args.Length > 1
+                        ? string.Join(" ", args.Skip(1).Select(x => x.ToString())) : "новая"));
+                    DrawThemeEditor(player);
+                    API_Toast(player, AdminUi, "Новая тема — задай имя и СОХРАНИ", "accent");
+                    return;
+                case "name":
+                    if (args.Length < 2) return;
+                    _editName = SanitizeName(string.Join(" ", args.Skip(1).Select(x => x.ToString())));
+                    DrawThemeEditor(player);
+                    return;
+                case "next":
+                    CycleDraft(1);
+                    DrawThemeEditor(player);
+                    return;
+                case "prev":
+                    CycleDraft(-1);
+                    DrawThemeEditor(player);
+                    return;
+                case "load":
+                    if (args.Length < 2) return;
+                    ThemeCfg lt;
+                    if (_themes.TryGetValue(args[1].ToString(), out lt))
+                        SetDraft(CloneTheme(lt), args[1].ToString());
+                    DrawThemeEditor(player);
+                    return;
+                case "delete":
+                    if (_editName == "default")
+                    {
+                        API_Toast(player, AdminUi, "Тему 'default' удалить нельзя", "red");
+                        return;
+                    }
+                    API_ThemeDelete(_editName);
+                    SetDraft(CloneTheme(_cfg.Theme), "default");
+                    DrawThemeEditor(player);
+                    API_Toast(player, AdminUi, "Тема удалена", "red");
                     return;
             }
         }
