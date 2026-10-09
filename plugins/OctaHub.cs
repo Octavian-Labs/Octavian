@@ -1549,13 +1549,13 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, "oh_evd", UiCnt, "row", "0.015 0.90", "0.985 0.985", false, 0f, Mat);
                 CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text", status, 12,
                     "0.02 0", "0.85 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-                // крупный тайл события слева — квадратный якорь (контент ~2.3:1 по пикселям)
+                // крупный тайл события слева — квадратный якорь (контент ~1.42:1 по пикселям)
                 string weImg = c?.Image ?? "";
                 string tx = "0.03";
                 if (weImg.StartsWith("http"))
                 {
-                    CUIClass.CreateImage(ref ui, UiCnt, Img3(weImg), "0.03 0.30", "0.25 0.81", 0.15f);
-                    tx = "0.28";
+                    CUIClass.CreateImage(ref ui, UiCnt, Img3(weImg), "0.03 0.42", "0.31 0.82", 0.15f);
+                    tx = "0.34";
                 }
                 CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text",
                     c != null
@@ -1609,14 +1609,15 @@ namespace Oxide.Plugins
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
             // крупный портрет босса слева — image из GetBossStates это PNG-хендл ImageLibrary
+            // квадратный якорь: контент-зона ~1.42:1 по пикселям → 0.28w ≈ 0.40h
             string bossImg = live?["image"]?.ToString() ?? "";
             string tx2 = "0.03";
             if (!string.IsNullOrEmpty(bossImg))
             {
                 CUIClass.CreateImage(ref ui, UiCnt,
                     bossImg.StartsWith("http") ? Img3(bossImg) : bossImg,
-                    "0.03 0.30", "0.25 0.81", 0.15f);
-                tx2 = "0.28";
+                    "0.03 0.42", "0.31 0.82", 0.15f);
+                tx2 = "0.34";
             }
 
             CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text", string.Join("\n", lines), 13,
