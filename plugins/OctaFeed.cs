@@ -433,7 +433,10 @@ namespace Oxide.Plugins
                 Distance = FormatDistance(victim, initiator),
                 ModIcons = new List<int>(6),
             };
-            FillIcons(row, info, initiator);
+            // Иконка инициатора-объекта (турель/ловушка) — только когда у сущности
+            // есть маппинг на предмет. Убийца-игрок/животное -> иконка = само оружие из HitInfo.
+            var iconInitiator = initiator != null && !(initiator is BasePlayer) && ItemDefOf(initiator) != null ? initiator : null;
+            FillIcons(row, info, iconInitiator);
 
             string vName = NameOf(victim);
             string iName = NameOf(initiator);
@@ -731,18 +734,17 @@ namespace Oxide.Plugins
             CuiHelper.AddUi(player, container);
         }
 
-        // Шестерёнка настроек слева от первого ряда ленты
+        // Шестерёнка настроек — под правым нижним углом ленты, не мешает тексту
         private void DrawGear(BasePlayer player)
         {
             CuiHelper.DestroyUi(player, GearName);
             CuiHelper.DestroyUi(player, WidgetName);
             if (Cfg?.UIConfig == null || !Cfg.UIConfig.EnableUISettings || !Cfg.UIConfig.EnableUISettingsButton) return;
 
-            float ox = (Cfg.UIConfig.OffsetX) / RefW, oy = (Cfg.UIConfig.OffsetY) / RefH;
-            float w = RowWidth / RefW;
-            float gx2 = 1f - 0.0039f - ox - w - 0.004f; // левее ленты
+            FeedBounds(out float fx1, out float fy1, out float fx2, out float fy2);
+            float gx2 = fx2;
             float gx1 = gx2 - 20f / RefW;
-            float gy2 = 1f - 0.0069f - oy;
+            float gy2 = fy1 - 4f / RefH;
             float gy1 = gy2 - 20f / RefH;
 
             var container = new CuiElementContainer();
@@ -770,19 +772,16 @@ namespace Oxide.Plugins
                 DrawWidget(player);
         }
 
-        // Всплывающая панель настроек — левее шестерёнки, долями экрана
+        // Всплывающая панель настроек — под шестерёнкой, правым краем по ленте
         private void DrawWidget(BasePlayer player)
         {
             CuiHelper.DestroyUi(player, WidgetName);
 
-            float ox = (Cfg.UIConfig.OffsetX) / RefW, oy = (Cfg.UIConfig.OffsetY) / RefH;
-            float w = RowWidth / RefW;
-            float gx1 = 1f - 0.0039f - ox - w - 0.004f - 20f / RefW;
-            float gy2 = 1f - 0.0069f - oy;
-            float wx2 = gx1 - 0.004f;
+            FeedBounds(out float fx1, out float fy1, out float fx2, out float fy2);
+            float wx2 = fx2;
             float wx1 = wx2 - 175f / RefW;
-            float wy2 = gy2 + 4f / RefH;
-            float wy1 = wy2 - 44f / RefH;
+            float wy2 = fy1 - 4f / RefH - 20f / RefH - 4f / RefH;
+            float wy1 = wy2 - 46f / RefH;
 
             PlayersData.TryGetValue(player.userID, out var pd);
             bool hideName = pd?.HideMyName ?? false;
