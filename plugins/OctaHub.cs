@@ -72,6 +72,15 @@ namespace Oxide.Plugins
         private class UiState { public int Tab = 1; public int Page = 1; }
         private readonly Dictionary<ulong, UiState> _ui = new Dictionary<ulong, UiState>();
 
+        // Страховка от «неприкаянного» рендера: состояние создаётся по требованию
+        private UiState St(BasePlayer player)
+        {
+            UiState s;
+            if (!_ui.TryGetValue(player.userID, out s))
+                s = _ui[player.userID] = new UiState();
+            return s;
+        }
+
         private List<string> tabList = new List<string>() { "Tab1", "Tab2", "Tab3", "Tab4", "Tab5", "Tab6", "Tab7", "Tab8", "Tab9", "Tab10" };
 
         // «Показано один раз за вайп» — персистится в data/OctaHub/Seen.json
@@ -304,7 +313,7 @@ namespace Oxide.Plugins
 
             if (!_ui.ContainsKey(player.userID)) { UiOpen(player, tab, page); return; }
 
-            var st = _ui[player.userID];
+            var st = St(player);
             st.Tab = tab; st.Page = page;
             UiRefresh(player, UiHdr, UiNav, UiCnt, UiBot);
 
@@ -477,8 +486,8 @@ namespace Oxide.Plugins
         private void UiOpen(BasePlayer player, int tab, int page)
         {
             if (CUIClass.Ui == null) return;
-            _ui[player.userID] = new UiState { Tab = ClampTab(tab), Page = page };
             UiClose(player);
+            _ui[player.userID] = new UiState { Tab = ClampTab(tab), Page = page };
 
             var c = CUIClass.CreateOverlay(UiRoot, "bg", "0.17 0.08", "0.83 0.92", true, 0f,
                 "assets/content/ui/uibackgroundblur.mat");
@@ -489,7 +498,7 @@ namespace Oxide.Plugins
 
             UiRefresh(player, UiHdr, UiNav, UiCnt, UiBot);
 
-            var addon = TabAddon(_ui[player.userID].Tab);
+            var addon = TabAddon(St(player).Tab);
             if (!string.IsNullOrEmpty(addon) && addon != "null") OpenAddOn_API(player, addon);
         }
 
@@ -524,7 +533,7 @@ namespace Oxide.Plugins
 
         private void DrawHeader(ref CuiElementContainer ui, BasePlayer player)
         {
-            var st = _ui[player.userID];
+            var st = St(player);
             var tab = TabCfg(st.Tab);
 
             CUIClass.CreatePanel(ref ui, UiHdr, UiRoot, "panel", "0 0.918", "1 0.995", false, 0f, Mat);
@@ -555,7 +564,7 @@ namespace Oxide.Plugins
 
         private void DrawNav(ref CuiElementContainer ui, BasePlayer player)
         {
-            var st = _ui[player.userID];
+            var st = St(player);
             CUIClass.CreatePanel(ref ui, UiNav, UiRoot, "panel", "0.008 0.014", "0.178 0.908", false, 0f, Mat);
 
             const float pitch = 0.0965f, h = 0.086f, top = 0.985f;
@@ -599,7 +608,7 @@ namespace Oxide.Plugins
 
         private void DrawContent(ref CuiElementContainer ui, BasePlayer player)
         {
-            var st = _ui[player.userID];
+            var st = St(player);
             var tab = TabCfg(st.Tab);
             string addon = TabAddon(st.Tab);
 
@@ -642,11 +651,11 @@ namespace Oxide.Plugins
 
         private void DrawFooter(ref CuiElementContainer ui, BasePlayer player)
         {
-            var st = _ui[player.userID];
+            var st = St(player);
             CUIClass.CreatePanel(ref ui, UiBot, UiRoot, "panel", "0.186 0.014", "0.992 0.065", false, 0f, Mat);
 
             CUIClass.CreateText(ref ui, "oh_bot_hint", UiBot, "muted",
-                "<color=@accent>OCTAVIAN</color> · /octahub или ESC — закрыть", 10,
+                "<color=@accent>OCTAVIAN</color> · закрыть: ✕ или /octahub", 10,
                 "0.012 0", "0.5 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
             int max = MaxPage(st.Tab);
