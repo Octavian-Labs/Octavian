@@ -153,21 +153,23 @@ namespace Oxide.Plugins
             public Vector3 Pos;             // квадрат первой найденной
             public string Note;             // «респавн ожидается», «выключено в конфиге»
         }
+        // Иконки — официальные игровые иконки событий (300x300, из rustplusplus)
+        private const string EvtImg = "https://raw.githubusercontent.com/alexemanuelol/rustplusplus/master/src/resources/images/";
         private readonly List<WorldEvtCat> _worldCats = new List<WorldEvtCat>
         {
-            new WorldEvtCat { Key = "bradley", Title = "БРЭДЛИ", Image = "https://i.imgur.com/j5cMDpt.png",
+            new WorldEvtCat { Key = "bradley", Title = "БРЭДЛИ", Image = EvtImg + "events/bradley_apc_logo.png",
                 Desc = "Боевой БТР патрулирует монумент: броня, пулемёт, ракеты. Добыча — элитные ящики и запчасти. Взрывчатка решает." },
-            new WorldEvtCat { Key = "heli", Title = "ПАТРУЛЬНЫЙ ВЕРТОЛЁТ", Image = "https://i.imgur.com/HtAifod.png",
+            new WorldEvtCat { Key = "heli", Title = "ПАТРУЛЬНЫЙ ВЕРТОЛЁТ", Image = EvtImg + "events/patrol_helicopter_logo.png",
                 Desc = "Летающий кошмар с ракетами и пулемётом. Нападает на вооружённых. Сбитый — оставляет ящики с топ-лутом." },
-            new WorldEvtCat { Key = "chinook", Title = "ЧИНУК", Image = "https://i.imgur.com/jRIF5y8.png",
+            new WorldEvtCat { Key = "chinook", Title = "ЧИНУК", Image = EvtImg + "events/chinook_47_logo.png",
                 Desc = "Транспортник сбрасывает защищённый ящик на монумент. Догони точку высадки и дождись расшифровки." },
-            new WorldEvtCat { Key = "cargo", Title = "ГРУЗОВОЕ СУДНО", Image = "https://i.imgur.com/xU8IUWO.png",
+            new WorldEvtCat { Key = "cargo", Title = "ГРУЗОВОЕ СУДНО", Image = EvtImg + "events/cargoship_logo.png",
                 Desc = "Корабль с охраной-учёными и тремя защищёнными ящиками. Подплывай на лодке — лестница с кормы." },
-            new WorldEvtCat { Key = "crate", Title = "ЗАЩИЩЁННЫЙ ЯЩИК", Image = "",
+            new WorldEvtCat { Key = "crate", Title = "ЗАЩИЩЁННЫЙ ЯЩИК", Image = EvtImg + "events/locked_crate_logo.png",
                 Desc = "Ящик с таймером расшифровки — процесс шумный и долгий. Лут уровня заправки или нефтевышки." },
-            new WorldEvtCat { Key = "airdrop", Title = "ГРУЗОВОЙ САМОЛЁТ", Image = "https://i.imgur.com/CL41EJS.png",
+            new WorldEvtCat { Key = "airdrop", Title = "ГРУЗОВОЙ САМОЛЁТ", Image = EvtImg + "events/airdrop_logo.png",
                 Desc = "Самолёт сбрасывает контейнер — по сигнальной гранате или по расписанию. Жди точку падения." },
-            new WorldEvtCat { Key = "ghost", Title = "ПРИЗРАЧНЫЙ КОРАБЛЬ", Image = "",
+            new WorldEvtCat { Key = "ghost", Title = "ПРИЗРАЧНЫЙ КОРАБЛЬ", Image = EvtImg + "events/cargoship_logo.png",
                 Desc = "Судно-призрак из глубоководья — появляется в открытом море, на борту лут и опасность." },
             new WorldEvtCat { Key = "city", Title = "ПЛАВУЧИЙ ГОРОД", Image = "",
                 Desc = "Плавучий город в открытом море: торговля, терминалы, мини-игры. Туда — только на лодке." },
@@ -390,6 +392,10 @@ namespace Oxide.Plugins
                 if (url != null && (url.StartsWith("http") || url.StartsWith("www")))
                     ImageLibrary.Call("AddImage", url, url);
             }
+            // иконки категорий событий — игровые маркеры из rustplusplus
+            foreach (var c in _worldCats)
+                if (c.Image.StartsWith("http"))
+                    ImageLibrary.Call("AddImage", c.Image, c.Image);
         }
 
         private string Img2(int tabNumber)
@@ -1361,8 +1367,9 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, card, UiCnt, "bg", a[0], a[1], false, 0f, Mat);
                 CUIClass.CreatePanel(ref ui, card + "_g", card, active ? "accent" : "accent.dark",
                     "0 0.97", "1 1", false, 0f, Mat);
+                // квадратный якорь: карточка ≈ 1.2:1 по пикселям — 30% ширины ≈ 36% высоты
                 if (img.StartsWith("http"))
-                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.04 0.30", "0.34 0.94", 0.15f);
+                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.05 0.32", "0.35 0.68", 0.15f);
 
                 CUIClass.CreateText(ref ui, card + "_n", card, "text", $"<b>{name}</b>", 14,
                     "0.38 0.74", "0.97 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
@@ -1467,7 +1474,7 @@ namespace Oxide.Plugins
 
                 string img = o["image"]?.ToString() ?? "";
                 if (img.StartsWith("http"))
-                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.04 0.30", "0.34 0.94", 0.15f);
+                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.05 0.32", "0.35 0.68", 0.15f);
 
                 string status;
                 if (!enabled)
