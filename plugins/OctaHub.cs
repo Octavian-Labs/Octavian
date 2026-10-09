@@ -69,7 +69,7 @@ namespace Oxide.Plugins
         private const string UiBot  = "oh_bot";
         private const string Mat    = "assets/icons/iconmaterial.mat";
 
-        private class UiState { public int Tab = 1; public int Page = 1; }
+        private class UiState { public int Tab = 1; public int Page = 1; public int KitPage = 0; }
         private readonly Dictionary<ulong, UiState> _ui = new Dictionary<ulong, UiState>();
 
         // Страховка от «неприкаянного» рендера: состояние создаётся по требованию
@@ -658,10 +658,18 @@ namespace Oxide.Plugins
                 "<color=@accent>OCTAVIAN</color> · закрыть: ✕ или /octahub", 10,
                 "0.012 0", "0.5 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
-            int max = MaxPage(st.Tab);
+            // счётчик страниц: у вкладки наборов — страницы китов, у остальных — PageData
+            int cur, max;
+            if (TabAddon(st.Tab) == "OctaKits")
+            {
+                cur = st.KitPage + 1;
+                max = (int)Math.Ceiling(KitsTab_List(player).Count / 9.0);
+            }
+            else { cur = st.Page; max = MaxPage(st.Tab); }
+
             if (max > 1)
                 CUIClass.CreateText(ref ui, "oh_bot_pg", UiBot, "muted",
-                    $"стр. <color=@accent>{st.Page}</color>/{max}", 11,
+                    $"стр. <color=@accent>{cur}</color>/{max}", 11,
                     "0.5 0", "0.988 1", TextAnchor.MiddleRight, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
         }
 
@@ -858,21 +866,25 @@ namespace Oxide.Plugins
                     $"octahub_kit_claim {kitname.Replace(" ", "%")} {page} 0", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
 
-            // пагинация — узкая полоса внизу панели, не перекрывает карточки
+            // пагинация — правый нижний угол, эталон с текстовых вкладок;
+            // счётчик страниц живёт в футере (единый стиль панели)
             int totalPages = (int)Math.Ceiling(kits.Count / 9.0);
             if (totalPages > 1)
             {
                 if (page > 0)
-                    CUIClass.CreateButton(ref ui, "owkit_prev", "oh_cnt", KGlassRow, "<color=@accent>‹</color>", 13, "0.40 0.004", "0.46 0.048",
+                    CUIClass.CreateButton(ref ui, "owkit_prev", "oh_cnt", KGlassRow, "<color=@accent>‹</color>", 14, "0.885 0.006", "0.93 0.054",
                         $"octahub_kit_page {page - 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
-                CUIClass.CreateText(ref ui, "owkit_pg", "oh_cnt", "muted", $"стр. {page + 1}/{totalPages}", 10, "0.46 0.004", "0.54 0.048", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 if (page + 1 < totalPages)
-                    CUIClass.CreateButton(ref ui, "owkit_next", "oh_cnt", KGlassRow, "<color=@accent>›</color>", 13, "0.54 0.004", "0.60 0.048",
+                    CUIClass.CreateButton(ref ui, "owkit_next", "oh_cnt", KGlassRow, "<color=@accent>›</color>", 14, "0.935 0.006", "0.985 0.054",
                         $"octahub_kit_page {page + 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
 
             KitsTab_Destroy(player);
             CuiHelper.AddUi(player, ui);
+
+            // футер показывает номер страницы наборов — обновляем заодно
+            UiState ks;
+            if (_ui.TryGetValue(player.userID, out ks)) { ks.KitPage = page; UiRefresh(player, UiBot); }
         }
 
         // Ячейки предметов секции детального просмотра
