@@ -677,7 +677,20 @@ namespace Oxide.Plugins
                     }
                 });
 
-                // текст события: прижат вправо, вплотную к иконкам
+                // Раскладка строки в вирт.пикселях сетки 1280x720 внутри ширины w:
+                // [текст ....][иконки 18px, шаг 20px][дистанция 55px]
+                // Иконки квадратные и вплотную за текстом — как в оригинале.
+                float w = RowWidth;
+                var icons = new List<int>(6);
+                if (row.WeaponIcon != 0) icons.Add(row.WeaponIcon);
+                if (row.ModIcons != null)
+                    foreach (var m in row.ModIcons)
+                        if (m != 0 && icons.Count < 6) icons.Add(m);
+
+                float iconStart = w - 57f - icons.Count * 20f; // полоса иконок прижата к колонке дистанции
+                float msgEnd = (iconStart - 6f) / w;
+
+                // текст события: прижат вправо, вплотную к первой иконке
                 var msg = new CuiElement
                 {
                     Name = rowName + "K",
@@ -685,37 +698,32 @@ namespace Oxide.Plugins
                     Components = {
                         new CuiTextComponent { Text = row.Message, Color = HexToRGBA(Cfg.UIConfig.TextProperty.Color),
                             Align = TextAnchor.MiddleRight, FontSize = Cfg.UIConfig.TextProperty.Size, Font = "robotocondensed-bold.ttf" },
-                        new CuiRectTransformComponent { AnchorMin = "0.02 0", AnchorMax = "0.665 1" },
+                        new CuiRectTransformComponent { AnchorMin = "0.012 0", AnchorMax = $"{Fx(msgEnd)} 1" },
                     }
                 };
                 if (Cfg.UIConfig.Outline)
                     msg.Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
                 container.Add(msg);
 
-                // иконка оружия + до 5 модов — равномерные слоты правее текста
-                var icons = new List<int> { row.WeaponIcon };
-                if (row.ModIcons != null) icons.AddRange(row.ModIcons);
-                int slot = 0;
-                foreach (var icon in icons)
+                for (int slot = 0; slot < icons.Count; slot++)
                 {
-                    if (icon == 0 || slot >= 6) { slot++; continue; }
-                    float ix1 = 0.675f + slot * 0.0367f;
+                    float ix1 = (iconStart + slot * 20f) / w;
                     var el = new CuiElement
                     {
                         Name = $"{rowName}I{slot}",
                         Parent = rowName,
                         Components = {
-                            new CuiImageComponent { ItemId = icon, Color = "1 1 1 1" },
-                            new CuiRectTransformComponent { AnchorMin = $"{Fx(ix1)} 0.08", AnchorMax = $"{Fx(ix1 + 0.031f)} 0.92" },
+                            new CuiImageComponent { ItemId = icons[slot], Color = "1 1 1 1" },
+                            // квадрат 18x18 по центру строки 25px высотой
+                            new CuiRectTransformComponent { AnchorMin = $"{Fx(ix1)} 0.14", AnchorMax = $"{Fx((iconStart + slot * 20f + 18f) / w)} 0.86" },
                         }
                     };
                     if (Cfg.UIConfig.ImageOutline)
                         el.Components.Add(new CuiOutlineComponent { Color = "0 0 0 1", Distance = "-0.5 0.5" });
                     container.Add(el);
-                    slot++;
                 }
 
-                // дистанция — крайняя правая колонка
+                // дистанция — крайняя правая колонка 55px
                 var dist = new CuiElement
                 {
                     Name = rowName + "DT",
@@ -723,7 +731,7 @@ namespace Oxide.Plugins
                     Components = {
                         new CuiTextComponent { Text = row.Distance, Color = HexToRGBA(Cfg.UIConfig.DistanceProperty.Color),
                             Align = TextAnchor.MiddleCenter, FontSize = Cfg.UIConfig.DistanceProperty.Size, Font = "robotocondensed-bold.ttf" },
-                        new CuiRectTransformComponent { AnchorMin = "0.90 0", AnchorMax = "1 1" },
+                        new CuiRectTransformComponent { AnchorMin = $"{Fx((w - 55f) / w)} 0", AnchorMax = "1 1" },
                     }
                 };
                 if (Cfg.UIConfig.Outline)
