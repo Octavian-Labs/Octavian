@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Libraries;
 using Oxide.Core.Plugins;
@@ -1289,6 +1290,51 @@ namespace Oxide.Plugins
 
         [HookMethod("IsBoss")]
         public bool IsBoss(BaseCombatEntity ent) => ent != null && StateOf(ent) != null;
+
+        // Снимок всех видов боссов для внешних панелей (OctaHub «События»).
+        // Возвращает JArray объектов: key, name, image, accent, enabled, alive,
+        // nextSpawnUnix, grid (только если маркер публичный — не палим скрытого босса),
+        // hp/hpMax/phase (только живого). Отключённые виды тоже отдаём — Hub
+        // покажет «выключен», а не пропустит карточку.
+        [HookMethod("GetBossStates")]
+        public JArray GetBossStates()
+        {
+            var arr = new JArray();
+            if (_cfg?.Bosses == null) return arr;
+            long nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            foreach (var spec in _cfg.Bosses)
+            {
+                if (spec == null || string.IsNullOrEmpty(spec.Key)) continue;
+                BossState st = null;
+                _bosses.TryGetValue(spec.Key, out st);
+                bool alive = st != null && st.Alive;
+                var o = new JObject
+                {
+                    ["key"] = spec.Key,
+                    ["name"] = spec.DisplayName,
+                    ["enabled"] = spec.Enabled,
+                    ["alive"] = alive,
+                    ["nextSpawnUnix"] = !alive && st != null && st.NextSpawnAt.Year > 2000
+                        ? (long)new DateTimeOffset(st.NextSpawnAt, TimeSpan.Zero).ToUnixTimeSeconds()
+                        : 0L,
+                    ["warnMinutes"] = (int)spec.Spawn.WarnBeforeMinutes,
+                    ["image"] = BossImagePng(spec) ?? "",
+                    ["accent"] = AccentOf(spec),
+                };
+                if (alive)
+                {
+                    o["hp"] = (int)st.Entity.Health();
+                    o["hpMax"] = (int)st.Entity.MaxHealth();
+                    o["phase"] = st.Phase;
+                    o["spawnedUnix"] = (long)new DateTimeOffset(st.SpawnedAt, TimeSpan.Zero).ToUnixTimeSeconds();
+                    // локация только при публичном маркере — скрытый босс не светится
+                    if (spec.Spawn.ShowMarker)
+                        o["grid"] = GridOf(st.Entity.transform.position);
+                }
+                arr.Add(o);
+            }
+            return arr;
+        }
 
         // скорость по фазе: ApplySpeed умножает ТЕКУЩИЕ значения агента —
         // поэтому делим на накопленный множитель, а не передаём абсолют

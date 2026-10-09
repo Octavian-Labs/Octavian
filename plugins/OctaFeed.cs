@@ -1,6 +1,7 @@
 using System.Linq;
 using Oxide.Game.Rust.Cui;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Plugins;
 using Rust;
@@ -1055,6 +1056,38 @@ namespace Oxide.Plugins
             pd.LastConnectTime = nowMs; // активность — чтобы запись не вычищалась автоочисткой
             DrawFeed(player);
             return pd.HideMessages;
+        }
+
+        // ── API для других плагинов (OctaHub «Настройки») ────────────────────
+
+        [HookMethod("API_GetSettings")]
+        public JObject API_GetSettings(ulong userId)
+        {
+            PlayersData.TryGetValue(userId, out var pd);
+            return new JObject
+            {
+                ["hideMessages"] = pd?.HideMessages ?? false,
+                ["hideMyName"] = pd?.HideMyName ?? false,
+            };
+        }
+
+        // Установка флага без кулдауна — вызывает доверенный UI-провайдер.
+        // Возвращает новое значение флага.
+        [HookMethod("API_SetSetting")]
+        public bool API_SetSetting(ulong userId, string key, bool value)
+        {
+            if (!PlayersData.TryGetValue(userId, out var pd))
+                pd = PlayersData[userId] = new PlayerData();
+            switch (key)
+            {
+                case "hideMessages": pd.HideMessages = value; break;
+                case "hideMyName": pd.HideMyName = value; break;
+                default: return false;
+            }
+            pd.LastConnectTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var player = BasePlayer.FindByID(userId);
+            if (player != null) DrawFeed(player);
+            return value;
         }
 
         // Совместимость со старым API: внешние плагины могут класть строки в ленту
