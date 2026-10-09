@@ -1476,8 +1476,11 @@ namespace Oxide.Plugins
                     "0 0.97", "1 1", false, 0f, Mat);
 
                 string img = o["image"]?.ToString() ?? "";
-                if (img.StartsWith("http"))
-                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.05 0.32", "0.35 0.68", 0.15f);
+                // GetBossStates отдаёт уже PNG-хендл ImageLibrary (не URL) — передаём как есть;
+                // http-вариант (если провайдер отдаёт ссылку) прогоняем через Img3
+                if (!string.IsNullOrEmpty(img))
+                    CUIClass.CreateImage(ref ui, card, img.StartsWith("http") ? Img3(img) : img,
+                        "0.05 0.32", "0.35 0.68", 0.15f);
 
                 string status;
                 if (!enabled)
