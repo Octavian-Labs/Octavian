@@ -84,6 +84,10 @@ namespace Oxide.Plugins
         // Количество вкладок — единая константа для рейла, пермишенов и клампов
         private const int TabCount = 11;
 
+        // Порядок вкладок в рейле по полезности: позиция -> номер вкладки.
+        // Нумерация вкладок (контент, аддоны, PageData, пермишены) не меняется.
+        private static readonly int[] NavOrder = { 1, 11, 3, 10, 5, 7, 9, 4, 8, 6, 2 };
+
         private List<string> tabList = new List<string>() { "Tab1", "Tab2", "Tab3", "Tab4", "Tab5", "Tab6", "Tab7", "Tab8", "Tab9", "Tab10", "Tab11" };
 
         // «Показано один раз за вайп» — персистится в data/OctaHub/Seen.json
@@ -576,12 +580,13 @@ namespace Oxide.Plugins
             // Шаг и высота кнопок подгоняются под число вкладок — рейл всегда заполнен равномерно
             float pitch = 0.965f / TabCount, h = pitch * 0.89f;
             const float top = 0.985f;
-            for (int i = 1; i <= TabCount; i++)
+            for (int pos = 1; pos <= TabCount; pos++)
             {
+                int i = NavOrder[pos - 1]; // позиция в рейле -> реальная вкладка
                 var t = TabCfg(i);
                 if (t == null || !t.btnEnabled) continue;
 
-                float y1 = top - i * pitch, y2 = y1 + h;
+                float y1 = top - pos * pitch, y2 = y1 + h;
                 string aMin = $"0.03 {y1.ToString("0.####", CultureInfo.InvariantCulture)}";
                 string aMax = $"0.97 {y2.ToString("0.####", CultureInfo.InvariantCulture)}";
 
@@ -685,11 +690,11 @@ namespace Oxide.Plugins
 
             // пагинация страниц — нижний правый угол контента, доли панели CNT
             if (st.Page > 1)
-                CUIClass.CreateButton(ref ui, "oh_cnt_prev", UiCnt, "row", "<color=@accent>‹</color>", 14,
+                CUIClass.CreateButton(ref ui, "oh_cnt_prev", UiCnt, "accent.glass", "<color=@accent>‹</color>", 16,
                     "0.885 0.015", "0.93 0.08", $"octahub_open {st.Tab} {st.Page - 1}", "", "white", 0f,
                     TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             if (CheckPage(st.Tab, st.Page + 1))
-                CUIClass.CreateButton(ref ui, "oh_cnt_next", UiCnt, "row", "<color=@accent>›</color>", 14,
+                CUIClass.CreateButton(ref ui, "oh_cnt_next", UiCnt, "accent.glass", "<color=@accent>›</color>", 16,
                     "0.935 0.015", "0.985 0.08", $"octahub_open {st.Tab} {st.Page + 1}", "", "white", 0f,
                     TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
         }
@@ -917,10 +922,10 @@ namespace Oxide.Plugins
             if (totalPages > 1)
             {
                 if (page > 0)
-                    CUIClass.CreateButton(ref ui, "owkit_prev", "oh_cnt", KGlassRow, "<color=@accent>‹</color>", 14, "0.885 0.006", "0.93 0.054",
+                    CUIClass.CreateButton(ref ui, "owkit_prev", "oh_cnt", "accent.glass", "<color=@accent>‹</color>", 16, "0.885 0.006", "0.93 0.054",
                         $"octahub_kit_page {page - 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
                 if (page + 1 < totalPages)
-                    CUIClass.CreateButton(ref ui, "owkit_next", "oh_cnt", KGlassRow, "<color=@accent>›</color>", 14, "0.935 0.006", "0.985 0.054",
+                    CUIClass.CreateButton(ref ui, "owkit_next", "oh_cnt", "accent.glass", "<color=@accent>›</color>", 16, "0.935 0.006", "0.985 0.054",
                         $"octahub_kit_page {page + 1}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
 
