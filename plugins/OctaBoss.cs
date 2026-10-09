@@ -2887,10 +2887,14 @@ namespace Oxide.Plugins
                     DrawPresetBar(c, cnt, player, st);
                     yL -= 0.085f; yR -= 0.085f;
                     sec("ОСНОВНОЕ", 0); sec("ПАРАМЕТРЫ", 1);
+                    txt(tf("name"), 0);
                     tgl(bf("enabled"), 0);
                     num(nf("health"), 0);
                     num(nf("dmg"), 0);
                     num(nf("speed"), 0);
+                    sec("ОФОРМЛЕНИЕ", 0);
+                    txt(tf("img"), 0);
+                    txt(tf("accent"), 0);
                     num(nf("scale"), 1);
                     num(nf("escn"), 1);
                     num(nf("interval"), 1);
@@ -3838,7 +3842,20 @@ namespace Oxide.Plugins
                         var newLive = CloneSpec(st.Draft);
                         _cfg.Bosses[idx] = newLive;
                         if (_bosses.TryGetValue(st.BossKey, out var bst))
+                        {
                             bst.Live = newLive;
+                            // имя — косметика: переименовываем живого босса сразу,
+                            // боевые статы остаются со слепка спавна
+                            if (bst.Entity != null && !bst.Entity.IsDestroyed &&
+                                bst.Spec != null && bst.Spec.DisplayName != newLive.DisplayName)
+                            {
+                                bst.Spec.DisplayName = newLive.DisplayName;
+                                _bossNames[bst.Entity] = newLive.DisplayName;
+                                try { if (bst.Livestock != null) bst.Livestock.AnimalName = newLive.DisplayName; } catch { }
+                                foreach (var e in bst.Escorts)
+                                    if (e != null) _bossNames[e] = $"Свита ({newLive.DisplayName})";
+                            }
+                        }
                     }
                     st.Dirty = false;
                     SyncRuntime();
