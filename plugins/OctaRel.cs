@@ -57,6 +57,9 @@ namespace Oxide.Plugins
 
         private Dictionary<ulong, RelData> _data = new Dictionary<ulong, RelData>();
         private readonly Dictionary<string, long> _proxWarn = new Dictionary<string, long>();
+        // кулдаун «внесён во враги» на пару — защита от спама перевносами
+        private readonly Dictionary<string, long> _enemyNotice = new Dictionary<string, long>();
+        private const long EnemyNoticeCooldownSec = 600;
         private Timer _radar;
 
         private RelData Rel(ulong uid)
@@ -202,7 +205,27 @@ namespace Oxide.Plugins
             other.Remove(target);
             list.Add(target);
             SaveData();
+            if (type == "enemy") NotifyDeclaredEnemy(uid, target);
             return null;
+        }
+
+        // цель узнаёт, что её объявили врагом — с предложением ответить тем же.
+        // Уважает /relnotify цели и кулдаун на пару (защита от спама перевносами).
+        private void NotifyDeclaredEnemy(ulong author, ulong target)
+        {
+            var tp = BasePlayer.FindByID(target);
+            if (tp == null || tp.IsSleeping()) return;
+            RelData td;
+            if (_data.TryGetValue(target, out td) && !td.Notify) return;
+
+            string pk = author + ":" + target;
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), last;
+            if (_enemyNotice.TryGetValue(pk, out last) && now - last < EnemyNoticeCooldownSec) return;
+            _enemyNotice[pk] = now;
+
+            string an = NameOf(author);
+            tp.ChatMessage($"<color=#cd412b>◆ ОБЪЯВЛЕН ВРАГОМ:</color> <color=#E8B84B>{an}</color> внёс тебя в список врагов.");
+            tp.ChatMessage($"Ответь тем же: <color=#E8B84B>/enemy add {an}</color>");
         }
 
         [HookMethod("RemoveRelation")]
