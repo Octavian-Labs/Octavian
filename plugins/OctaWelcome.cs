@@ -14,7 +14,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaWelcome", "Octavian", "2.1.0")]
+    [Info("OctaWelcome", "Octavian", "2.2.0")]
     [Description("Приветственная панель Octavian на фреймворке OctaUI: 10 вкладок, 8 UX-пресетов через layout-слоты, редактор позиций с HUD, страницы боссов из OctaBoss")]
 
     public class OctaWelcome : RustPlugin
@@ -1094,15 +1094,15 @@ namespace Oxide.Plugins
             //6
             CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_6", "l_lp_container", Hl_Choice(6), "0.66 0.34", "1 0.66", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             LayoutPreviewWire(ref createLayoutMenu, "l_layout_panel_6", 6);
-            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_6", "0 0 0 0", "\n<b><size=17>COMPACT #6</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 6", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_6", "0 0 0 0", "\n<b><size=17>COMPACT #6</size></b>\n<size=11><color=#83b8c7>окно-карточка: шапка + рейл вкладок</color></size>\n", 9, "0 0", "1 1", $"octa_changelayout 6", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //7
             CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_7", "l_lp_container", Hl_Choice(7), "0 0.01", "0.32 0.33", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             LayoutPreviewWire(ref createLayoutMenu, "l_layout_panel_7", 7);
-            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_7", "0 0 0 0", "\n<b><size=17>BOTTOMBAR #7</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 7", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_7", "0 0 0 0", "\n<b><size=17>BOTTOMBAR #7</size></b>\n<size=11><color=#83b8c7>док над хотбаром + всплывающий лист</color></size>\n", 9, "0 0", "1 1", $"octa_changelayout 7", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //8
             CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_8", "l_lp_container", Hl_Choice(8), "0.33 0.01", "0.65 0.33", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             LayoutPreviewWire(ref createLayoutMenu, "l_layout_panel_8", 8);
-            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_8", "0 0 0 0", "\n<b><size=17>SIDEBAR #8</size></b> \n\n", 9, "0 0", "1 1", $"octa_changelayout 8", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
+            CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_8", "0 0 0 0", "\n<b><size=17>SIDEBAR #8</size></b>\n<size=11><color=#83b8c7>выдвижка у края, навигация 2×5</color></size>\n", 9, "0 0", "1 1", $"octa_changelayout 8", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
             //9
             CUIClass.CreatePanel(ref createLayoutMenu, "l_layout_panel_9", "l_lp_container", Hl_Choice(9), "0.66 0.01", "1 0.33", false, 0f, "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateImage(ref createLayoutMenu, "l_layout_panel_9", Img3("https://rustplugins.net/products/welcomepanel/empty_template.png"), "0.03 0.3", "0.97 0.95", cuiData["logoPanel"].fade);
@@ -1753,100 +1753,14 @@ namespace Oxide.Plugins
             }
         }
 
-        // Патч конфига под выбранный пресет — заголовки кнопок/титула из старого SetPresetValues
+        // Патч конфига под выбранный пресет — ТОЛЬКО UX-выравнивание кнопок.
+        // Заголовки вкладок и титул не трогаем: аддоны/страницы привязаны к номерам вкладок,
+        // а перезапись заголовков под чужую семантику давала «китс на вкладке вайпов».
         private void PresetConfigPatch(int presetNumber)
         {
-            if (presetNumber == 1)
-            {
-                config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
-                config.tab1Settings.btnTitle = " ГЛАВНАЯ";
-                config.tab2Settings.btnTitle = " ПРАВИЛА";
-                config.tab3Settings.btnTitle = "   НАБОРЫ";
-                config.tab4Settings.btnTitle = "   ВАЙПЫ";
-                config.tab5Settings.btnTitle = "  VIP";
-                config.tab6Settings.btnTitle = "  ДИСКОРД";
-                config.tab7Settings.btnTitle = " МАГАЗИН";
-                config.tab8Settings.btnTitle = " АДМИНЫ";
-                config.tab9Settings.btnTitle = " НОВОСТИ";
-                config.tab10Settings.btnTitle = " БОССЫ";
-                config.titleSettings.titleText = "<size=55><color=#E8B84B>OCTAVIAN</color></size>";
-            }
-            if (presetNumber == 2)
-            {
-                config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
-                config.tab1Settings.btnTitle = "<size=22>HOME</size>";
-                config.tab2Settings.btnTitle = "<size=22>RULES</size>";
-                config.tab3Settings.btnTitle = "<size=22>WIPE CYCLE</size>";
-                config.tab4Settings.btnTitle = "<size=22>SERVER INFO</size>";
-                config.tab5Settings.btnTitle = "<size=22>DISCORD</size>";
-                config.tab6Settings.btnTitle = "<size=22>STEAM GROUP</size>";
-                config.tab7Settings.btnTitle = "<size=22>ADMIN</size>";
-                config.tab8Settings.btnTitle = "TEMPLATE #2 supports only 6 buttons by default";
-                config.tab9Settings.btnTitle = "TEMPLATE #2 supports only 6 buttons by default";
-                config.tab10Settings.btnTitle = "TEMPLATE #2 supports only 6 buttons by default";
-                config.titleSettings.titleText = "<size=15><color=#E8B84B>OCTAVIAN</color></size>";
-            }
-            if (presetNumber == 3)
-            {
-                config.buttonSettings.mainAlign = TextAnchor.MiddleLeft;
-                config.tab1Settings.btnTitle = "          Home";
-                config.tab2Settings.btnTitle = "          Rules";
-                config.tab3Settings.btnTitle = "          Wipe cycle";
-                config.tab4Settings.btnTitle = "          Steam group";
-                config.tab5Settings.btnTitle = "          Discord";
-                config.tab6Settings.btnTitle = "          Bug report";
-                config.tab7Settings.btnTitle = "          Admin";
-                config.tab8Settings.btnTitle = "          Shop";
-                config.tab9Settings.btnTitle = "          Vip";
-                config.tab10Settings.btnTitle = "          Updates";
-                config.titleSettings.titleText = "<size=13>OCTAVIAN | x5 | ЕЖЕНЕДЕЛЬНЫЕ ВАЙПЫ | АКТИВНЫЕ АДМИНЫ | НАБОРЫ</size>";
-            }
-            if (presetNumber == 4)
-            {
-                config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
-                config.tab1Settings.btnTitle = "Home";
-                config.tab2Settings.btnTitle = "Rules";
-                config.tab3Settings.btnTitle = "Wipe cycle";
-                config.tab4Settings.btnTitle = "Steam group";
-                config.tab5Settings.btnTitle = "Discord";
-                config.tab6Settings.btnTitle = "TEMPLATE #4 supports only 5 buttons by default";
-                config.tab7Settings.btnTitle = "TEMPLATE #4 supports only 5 buttons by default";
-                config.tab8Settings.btnTitle = "TEMPLATE #4 supports only 5 buttons by default";
-                config.tab9Settings.btnTitle = "TEMPLATE #4 supports only 5 buttons by default";
-                config.tab10Settings.btnTitle = "TEMPLATE #4 supports only 5 buttons by default";
-                config.titleSettings.titleText = "Title panel is hidden, needs adjusting in cuiData.json";
-            }
-            if (presetNumber == 5)
-            {
-                config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
-                config.tab1Settings.btnTitle = "HOME";
-                config.tab2Settings.btnTitle = "RULES";
-                config.tab3Settings.btnTitle = "WIPE SCHEDULE";
-                config.tab4Settings.btnTitle = "PLUGINS";
-                config.tab5Settings.btnTitle = "VIP";
-                config.tab6Settings.btnTitle = "      VISIT GAME SHOP";
-                config.tab7Settings.btnTitle = "      JOIN OUR DISCORD";
-                config.tab8Settings.btnTitle = "TEMPLATE #5 supports only 7 buttons by default";
-                config.tab9Settings.btnTitle = "TEMPLATE #5 supports only 7 buttons by default";
-                config.tab10Settings.btnTitle = "TEMPLATE #5 supports only 7 buttons by default";
-                config.titleSettings.titleText = "This template is partialy made from image \n you have to made your own in order to use this layout.";
-            }
-            // Новые шаблоны OctaUI — русские заголовки, акцент через @-токен темы
-            if (presetNumber >= 6 && presetNumber <= 8)
-            {
-                config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
-                config.tab1Settings.btnTitle = "ГЛАВНАЯ";
-                config.tab2Settings.btnTitle = "ПРАВИЛА";
-                config.tab3Settings.btnTitle = "НАБОРЫ";
-                config.tab4Settings.btnTitle = "ВАЙПЫ";
-                config.tab5Settings.btnTitle = "VIP";
-                config.tab6Settings.btnTitle = "ДИСКОРД";
-                config.tab7Settings.btnTitle = "МАГАЗИН";
-                config.tab8Settings.btnTitle = "АДМИНЫ";
-                config.tab9Settings.btnTitle = "НОВОСТИ";
-                config.tab10Settings.btnTitle = "БОССЫ";
-                config.titleSettings.titleText = "<size=18><color=@accent>◆ OCTAVIAN</color></size>";
-            }
+            config.buttonSettings.mainAlign = presetNumber == 3
+                ? TextAnchor.MiddleLeft
+                : TextAnchor.MiddleCenter;
         }
 
         // Слоты пресетов в формате layout OctaUI ({slot: {rect,color,mat,image,fade}})
@@ -1899,9 +1813,9 @@ namespace Oxide.Plugins
                 ["menuBtn5"] = new JObject { ["rect"] = "0.02450001 0.37 0.2195 0.427", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
                 ["menuBtn6"] = new JObject { ["rect"] = "0.02450001 0.31 0.2195 0.367", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
                 ["menuBtn7"] = new JObject { ["rect"] = "0.02450001 0.25 0.2195 0.307", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn8"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn9"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn10"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.02450001 0.19 0.2195 0.247", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.02450001 0.13 0.2195 0.187", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.02450001 0.07 0.2195 0.127", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
                 ["nextButton"] = new JObject { ["rect"] = "0.95 0.013 0.99 0.06", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/2/btn-nextpage.png", ["fade"] = 0f },
                 ["previousButton"] = new JObject { ["rect"] = "0.9 0.013 0.94 0.06", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/2/btn-prevpage.png", ["fade"] = 0f },
             };
@@ -1984,85 +1898,85 @@ namespace Oxide.Plugins
                 ["previousButton"] = new JObject { ["rect"] = "0.99 0.488 1.01 0.975", ["color"] = "0.25 0.23 0.22 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/5/btn-pageup.png", ["fade"] = 0f },
             };
 
-            // ─── Пресет 6 «compact»: компактное окно по центру, узкая колонка вкладок слева ───
+            // ─── Пресет 6 «compact»: карточка-окно с шапкой-баром, рейл вкладок слева ───
             case 6 : return new JObject
             {
-                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.72", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.75", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
                 ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
                 ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["mainPanel"] = new JObject { ["rect"] = "0.30 0.16 0.70 0.84", ["color"] = "0.02 0.02 0.03 0.85", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["sidePanel"] = new JObject { ["rect"] = "0.31 0.17 0.40 0.83", ["color"] = "0.02 0.02 0.03 0.6", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["titlePanel"] = new JObject { ["rect"] = "0.36 0.79 0.65 0.83", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["logoPanel"] = new JObject { ["rect"] = "0.312 0.79 0.35 0.83", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["closeButton"] = new JObject { ["rect"] = "0.655 0.795 0.69 0.83", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["contentPanel"] = new JObject { ["rect"] = "0.405 0.17 0.69 0.78", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.28 0.15 0.72 0.845", ["color"] = "0.012 0.012 0.018 0.92", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["sidePanel"] = new JObject { ["rect"] = "0.285 0.155 0.368 0.79", ["color"] = "0.015 0.015 0.022 0.7", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.325 0.795 0.685 0.845", ["color"] = "0.005 0.005 0.01 0.97", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.284 0.798 0.323 0.842", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["closeButton"] = new JObject { ["rect"] = "0.689 0.799 0.715 0.841", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.373 0.155 0.715 0.79", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
                 ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.16 0.34 0.49 1", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn1"] = new JObject { ["rect"] = "0.312 0.718 0.398 0.77", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn2"] = new JObject { ["rect"] = "0.312 0.661 0.398 0.713", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn3"] = new JObject { ["rect"] = "0.312 0.604 0.398 0.656", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn4"] = new JObject { ["rect"] = "0.312 0.547 0.398 0.599", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn5"] = new JObject { ["rect"] = "0.312 0.490 0.398 0.542", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn6"] = new JObject { ["rect"] = "0.312 0.433 0.398 0.485", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn7"] = new JObject { ["rect"] = "0.312 0.376 0.398 0.428", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn8"] = new JObject { ["rect"] = "0.312 0.319 0.398 0.371", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn9"] = new JObject { ["rect"] = "0.312 0.262 0.398 0.314", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn10"] = new JObject { ["rect"] = "0.312 0.205 0.398 0.257", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["nextButton"] = new JObject { ["rect"] = "0.655 0.175 0.688 0.215", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["previousButton"] = new JObject { ["rect"] = "0.62 0.175 0.653 0.215", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.29 0.729 0.363 0.776", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.29 0.6755 0.363 0.7225", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.29 0.622 0.363 0.669", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.29 0.5685 0.363 0.6155", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.29 0.515 0.363 0.562", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.29 0.4615 0.363 0.5085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.29 0.408 0.363 0.455", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.29 0.3545 0.363 0.4015", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.29 0.301 0.363 0.348", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.29 0.2475 0.363 0.2945", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.682 0.16 0.712 0.20", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.65 0.16 0.68 0.20", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
             };
 
-            // ─── Пресет 7 «bottombar»: HUD-панель внизу экрана, вкладки горизонтальной полосой, без затемнения ───
+            // ─── Пресет 7 «bottombar»: док-полоса над хотбаром + всплывающий лист, игра не затемняется ───
             case 7 : return new JObject
             {
                 ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
                 ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["mainPanel"] = new JObject { ["rect"] = "0.08 0.03 0.92 0.32", ["color"] = "0.01 0.01 0.015 0.88", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.40 0.5 0.40", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.26 0.015 0.74 0.095", ["color"] = "0.008 0.008 0.012 0.94", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.3f },
                 ["sidePanel"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["titlePanel"] = new JObject { ["rect"] = "0.085 0.33 0.40 0.37", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
-                ["logoPanel"] = new JObject { ["rect"] = "0.60 0.33 0.87 0.37", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
-                ["closeButton"] = new JObject { ["rect"] = "0.893 0.335 0.913 0.368", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.3f },
-                ["contentPanel"] = new JObject { ["rect"] = "0.085 0.04 0.915 0.24", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.22 0.735 0.72 0.79", ["color"] = "0.005 0.005 0.01 0.97", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.723 0.739 0.756 0.786", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["closeButton"] = new JObject { ["rect"] = "0.759 0.739 0.797 0.786", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.3f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.22 0.15 0.78 0.735", ["color"] = "0.015 0.015 0.02 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.3f },
                 ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.13 0.16 0.22 0.95", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn1"] = new JObject { ["rect"] = "0.087 0.245 0.166 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn2"] = new JObject { ["rect"] = "0.170 0.245 0.249 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn3"] = new JObject { ["rect"] = "0.253 0.245 0.332 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn4"] = new JObject { ["rect"] = "0.336 0.245 0.415 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn5"] = new JObject { ["rect"] = "0.419 0.245 0.498 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn6"] = new JObject { ["rect"] = "0.502 0.245 0.581 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn7"] = new JObject { ["rect"] = "0.585 0.245 0.664 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn8"] = new JObject { ["rect"] = "0.668 0.245 0.747 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn9"] = new JObject { ["rect"] = "0.751 0.245 0.830 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn10"] = new JObject { ["rect"] = "0.834 0.245 0.913 0.315", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["nextButton"] = new JObject { ["rect"] = "0.875 0.045 0.915 0.078", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["previousButton"] = new JObject { ["rect"] = "0.835 0.045 0.875 0.078", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.265 0.025 0.308 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.312 0.025 0.355 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.359 0.025 0.402 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.406 0.025 0.449 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.453 0.025 0.496 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.500 0.025 0.543 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.547 0.025 0.590 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.594 0.025 0.637 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.641 0.025 0.684 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.688 0.025 0.731 0.085", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.745 0.155 0.793 0.195", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.70 0.155 0.745 0.195", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
             };
 
-            // ─── Пресет 8 «sidebar»: высокая панель у правого края, навигация колонкой внутри ───
+            // ─── Пресет 8 «sidebar»: выдвижка-инспектор у правого края, навигация сеткой 2×5 ───
             case 8 : return new JObject
             {
-                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.55", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.6", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
                 ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["mainPanel"] = new JObject { ["rect"] = "0.60 0.06 0.995 0.94", ["color"] = "0.02 0.02 0.03 0.82", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["sidePanel"] = new JObject { ["rect"] = "0.61 0.07 0.70 0.87", ["color"] = "0.02 0.02 0.03 0.6", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["titlePanel"] = new JObject { ["rect"] = "0.71 0.885 0.95 0.93", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["logoPanel"] = new JObject { ["rect"] = "0.613 0.885 0.697 0.94", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["closeButton"] = new JObject { ["rect"] = "0.955 0.885 0.99 0.93", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
-                ["contentPanel"] = new JObject { ["rect"] = "0.71 0.07 0.99 0.87", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.68 0.5 0.68 0.5", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.72 0.02 0.995 0.98", ["color"] = "0.012 0.012 0.018 0.92", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["sidePanel"] = new JObject { ["rect"] = "0.725 0.455 0.99 0.918", ["color"] = "0.015 0.015 0.022 0.7", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.762 0.925 0.963 0.97", ["color"] = "0.005 0.005 0.01 0.97", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.724 0.928 0.76 0.967", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["closeButton"] = new JObject { ["rect"] = "0.966 0.928 0.992 0.968", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.4f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.725 0.025 0.99 0.45", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.4f },
                 ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.13 0.16 0.22 0.95", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn1"] = new JObject { ["rect"] = "0.613 0.762 0.697 0.82", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn2"] = new JObject { ["rect"] = "0.613 0.686 0.697 0.744", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn3"] = new JObject { ["rect"] = "0.613 0.610 0.697 0.668", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn4"] = new JObject { ["rect"] = "0.613 0.534 0.697 0.592", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn5"] = new JObject { ["rect"] = "0.613 0.458 0.697 0.516", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn6"] = new JObject { ["rect"] = "0.613 0.382 0.697 0.440", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn7"] = new JObject { ["rect"] = "0.613 0.306 0.697 0.364", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn8"] = new JObject { ["rect"] = "0.613 0.230 0.697 0.288", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn9"] = new JObject { ["rect"] = "0.613 0.154 0.697 0.212", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["menuBtn10"] = new JObject { ["rect"] = "0.613 0.078 0.697 0.136", ["color"] = "0.11 0.12 0.15 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["nextButton"] = new JObject { ["rect"] = "0.955 0.075 0.985 0.115", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
-                ["previousButton"] = new JObject { ["rect"] = "0.92 0.075 0.95 0.115", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.73 0.827 0.853 0.905", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.858 0.827 0.983 0.905", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.73 0.739 0.853 0.817", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.858 0.739 0.983 0.817", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.73 0.651 0.853 0.729", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.858 0.651 0.983 0.729", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.73 0.563 0.853 0.641", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.858 0.563 0.983 0.641", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.73 0.475 0.853 0.553", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.858 0.475 0.983 0.553", ["color"] = "0.10 0.11 0.14 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.938 0.03 0.988 0.068", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.888 0.03 0.938 0.068", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
             };
             }
             return new JObject();
