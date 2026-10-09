@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Plugins;
@@ -13,20 +13,22 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OctaWelcome", "Octavian", "1.1.0")]
-    [Description("Приветственная панель Octavian: 10 вкладок, редактор, автогенерация страниц боссов из OctaBoss")]
+    [Info("OctaWelcome", "Octavian", "2.0.0")]
+    [Description("Приветственная панель Octavian на фреймворке OctaUI: 10 вкладок, UX-пресеты и редактор позиций через layout-слоты, страницы боссов из OctaBoss")]
 
     public class OctaWelcome : RustPlugin
     {
 
         #region [Dependencies]
 
-        [PluginReference] Plugin ImageLibrary, OctaKits;
+        [PluginReference] Plugin ImageLibrary, OctaKits, OctaUI;
 
         private void DependencyWarnings()
         {
             timer.Once(1f, () =>
             {
+                if (OctaUI == null)
+                    Puts("(!) Фреймворк OctaUI не найден — интерфейс не будет отрисовываться (c.reload OctaUI).");
                 if (ImageLibrary == null)
                     Puts("(!) ImageLibrary не найден — картинки будут грузиться медленнее.");
                 if (OctaKits == null) Puts("(!) Плагин OctaKits не найден — вкладка наборов будет пустой.");
@@ -71,13 +73,21 @@ namespace Oxide.Plugins
 
         #region [Hooks]
 
+        private void Loaded()
+        {
+            CUIClass.Ui = OctaUI; // подключаем фреймворк, если загружен
+            if (OctaUI == null)
+                PrintWarning("OctaUI не загружен — интерфейс приветствия не отрисуется (c.reload OctaUI)");
+        }
+
         private void OnServerInitialized()
         {
-            LoadData();
+            CUIClass.Ui = OctaUI;
             LoadPresetData();
             LoadPageData();
             LoadConfig();
-            WriteCuiEntry();
+            InitLayout();
+            SyncSlots();
             WritePageEntry();
             PopulateBossPages();
             DependencyWarnings();
@@ -86,7 +96,7 @@ namespace Oxide.Plugins
             // Первый запуск — применяем базовый шаблон, чтобы панель работала из коробки
             if (!presetData[$"{Name}"].presetInit)
             {
-                SetPresetValues(1);
+                ApplyPreset(1);
                 presetData[$"{Name}"].presetInit = true;
                 presetData[$"{Name}"].presetNumber = 1;
                 SavePresetData();
@@ -149,6 +159,24 @@ namespace Oxide.Plugins
             }
         }
 
+        // Хук загрузки плагинов: OctaUI поднялся после нас — подцепляем ссылку
+        private void OnPluginLoaded(Plugin plugin)
+        {
+            if (plugin?.Name == "OctaUI")
+            {
+                CUIClass.Ui = plugin;
+                InitLayout();
+                SyncSlots();
+            }
+        }
+
+        // OctaUI выгрузили/перезагрузили — сбрасываем ссылку, чтобы не звать в мёртвую сборку
+        private void OnPluginUnloaded(Plugin plugin)
+        {
+            if (plugin?.Name == "OctaUI")
+                CUIClass.Ui = null;
+        }
+
         #endregion
 
         #region [Image Handling]
@@ -156,10 +184,11 @@ namespace Oxide.Plugins
         private void DownloadImages()
         {
             if (ImageLibrary == null) return;
+            SyncSlots();
             //image from data
             foreach (string element in cuiData.Keys)
             { if (CI(element)) ImageLibrary.Call("AddImage", cuiData[element].image, element); }
-            //images from config    
+            //images from config
             //📝"Could have been solved better but customers got used to old config file so I didnt want to change it."
             if (config.tab1Settings.tabImageUrl.StartsWith("http") || config.tab1Settings.tabImageUrl.StartsWith("www"))
                 ImageLibrary.Call("AddImage", config.tab1Settings.tabImageUrl, "tab1bg");
@@ -197,14 +226,15 @@ namespace Oxide.Plugins
 
         private string Img(string name)
         {
+            string fallback = cuiData.ContainsKey(name) ? cuiData[name].image : "";
             if (ImageLibrary != null)
             {
                 if (!(bool)ImageLibrary.Call("HasImage", name))
-                    return cuiData[name].image;
+                    return fallback;
                 else
                     return (string)ImageLibrary?.Call("GetImage", name);
             }
-            else return cuiData[name].image;
+            else return fallback;
         }
 
         private string Img2(int tabNumber)
@@ -239,6 +269,7 @@ namespace Oxide.Plugins
 
         private bool CI(string name)
         {
+            if (!cuiData.ContainsKey(name)) return false;
             if (cuiData[name].image == null)
             {
                 return false;
@@ -271,7 +302,7 @@ namespace Oxide.Plugins
         {
             if (!presetData[$"{Name}"].presetInit)
             {
-                SendReply(player, "<size=15>Сначала выберите шаблон: <color=#cd412b>/octa_template</color>.</size> \n\nСмена пресета перезапишет файл CuiData вместе с названиями кнопок и заголовком в конфиге! \nВсегда делайте резервные копии!");
+                SendReply(player, "<size=15>Сначала выберите шаблон: <color=#cd412b>/octa_template</color>.</size> \n\nСмена пресета перезапишет layout вместе с названиями кнопок и заголовком в конфиге! \nВсегда делайте резервные копии!");
                 return null;
             }
             int pageNumber = 1;
@@ -359,7 +390,7 @@ namespace Oxide.Plugins
             }
 
             cuiData[panelNameEdit].color = args[0];
-            SaveData();
+            SaveSlot(panelNameEdit);
             player.ConsoleMessage($"{panelNameEdit}: цвет изменён на {cuiData[panelNameEdit].color}");
         }
 
@@ -431,18 +462,6 @@ namespace Oxide.Plugins
             return permission.UserHasPermission(player.UserIDString, $"octawelcome.tab{tabNumber}");
         }
 
-        private void WriteCuiEntry()
-        {
-            foreach (string elementName in cuiList)
-            {
-                if (!cuiData.ContainsKey(elementName))
-                {
-                    cuiData.Add(elementName, new CuiData());
-                }
-            }
-            SaveData();
-        }
-
         private void WritePageEntry()
         {
             foreach (string tab in tabList)
@@ -473,71 +492,37 @@ namespace Oxide.Plugins
 
             if (isPlayerEditing[player.userID])
             {
-                if (input.WasJustPressed(BUTTON.FIRE_PRIMARY))
+                if (input.WasJustPressed(BUTTON.FIRE_PRIMARY) || input.WasJustPressed(BUTTON.FIRE_SECONDARY))
                 {
+                    float dir = input.WasJustPressed(BUTTON.FIRE_PRIMARY) ? 1f : -1f;
                     float anchorValue = 0f;
                     if (anchor == 1)
                     {
                         anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 0);
-                        anchorValue = anchorValue + moveValue;
+                        anchorValue = anchorValue + dir * moveValue;
                         cuiData[panelNameEdit].anchorMin = $"{anchorValue} {GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 1)}";
-                        SaveData();
+                        SaveSlot(panelNameEdit);
                     }
                     if (anchor == 2)
                     {
                         anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 1);
-                        anchorValue = anchorValue + moveValue;
+                        anchorValue = anchorValue + dir * moveValue;
                         cuiData[panelNameEdit].anchorMin = $"{GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 0)} {anchorValue}";
-                        SaveData();
+                        SaveSlot(panelNameEdit);
                     }
                     if (anchor == 3)
                     {
                         anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 0);
-                        anchorValue = anchorValue + moveValue;
+                        anchorValue = anchorValue + dir * moveValue;
                         cuiData[panelNameEdit].anchorMax = $"{anchorValue} {GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 1)}";
-                        SaveData();
+                        SaveSlot(panelNameEdit);
                     }
                     if (anchor == 4)
                     {
                         anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 1);
-                        anchorValue = anchorValue + moveValue;
+                        anchorValue = anchorValue + dir * moveValue;
                         cuiData[panelNameEdit].anchorMax = $"{GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 0)} {anchorValue}";
-                        SaveData();
-                    }
-                    CreateCui(player, false, true);
-                    CreateTab(player, 1, 2);
-                    return;
-                }
-                if (input.WasJustPressed(BUTTON.FIRE_SECONDARY))
-                {
-                    float anchorValue = 0f;
-                    if (anchor == 1)
-                    {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 0);
-                        anchorValue = anchorValue - moveValue;
-                        cuiData[panelNameEdit].anchorMin = $"{anchorValue} {GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 1)}";
-                        SaveData();
-                    }
-                    if (anchor == 2)
-                    {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 1);
-                        anchorValue = anchorValue - moveValue;
-                        cuiData[panelNameEdit].anchorMin = $"{GetSingleAnchor(cuiData[panelNameEdit].anchorMin, 0)} {anchorValue}";
-                        SaveData();
-                    }
-                    if (anchor == 3)
-                    {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 0);
-                        anchorValue = anchorValue - moveValue;
-                        cuiData[panelNameEdit].anchorMax = $"{anchorValue} {GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 1)}";
-                        SaveData();
-                    }
-                    if (anchor == 4)
-                    {
-                        anchorValue = GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 1);
-                        anchorValue = anchorValue - moveValue;
-                        cuiData[panelNameEdit].anchorMax = $"{GetSingleAnchor(cuiData[panelNameEdit].anchorMax, 0)} {anchorValue}";
-                        SaveData();
+                        SaveSlot(panelNameEdit);
                     }
                     CreateCui(player, false, true);
                     CreateTab(player, 1, 2);
@@ -590,7 +575,7 @@ namespace Oxide.Plugins
             return converted;
         }
 
-        #endregion 
+        #endregion
 
         #region [Utilities]
 
@@ -720,6 +705,7 @@ namespace Oxide.Plugins
 
         private void CreateCui(BasePlayer player, bool cursor, bool eM = false)
         {
+            SyncSlots();
 
             #region Base
             //background
@@ -748,7 +734,7 @@ namespace Oxide.Plugins
             if (CI("closeButton")) CUIClass.CreateImage(ref createBase, "closeButton", Img("closeButton"), "0 0", "1 1", Em(eM, cuiData["closeButton"].fade));
             #endregion
             #region Buttons
-            //Button 1 
+            //Button 1
             if (config.tab1Settings.btnEnabled)
             {
                 CUIClass.CreateButton(ref createBase, "menuBtn1", "offsetContainer", $"{cuiData["menuBtn1"].color}", $"{config?.tab1Settings.btnTitle}", 16, $"{cuiData["menuBtn1"].anchorMin}", $"{cuiData["menuBtn1"].anchorMax}", $"octawelcome_open 1 1", "", "1 1 1 0.7", cuiData["menuBtn1"].fade, config.buttonSettings.mainAlign, $"{config?.buttonSettings.btnFontStyle}", $"{cuiData["menuBtn1"].material}");
@@ -828,7 +814,9 @@ namespace Oxide.Plugins
 
         private void CreateTab(BasePlayer player, int tabNumber, int pageNumber)
         {
-            #region Fields 
+            SyncSlots();
+
+            #region Fields
             string bgImage = "def";
             string bgImage_Amin = "def";
             string bgImage_Amax = "def";
@@ -937,15 +925,7 @@ namespace Oxide.Plugins
                 {
                     if (CheckPage(tabNumber, pageNumber))
                     {
-                        if (pageNumber == 2) tabText = pageData[$"Tab{tabNumber}"].page2;
-                        if (pageNumber == 3) tabText = pageData[$"Tab{tabNumber}"].page3;
-                        if (pageNumber == 4) tabText = pageData[$"Tab{tabNumber}"].page4;
-                        if (pageNumber == 5) tabText = pageData[$"Tab{tabNumber}"].page5;
-                        if (pageNumber == 6) tabText = pageData[$"Tab{tabNumber}"].page6;
-                        if (pageNumber == 7) tabText = pageData[$"Tab{tabNumber}"].page7;
-                        if (pageNumber == 8) tabText = pageData[$"Tab{tabNumber}"].page8;
-                        if (pageNumber == 9) tabText = pageData[$"Tab{tabNumber}"].page9;
-                        if (pageNumber == 10) tabText = pageData[$"Tab{tabNumber}"].page10;
+                        if (pageNumber >= 2) tabText = PageLines(tabNumber, pageNumber);
                         textContent = string.Join("\n", tabText);
 
                         if (bgImage.StartsWith("http") || bgImage.StartsWith("www"))
@@ -1001,70 +981,29 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, "contentText");
         }
 
+        // Строки дополнительной страницы вкладки (page2..page10 из PageData.json)
+        private List<string> PageLines(int tabNumber, int pageNumber)
+        {
+            var d = pageData[$"Tab{tabNumber}"];
+            switch (pageNumber)
+            {
+                case 3: return d.page3;
+                case 4: return d.page4;
+                case 5: return d.page5;
+                case 6: return d.page6;
+                case 7: return d.page7;
+                case 8: return d.page8;
+                case 9: return d.page9;
+                case 10: return d.page10;
+                default: return d.page2;
+            }
+        }
+
         private bool CheckPage(int tabNumber, int pageNumber)
         {
-            if (pageNumber == 1)
-            {
-                if (pageData[$"Tab{tabNumber}"].page2.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 2)
-            {
-                if (pageData[$"Tab{tabNumber}"].page2.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 3)
-            {
-                if (pageData[$"Tab{tabNumber}"].page3.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 4)
-            {
-                if (pageData[$"Tab{tabNumber}"].page4.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 5)
-            {
-                if (pageData[$"Tab{tabNumber}"].page5.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 6)
-            {
-                if (pageData[$"Tab{tabNumber}"].page6.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 7)
-            {
-                if (pageData[$"Tab{tabNumber}"].page7.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 8)
-            {
-                if (pageData[$"Tab{tabNumber}"].page8.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 9)
-            {
-                if (pageData[$"Tab{tabNumber}"].page9.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-            if (pageNumber == 10)
-            {
-                if (pageData[$"Tab{tabNumber}"].page10.Count() == 0)
-                { return false; }
-                else { return true; }
-            }
-
-            return false;
+            // Страница 1 «многостранична», если заполнена page2; остальные — по своему списку
+            var lines = PageLines(tabNumber, pageNumber < 2 ? 2 : pageNumber);
+            return lines != null && lines.Count > 0;
         }
 
         private string Hl_Choice(int index)
@@ -1075,6 +1014,8 @@ namespace Oxide.Plugins
 
         private void CreateLayoutMenu(BasePlayer player)
         {
+            SyncSlots();
+
             #region Base
             //background
             var createLayoutMenu = CUIClass.CreateOverlay("l_background", $"0 0 0 0.7", "0 0", "1 1", true, 0f, "assets/content/ui/uibackgroundblur.mat");
@@ -1112,7 +1053,7 @@ namespace Oxide.Plugins
             CUIClass.CreateButton(ref createLayoutMenu, "btn_choose", "l_layout_panel_6", "0 0 0 0", "\n<b><size=17>COMING IN NEXT UPDATE</size></b> \n\n", 9, "0 0", "1 1", $"", "", "1 1 1 0.7", 0f, TextAnchor.LowerCenter, $"robotocondensed-regular.ttf", "assets/icons/iconmaterial.mat");
 
 
-            #endregion   
+            #endregion
             CuiHelper.DestroyUi(player, "l_offsetContainer");
             CuiHelper.DestroyUi(player, "l_background");
             CuiHelper.AddUi(player, createLayoutMenu);
@@ -1131,7 +1072,7 @@ namespace Oxide.Plugins
             CuiHelper.DestroyUi(player, "l_background");
 
             int preset = Convert.ToInt32(args[0]);
-            SetPresetValues(preset);
+            ApplyPreset(preset);
             presetData[$"{Name}"].presetInit = true;
             presetData[$"{Name}"].presetNumber = preset;
             SavePresetData();
@@ -1185,7 +1126,7 @@ namespace Oxide.Plugins
             CUIClass.CreateButton(ref editPanelMenu, "p_closeButton", "p_container", "0.11 0.11 0.11 0.95", "CLOSE BUTTON", 11, "0.625 0.7", "0.745 0.89", $"octawelcome_editpanel closeButton", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateButton(ref editPanelMenu, "p_nextButton", "p_container", "0.11 0.11 0.11 0.95", "NEXT PAGE \nBUTTON", 11, "0.75 0.7", "0.87 0.89", $"octawelcome_editpanel nextButton", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateButton(ref editPanelMenu, "p_previousButton", "p_container", "0.11 0.11 0.11 0.95", "PREVIOUS PAGE \nBUTTON", 11, "0.875 0.7", "1 0.89", $"octawelcome_editpanel previousButton", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/content/ui/uibackgroundblur.mat");
-            // buttons 
+            // buttons
             CUIClass.CreateText(ref editPanelMenu, "p_panelsText2", "p_container", "1 1 1 1", $"Tab Buttons", 14, "0.00 0.52", "1 0.61", TextAnchor.UpperLeft, $"robotocondensed-bold.ttf", "0 0 0 0", $"0 0");
             CUIClass.CreateButton(ref editPanelMenu, "p_menuBtn1", "p_container", "0.11 0.11 0.11 0.95", "TAB 1", 11, "0 0.3", "0.1 0.49", $"octawelcome_editpanel menuBtn1", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/content/ui/uibackgroundblur.mat");
             CUIClass.CreateButton(ref editPanelMenu, "p_menuBtn2", "p_container", "0.11 0.11 0.11 0.95", "TAB 2", 11, "0.11 0.3", "0.2 0.49", $"octawelcome_editpanel menuBtn2", "", "1 1 1 0.7", 0f, TextAnchor.MiddleCenter, $"robotocondensed-bold.ttf", "assets/content/ui/uibackgroundblur.mat");
@@ -1234,16 +1175,17 @@ namespace Oxide.Plugins
 
         #region [Kits Tab] — собственная вкладка наборов (данные напрямую из плагина Kits)
 
-        // Фирменная палитра Octavian (золото на стекле, эталон OctaBoss)
-        private const string KGold     = "0.82 0.61 0.20 1";
-        private const string KGoldDark = "0.48 0.32 0.10 1";
-        private const string KGlassBg  = "0.02 0.018 0.015 0.92";
-        private const string KGlassRow = "0.08 0.07 0.05 0.85";
-        private const string KGlassHov = "0.13 0.105 0.06 0.95";
-        private const string KGlassLt  = "0.05 0.045 0.035 0.92";
-        private const string KTWhite   = "1 0.98 0.90 1";
-        private const string KGreen    = "0.20 0.52 0.27 0.92";
-        private const string KRed      = "0.58 0.13 0.10 0.92";
+        // Палитра — токены темы OctaUI (золото на стекле, эталон OctaBoss).
+        // Значения резолвятся фреймворком; тема выбирается биндом ThemeBind("OctaWelcome", ...).
+        private const string KGold     = "accent.dim";
+        private const string KGoldDark = "accent.dark";
+        private const string KGlassBg  = "bg";
+        private const string KGlassRow = "row";
+        private const string KGlassHov = "hover";
+        private const string KGlassLt  = "panel";
+        private const string KTWhite   = "white";
+        private const string KGreen    = "green";
+        private const string KRed      = "red";
 
         // Сетка 3x3 внутри imagePanel
         private static readonly string[] _kitCardAnchors =
@@ -1453,24 +1395,15 @@ namespace Oxide.Plugins
                 try
                 {
                     string shortname = item.SelectToken("Shortname")?.ToString();
-                    var def = string.IsNullOrEmpty(shortname) ? null : ItemManager.FindItemDefinition(shortname);
-                    if (def == null) continue; // битый shortname — пустая ячейка, без падения
+                    if (string.IsNullOrEmpty(shortname) || ItemManager.FindItemDefinition(shortname) == null) continue;
 
                     ulong skin = 0;
                     try { skin = item.SelectToken("SkinID")?.Value<ulong>() ?? 0UL; } catch { }
+                    int amount = 0;
+                    try { amount = item.SelectToken("Amount")?.Value<int>() ?? 0; } catch { }
 
-                    ui.Add(new CuiElement
-                    {
-                        Parent = $"{prefix}{i}",
-                        Name = $"{prefix}{i}_img",
-                        Components =
-                        {
-                            new CuiImageComponent { ItemId = def.itemid, SkinId = skin, FadeIn = 0.2f },
-                            new CuiRectTransformComponent { AnchorMin = "0.10 0.10", AnchorMax = "0.90 0.90" }
-                        }
-                    });
-                    CUIClass.CreateText(ref ui, $"{prefix}{i}_am", $"{prefix}{i}", "0.95 0.75 0.30 1",
-                        $"x{item.SelectToken("Amount")}", 10, "0.05 0.00", "0.95 0.95", TextAnchor.LowerRight, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                    // ItemIcon фреймворка: иконка предмета + подпись xN в углу
+                    CUIClass.CreateItemIcon(ref ui, $"{prefix}{i}_img", $"{prefix}{i}", shortname, skin, amount, "0.10 0.10", "0.90 0.90", 0.2f);
                 }
                 catch { }
             }
@@ -1626,105 +1559,146 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region !Presets
+        #region [Layout-слой OctaUI] — слоты UX вместо старого CuiData.json
 
-        private void SetPresetValues(int presetNumber)
+        // Хранилище: data/OctaUI/layout_OctaWelcome.json (слоты rect/color/mat/image/fade),
+        // пресеты: data/OctaUI/presets_OctaWelcome.json (5 UX-шаблонов).
+        // cuiData — снапшот слотов для совместимости с телом рендера; пишется через SaveSlot.
+
+        private Dictionary<string, CuiData> cuiData = new Dictionary<string, CuiData>();
+
+        private class CuiData
         {
+            public string anchorMin = "0 0";
+            public string anchorMax = "0 0";
+            public string color = "0 0 0 0";
+            public string material = "";
+            public string image = "";
+            public float fade = 0f;
+        }
 
+        // Схема старого CuiData.json — только для одноразовой миграции
+        private class LegacyCuiData
+        {
+            public string anchorMin;
+            public string anchorMax;
+            public string color;
+            public string material;
+            public string image;
+            public float fade;
+        }
 
+        // Перечитывает слоты layout OctaUI в снапшот cuiData (вызывается перед каждой отрисовкой)
+        private void SyncSlots()
+        {
+            var layout = OctaUI?.Call("LayoutGet", Name) as JObject;
+            foreach (var name in cuiList)
+            {
+                var o = layout?[name] as JObject;
+                var d = new CuiData();
+                if (o != null)
+                {
+                    var r = (o["rect"]?.ToString() ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (r.Length >= 2) d.anchorMin = r[0] + " " + r[1];
+                    if (r.Length >= 4) d.anchorMax = r[2] + " " + r[3];
+                    d.color = o["color"]?.ToString() ?? d.color;
+                    d.material = o["mat"]?.ToString() ?? "";
+                    d.image = o["image"]?.ToString() ?? "";
+                    d.fade = o["fade"]?.ToObject<float?>() ?? 0f;
+                }
+                cuiData[name] = d;
+            }
+        }
+
+        // Записывает один слот из снапшота обратно в layout OctaUI (редактор позиций/цвета)
+        private void SaveSlot(string name)
+        {
+            CuiData d;
+            if (OctaUI == null || string.IsNullOrEmpty(name) || !cuiData.TryGetValue(name, out d)) return;
+            OctaUI.Call("LayoutSet", Name, name, new JObject
+            {
+                ["rect"] = $"{d.anchorMin} {d.anchorMax}",
+                ["color"] = d.color,
+                ["mat"] = d.material,
+                ["image"] = d.image,
+                ["fade"] = d.fade
+            });
+        }
+
+        // Имена пресетов в хранилище OctaUI — octa_changelayout принимает старые номера 1..5
+        private static string PresetName(int n)
+        {
+            switch (n)
+            {
+                case 2: return "fullscreen";
+                case 3: return "gray";
+                case 4: return "rounded";
+                case 5: return "topbar";
+                default: return "classic";
+            }
+        }
+
+        private void ApplyPreset(int presetNumber)
+        {
+            if (presetNumber < 1 || presetNumber > 5) presetNumber = 1;
+            OctaUI?.Call("LayoutApply", Name, PresetName(presetNumber));
+            PresetConfigPatch(presetNumber);
+            SaveConfig();
+            SyncSlots();
+        }
+
+        // Инициализация layout: регистрируем 5 пресетов, мигрируем старый CuiData.json, сидим дефолт
+        private void InitLayout()
+        {
+            if (OctaUI == null) return;
+
+            for (int i = 1; i <= 5; i++)
+                OctaUI.Call("LayoutPreset", Name, PresetName(i), PresetSlots(i));
+
+            var pd = presetData[$"{Name}"];
+            var layout = OctaUI.Call("LayoutGet", Name) as JObject;
+
+            if ((layout == null || layout.Count == 0) && !pd.layoutMigrated &&
+                Interface.Oxide.DataFileSystem.ExistsDatafile($"{Name}/CuiData"))
+            {
+                // Одноразовый перенос пользовательского CuiData.json в слоты OctaUI
+                try
+                {
+                    var legacy = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, LegacyCuiData>>($"{Name}/CuiData");
+                    var slots = new JObject();
+                    foreach (var kv in legacy)
+                    {
+                        var v = kv.Value;
+                        slots[kv.Key] = new JObject
+                        {
+                            ["rect"] = $"{v?.anchorMin ?? "0 0"} {v?.anchorMax ?? "0 0"}",
+                            ["color"] = v?.color ?? "0 0 0 0",
+                            ["mat"] = v?.material ?? "",
+                            ["image"] = v?.image ?? "",
+                            ["fade"] = v?.fade ?? 0f
+                        };
+                    }
+                    OctaUI.Call("LayoutImport", Name, slots);
+                    Puts("Миграция: CuiData.json → data/OctaUI/layout_OctaWelcome.json");
+                }
+                catch (Exception ex) { Puts($"(!) Миграция CuiData не удалась: {ex.Message}"); }
+            }
+            if (!pd.layoutMigrated) { pd.layoutMigrated = true; SavePresetData(); }
+
+            layout = OctaUI.Call("LayoutGet", Name) as JObject;
+            if (layout == null || layout.Count == 0)
+            {
+                int n = pd.presetNumber;
+                if (n < 1 || n > 5) n = 1;
+                OctaUI.Call("LayoutImport", Name, PresetSlots(n));
+            }
+        }
+
+        // Патч конфига под выбранный пресет — заголовки кнопок/титула из старого SetPresetValues
+        private void PresetConfigPatch(int presetNumber)
+        {
             if (presetNumber == 1)
             {
-                //background
-                cuiData["background"].anchorMin = "0 0"; cuiData["background"].anchorMax = "1 1";
-                cuiData["background"].color = "0 0 0 0.8"; cuiData["background"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["background"].image = ""; cuiData["background"].fade = 0.5f;
-                //background2
-                cuiData["background2"].anchorMin = "0 0"; cuiData["background2"].anchorMax = "1 1";
-                cuiData["background2"].color = "0 0 0 0.0"; cuiData["background2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["background2"].image = ""; cuiData["background2"].fade = 0f;
-                //offsetContainer
-                cuiData["offsetContainer"].anchorMin = "0.5 0.5"; cuiData["offsetContainer"].anchorMax = "0.5 0.5";
-                cuiData["offsetContainer"].color = "0 0 0 0.0"; cuiData["offsetContainer"].material = "assets/icons/iconmaterial.mat";
-                cuiData["offsetContainer"].image = ""; cuiData["offsetContainer"].fade = 0f;
-                //main panel
-                cuiData["mainPanel"].anchorMin = "0.32 0.175"; cuiData["mainPanel"].anchorMax = "0.80 0.748";
-                cuiData["mainPanel"].color = "0 0 0 0.75"; cuiData["mainPanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["mainPanel"].image = ""; cuiData["mainPanel"].fade = 0.5f;
-                //side panel
-                cuiData["sidePanel"].anchorMin = "0.185 0.175"; cuiData["sidePanel"].anchorMax = "0.31 0.748";
-                cuiData["sidePanel"].color = "0 0 0 0.75"; cuiData["sidePanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["sidePanel"].image = ""; cuiData["sidePanel"].fade = 0.5f;
-                //title panel
-                cuiData["titlePanel"].anchorMin = "0.178 0.745"; cuiData["titlePanel"].anchorMax = "0.9 0.85";
-                cuiData["titlePanel"].color = "0 0 0 0"; cuiData["titlePanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["titlePanel"].image = ""; cuiData["titlePanel"].fade = 0.5f;
-                //logo panel
-                cuiData["logoPanel"].anchorMin = "0.565 0.76"; cuiData["logoPanel"].anchorMax = "0.610 0.833";
-                cuiData["logoPanel"].color = "0 0 0 0"; cuiData["logoPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["logoPanel"].image = ""; cuiData["logoPanel"].fade = 0.5f;
-                //close button
-                cuiData["closeButton"].anchorMin = "0.72 0.115"; cuiData["closeButton"].anchorMax = "0.80 0.16";
-                cuiData["closeButton"].color = "0.56 0.20 0.15 0.9"; cuiData["closeButton"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["closeButton"].image = ""; cuiData["closeButton"].fade = 0.5f;
-                //contentPanel
-                cuiData["contentPanel"].anchorMin = "0.32 0.175"; cuiData["contentPanel"].anchorMax = "0.80 0.748";
-                cuiData["contentPanel"].color = "0 0 0 0.0"; cuiData["contentPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["contentPanel"].image = ""; cuiData["contentPanel"].fade = 0.5f;
-                //menu buttons
-                //hl button
-                cuiData["highlightBtn"].anchorMin = "0 0"; cuiData["highlightBtn"].anchorMax = "1 1";
-                cuiData["highlightBtn"].color = "0.16 0.34 0.49 1.0"; cuiData["highlightBtn"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["highlightBtn"].image = ""; cuiData["highlightBtn"].fade = 0f;
-                //btn 1
-                cuiData["menuBtn1"].anchorMin = "0.1845 0.700"; cuiData["menuBtn1"].anchorMax = "0.3095 0.748";
-                cuiData["menuBtn1"].color = "0 0 0 0"; cuiData["menuBtn1"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn1"].image = "https://rustplugins.net/products/welcomepanel/1/home.png"; cuiData["menuBtn1"].fade = 0f;
-                //btn 2
-                cuiData["menuBtn2"].anchorMin = "0.1845 0.650"; cuiData["menuBtn2"].anchorMax = "0.3095 0.697";
-                cuiData["menuBtn2"].color = "0 0 0 0"; cuiData["menuBtn2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn2"].image = "https://rustplugins.net/products/welcomepanel/1/rules.png"; cuiData["menuBtn2"].fade = 0f;
-                //btn 3
-                cuiData["menuBtn3"].anchorMin = "0.1845 0.600"; cuiData["menuBtn3"].anchorMax = "0.3095 0.647";
-                cuiData["menuBtn3"].color = "0 0 0 0"; cuiData["menuBtn3"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn3"].image = "https://rustplugins.net/products/welcomepanel/1/shop.png"; cuiData["menuBtn3"].fade = 0f;
-                //btn 4
-                cuiData["menuBtn4"].anchorMin = "0.1845 0.550"; cuiData["menuBtn4"].anchorMax = "0.3095 0.597";
-                cuiData["menuBtn4"].color = "0 0 0 0"; cuiData["menuBtn4"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn4"].image = "https://rustplugins.net/products/welcomepanel/1/wipe.png"; cuiData["menuBtn4"].fade = 0f;
-                //btn 5
-                cuiData["menuBtn5"].anchorMin = "0.1845 0.500"; cuiData["menuBtn5"].anchorMax = "0.3095 0.547";
-                cuiData["menuBtn5"].color = "0 0 0 0"; cuiData["menuBtn5"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn5"].image = "https://rustplugins.net/products/welcomepanel/1/star.png"; cuiData["menuBtn5"].fade = 0f;
-                //btn 6
-                cuiData["menuBtn6"].anchorMin = "0.1845 0.450"; cuiData["menuBtn6"].anchorMax = "0.3095 0.497";
-                cuiData["menuBtn6"].color = "0 0 0 0"; cuiData["menuBtn6"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn6"].image = "https://rustplugins.net/products/welcomepanel/1/discord.png"; cuiData["menuBtn6"].fade = 0f;
-                //btn 7
-                cuiData["menuBtn7"].anchorMin = "0.1845 0.400"; cuiData["menuBtn7"].anchorMax = "0.3095 0.447";
-                cuiData["menuBtn7"].color = "0 0 0 0"; cuiData["menuBtn7"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn7"].image = "https://rustplugins.net/products/welcomepanel/1/admin.png"; cuiData["menuBtn7"].fade = 0f;
-                //btn 8
-                cuiData["menuBtn8"].anchorMin = "0.1845 0.350"; cuiData["menuBtn8"].anchorMax = "0.3095 0.397";
-                cuiData["menuBtn8"].color = "0 0 0 0"; cuiData["menuBtn8"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn8"].image = "https://rustplugins.net/products/welcomepanel/1/shop.png"; cuiData["menuBtn8"].fade = 0f;
-                //btn 9
-                cuiData["menuBtn9"].anchorMin = "0.1845 0.300"; cuiData["menuBtn9"].anchorMax = "0.3095 0.347";
-                cuiData["menuBtn9"].color = "0 0 0 0"; cuiData["menuBtn9"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn9"].image = "https://rustplugins.net/products/welcomepanel/1/rules.png"; cuiData["menuBtn9"].fade = 0f;
-                //btn 10
-                cuiData["menuBtn10"].anchorMin = "0.1845 0.250"; cuiData["menuBtn10"].anchorMax = "0.3095 0.297";
-                cuiData["menuBtn10"].color = "0 0 0 0"; cuiData["menuBtn10"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn10"].image = "https://rustplugins.net/products/welcomepanel/1/bug.png"; cuiData["menuBtn10"].fade = 0f;
-                //page buttons
-                //next
-                cuiData["nextButton"].anchorMin = "0.95 0.013"; cuiData["nextButton"].anchorMax = "0.99 0.06";
-                cuiData["nextButton"].color = "0.16 0.34 0.49 0.6"; cuiData["nextButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["nextButton"].image = "https://rustplugins.net/products/welcomepanel/3/page-next.png"; cuiData["nextButton"].fade = 0f;
-                //prev
-                cuiData["previousButton"].anchorMin = "0.9 0.013"; cuiData["previousButton"].anchorMax = "0.94 0.06";
-                cuiData["previousButton"].color = "0.16 0.34 0.49 0.6"; cuiData["previousButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["previousButton"].image = "https://rustplugins.net/products/welcomepanel/3/page-prev.png"; cuiData["previousButton"].fade = 0f;
-                //config
                 config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
                 config.tab1Settings.btnTitle = " ГЛАВНАЯ";
                 config.tab2Settings.btnTitle = " ПРАВИЛА";
@@ -1738,100 +1712,8 @@ namespace Oxide.Plugins
                 config.tab10Settings.btnTitle = " БОССЫ";
                 config.titleSettings.titleText = "<size=55><color=#E8B84B>OCTAVIAN</color></size>";
             }
-
             if (presetNumber == 2)
             {
-                //background
-                cuiData["background"].anchorMin = "0 0"; cuiData["background"].anchorMax = "1 1";
-                cuiData["background"].color = "0 0 0 0.85"; cuiData["background"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["background"].image = ""; cuiData["background"].fade = 0.5f;
-                //background2
-                cuiData["background2"].anchorMin = "0 0"; cuiData["background2"].anchorMax = "1 1";
-                cuiData["background2"].color = "0 0 0 0.0"; cuiData["background2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["background2"].image = ""; cuiData["background2"].fade = 0f;
-                //offsetContainer
-                cuiData["offsetContainer"].anchorMin = "0.5 0.5"; cuiData["offsetContainer"].anchorMax = "0.5 0.5";
-                cuiData["offsetContainer"].color = "0 0 0 0.0"; cuiData["offsetContainer"].material = "assets/icons/iconmaterial.mat";
-                cuiData["offsetContainer"].image = ""; cuiData["offsetContainer"].fade = 0f;
-                //main panel
-                cuiData["mainPanel"].anchorMin = "0.22 -0.00499999"; cuiData["mainPanel"].anchorMax = "0.97 1.008";
-                cuiData["mainPanel"].color = "0 0 0 0.4"; cuiData["mainPanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["mainPanel"].image = ""; cuiData["mainPanel"].fade = 0.5f;
-                //side panel
-                cuiData["sidePanel"].anchorMin = "0.02500001 -0.00499999"; cuiData["sidePanel"].anchorMax = "0.22 1.008";
-                cuiData["sidePanel"].color = "0 0 0 0.75"; cuiData["sidePanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["sidePanel"].image = ""; cuiData["sidePanel"].fade = 0.5f;
-                //title panel
-                cuiData["titlePanel"].anchorMin = "0.0725 0.615"; cuiData["titlePanel"].anchorMax = "0.89 0.87";
-                cuiData["titlePanel"].color = "0 0 0 0"; cuiData["titlePanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["titlePanel"].image = ""; cuiData["titlePanel"].fade = 0.5f;
-                //logo panel
-                cuiData["logoPanel"].anchorMin = "0.05500001 0.68"; cuiData["logoPanel"].anchorMax = "0.2 0.963";
-                cuiData["logoPanel"].color = "0 0 0 0"; cuiData["logoPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["logoPanel"].image = "https://rustplugins.net/products/welcomepanel/2/templatelogo.png"; cuiData["logoPanel"].fade = 0.5f;
-                //close button
-                cuiData["closeButton"].anchorMin = "0.08 0.145"; cuiData["closeButton"].anchorMax = "0.17 0.19";
-                cuiData["closeButton"].color = "0.56 0.20 0.15 0.9"; cuiData["closeButton"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["closeButton"].image = ""; cuiData["closeButton"].fade = 0.5f;
-                //contentPanel
-                cuiData["contentPanel"].anchorMin = "0.25 0.04500001"; cuiData["contentPanel"].anchorMax = "0.94 0.82";
-                cuiData["contentPanel"].color = "0 0 0 0.0"; cuiData["contentPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["contentPanel"].image = ""; cuiData["contentPanel"].fade = 0.5f;
-                //menu buttons
-                //hl button
-                cuiData["highlightBtn"].anchorMin = "0 0"; cuiData["highlightBtn"].anchorMax = "1 1";
-                cuiData["highlightBtn"].color = "0.16 0.34 0.49 1.0"; cuiData["highlightBtn"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["highlightBtn"].image = ""; cuiData["highlightBtn"].fade = 0f;
-                //btn 1
-                cuiData["menuBtn1"].anchorMin = "0.02450001 0.61"; cuiData["menuBtn1"].anchorMax = "0.2195 0.668";
-                cuiData["menuBtn1"].color = "0 0 0 0"; cuiData["menuBtn1"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn1"].image = ""; cuiData["menuBtn1"].fade = 0f;
-                //btn 2
-                cuiData["menuBtn2"].anchorMin = "0.02450001 0.55"; cuiData["menuBtn2"].anchorMax = "0.2195 0.607";
-                cuiData["menuBtn2"].color = "0 0 0 0"; cuiData["menuBtn2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn2"].image = ""; cuiData["menuBtn2"].fade = 0f;
-                //btn 3
-                cuiData["menuBtn3"].anchorMin = "0.02450001 0.49"; cuiData["menuBtn3"].anchorMax = "0.2195 0.547";
-                cuiData["menuBtn3"].color = "0 0 0 0"; cuiData["menuBtn3"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn3"].image = ""; cuiData["menuBtn3"].fade = 0f;
-                //btn 4
-                cuiData["menuBtn4"].anchorMin = "0.02450001 0.43"; cuiData["menuBtn4"].anchorMax = "0.2195 0.487";
-                cuiData["menuBtn4"].color = "0 0 0 0"; cuiData["menuBtn4"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn4"].image = ""; cuiData["menuBtn4"].fade = 0f;
-                //btn 5
-                cuiData["menuBtn5"].anchorMin = "0.02450001 0.37"; cuiData["menuBtn5"].anchorMax = "0.2195 0.427";
-                cuiData["menuBtn5"].color = "0 0 0 0"; cuiData["menuBtn5"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn5"].image = ""; cuiData["menuBtn5"].fade = 0f;
-                //btn 6
-                cuiData["menuBtn6"].anchorMin = "0.02450001 0.31"; cuiData["menuBtn6"].anchorMax = "0.2195 0.367";
-                cuiData["menuBtn6"].color = "0 0 0 0"; cuiData["menuBtn6"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn6"].image = ""; cuiData["menuBtn6"].fade = 0f;
-                //btn 7
-                cuiData["menuBtn7"].anchorMin = "0.02450001 0.25"; cuiData["menuBtn7"].anchorMax = "0.2195 0.307";
-                cuiData["menuBtn7"].color = "0 0 0 0"; cuiData["menuBtn7"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn7"].image = ""; cuiData["menuBtn7"].fade = 0f;
-                //btn 8
-                cuiData["menuBtn8"].anchorMin = "0 0"; cuiData["menuBtn8"].anchorMax = "0 0";
-                cuiData["menuBtn8"].color = "0 0 0 0"; cuiData["menuBtn8"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn8"].image = ""; cuiData["menuBtn8"].fade = 0f;
-                //btn 9
-                cuiData["menuBtn9"].anchorMin = "0 0"; cuiData["menuBtn9"].anchorMax = "0 0";
-                cuiData["menuBtn9"].color = "0 0 0 0"; cuiData["menuBtn9"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn9"].image = ""; cuiData["menuBtn9"].fade = 0f;
-                //btn 10
-                cuiData["menuBtn10"].anchorMin = "0 0"; cuiData["menuBtn10"].anchorMax = "0 0";
-                cuiData["menuBtn10"].color = "0 0 0 0"; cuiData["menuBtn10"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn10"].image = ""; cuiData["menuBtn10"].fade = 0f;
-                //page buttons
-                //next
-                cuiData["nextButton"].anchorMin = "0.95 0.013"; cuiData["nextButton"].anchorMax = "0.99 0.06";
-                cuiData["nextButton"].color = "0 0 0 0"; cuiData["nextButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["nextButton"].image = "https://rustplugins.net/products/welcomepanel/2/btn-nextpage.png"; cuiData["nextButton"].fade = 0f;
-                //prev
-                cuiData["previousButton"].anchorMin = "0.9 0.013"; cuiData["previousButton"].anchorMax = "0.94 0.06";
-                cuiData["previousButton"].color = "0 0 0 0"; cuiData["previousButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["previousButton"].image = "https://rustplugins.net/products/welcomepanel/2/btn-prevpage.png"; cuiData["previousButton"].fade = 0f;
-
                 config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
                 config.tab1Settings.btnTitle = "<size=22>HOME</size>";
                 config.tab2Settings.btnTitle = "<size=22>RULES</size>";
@@ -1845,101 +1727,8 @@ namespace Oxide.Plugins
                 config.tab10Settings.btnTitle = "TEMPLATE #2 supports only 6 buttons by default";
                 config.titleSettings.titleText = "<size=15><color=#E8B84B>OCTAVIAN</color></size>";
             }
-
             if (presetNumber == 3)
             {
-                //background
-                cuiData["background"].anchorMin = "0 0"; cuiData["background"].anchorMax = "1 1";
-                cuiData["background"].color = "0 0 0 0.8"; cuiData["background"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["background"].image = ""; cuiData["background"].fade = 0.5f;
-                //background2
-                cuiData["background2"].anchorMin = "0 0"; cuiData["background2"].anchorMax = "1 1";
-                cuiData["background2"].color = "0 0 0 0.0"; cuiData["background2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["background2"].image = ""; cuiData["background2"].fade = 0f;
-                //offsetContainer
-                cuiData["offsetContainer"].anchorMin = "0.5 0.53"; cuiData["offsetContainer"].anchorMax = "0.5 0.53";
-                cuiData["offsetContainer"].color = "0 0 0 0.0"; cuiData["offsetContainer"].material = "assets/icons/iconmaterial.mat";
-                cuiData["offsetContainer"].image = ""; cuiData["offsetContainer"].fade = 0f;
-                //main panel
-                cuiData["mainPanel"].anchorMin = "0.317 0.175"; cuiData["mainPanel"].anchorMax = "0.80 0.77";
-                cuiData["mainPanel"].color = "0 0 0 0.0"; cuiData["mainPanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["mainPanel"].image = "https://rustplugins.net/products/welcomepanel/3/main.png"; cuiData["mainPanel"].fade = 0.5f;
-                //side panel
-                cuiData["sidePanel"].anchorMin = "0.185 0.175"; cuiData["sidePanel"].anchorMax = "0.32 0.77";
-                cuiData["sidePanel"].color = "0 0 0 0.0"; cuiData["sidePanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["sidePanel"].image = "https://rustplugins.net/products/welcomepanel/3/side.png"; cuiData["sidePanel"].fade = 0.5f;
-                //title panel
-                cuiData["titlePanel"].anchorMin = "0.218 0.725"; cuiData["titlePanel"].anchorMax = "0.9 0.76";
-                cuiData["titlePanel"].color = "0 0 0 0"; cuiData["titlePanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["titlePanel"].image = ""; cuiData["titlePanel"].fade = 0.5f;
-                //logo panel
-                cuiData["logoPanel"].anchorMin = "0.191 0.73"; cuiData["logoPanel"].anchorMax = "0.206 0.757";
-                cuiData["logoPanel"].color = "0 0 0 0"; cuiData["logoPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["logoPanel"].image = "https://rustplugins.net/products/welcomepanel/3/rustlogo.png"; cuiData["logoPanel"].fade = 0.5f;
-                //close button
-                cuiData["closeButton"].anchorMin = "0.72 0.115"; cuiData["closeButton"].anchorMax = "0.80 0.16";
-                cuiData["closeButton"].color = "0.80 0.25 0.16 1"; cuiData["closeButton"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["closeButton"].image = ""; cuiData["closeButton"].fade = 0.5f;
-                //contentPanel
-                cuiData["contentPanel"].anchorMin = "0.32 0.175"; cuiData["contentPanel"].anchorMax = "0.80 0.72";
-                cuiData["contentPanel"].color = "0 0 0 0.0"; cuiData["contentPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["contentPanel"].image = "https://rustplugins.net/products/welcomepanel/3/s-green.png"; cuiData["contentPanel"].fade = 0.5f;
-                //menu buttons  "anchorMin": "0.1855 0.667", "anchorMax": "0.3135 0.714",
-                //hl button
-                cuiData["highlightBtn"].anchorMin = "0 0"; cuiData["highlightBtn"].anchorMax = "1 1";
-                cuiData["highlightBtn"].color = "0.80 0.25 0.16 1"; cuiData["highlightBtn"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["highlightBtn"].image = ""; cuiData["highlightBtn"].fade = 0f;
-                //btn 1
-                cuiData["menuBtn1"].anchorMin = "0.1855 0.664"; cuiData["menuBtn1"].anchorMax = "0.3135 0.714";
-                cuiData["menuBtn1"].color = "0 0 0 0.35"; cuiData["menuBtn1"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn1"].image = "https://rustplugins.net/products/welcomepanel/3/home-icon.png"; cuiData["menuBtn1"].fade = 0f;
-                //btn 2
-                cuiData["menuBtn2"].anchorMin = "0.1855 0.614"; cuiData["menuBtn2"].anchorMax = "0.3135 0.664";
-                cuiData["menuBtn2"].color = "0 0 0 0.45"; cuiData["menuBtn2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn2"].image = "https://rustplugins.net/products/welcomepanel/3/rules-icon.png"; cuiData["menuBtn2"].fade = 0f;
-                //btn 3
-                cuiData["menuBtn3"].anchorMin = "0.1855 0.564"; cuiData["menuBtn3"].anchorMax = "0.3135 0.614";
-                cuiData["menuBtn3"].color = "0 0 0 0.35"; cuiData["menuBtn3"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn3"].image = "https://rustplugins.net/products/welcomepanel/3/wipe-icon.png"; cuiData["menuBtn3"].fade = 0f;
-                //btn 4
-                cuiData["menuBtn4"].anchorMin = "0.1855 0.514"; cuiData["menuBtn4"].anchorMax = "0.3135 0.564";
-                cuiData["menuBtn4"].color = "0 0 0 0.45"; cuiData["menuBtn4"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn4"].image = "https://rustplugins.net/products/welcomepanel/3/steam-icon.png"; cuiData["menuBtn4"].fade = 0f;
-                //btn 5
-                cuiData["menuBtn5"].anchorMin = "0.1855 0.464"; cuiData["menuBtn5"].anchorMax = "0.3135 0.514";
-                cuiData["menuBtn5"].color = "0 0 0 0.35"; cuiData["menuBtn5"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn5"].image = "https://rustplugins.net/products/welcomepanel/3/discord-icon.png"; cuiData["menuBtn5"].fade = 0f;
-                //btn 6
-                cuiData["menuBtn6"].anchorMin = "0.1855 0.414"; cuiData["menuBtn6"].anchorMax = "0.3135 0.464";
-                cuiData["menuBtn6"].color = "0 0 0 0.45"; cuiData["menuBtn6"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn6"].image = "https://rustplugins.net/products/welcomepanel/3/bug-icon.png"; cuiData["menuBtn6"].fade = 0f;
-                //btn 7
-                cuiData["menuBtn7"].anchorMin = "0.1855 0.364"; cuiData["menuBtn7"].anchorMax = "0.3135 0.414";
-                cuiData["menuBtn7"].color = "0 0 0 0.35"; cuiData["menuBtn7"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn7"].image = "https://rustplugins.net/products/welcomepanel/3/admin-icon.png"; cuiData["menuBtn7"].fade = 0f;
-                //btn 8
-                cuiData["menuBtn8"].anchorMin = "0.1855 0.314"; cuiData["menuBtn8"].anchorMax = "0.3135 0.364";
-                cuiData["menuBtn8"].color = "0 0 0 0.45"; cuiData["menuBtn8"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn8"].image = "https://rustplugins.net/products/welcomepanel/3/shop-icon.png"; cuiData["menuBtn8"].fade = 0f;
-                //btn 9
-                cuiData["menuBtn9"].anchorMin = "0.1855 0.264"; cuiData["menuBtn9"].anchorMax = "0.3135 0.314";
-                cuiData["menuBtn9"].color = "0 0 0 0.35"; cuiData["menuBtn9"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn9"].image = "https://rustplugins.net/products/welcomepanel/3/vip-icon.png"; cuiData["menuBtn9"].fade = 0f;
-                //btn 10
-                cuiData["menuBtn10"].anchorMin = "0.1855 0.214"; cuiData["menuBtn10"].anchorMax = "0.3135 0.264";
-                cuiData["menuBtn10"].color = "0 0 0 0.45"; cuiData["menuBtn10"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn10"].image = "https://rustplugins.net/products/welcomepanel/3/rules-icon.png"; cuiData["menuBtn10"].fade = 0f;
-                //page buttons
-                //next
-                cuiData["nextButton"].anchorMin = "0.95 0.013"; cuiData["nextButton"].anchorMax = "0.99 0.06";
-                cuiData["nextButton"].color = "0 0 0 0.45"; cuiData["nextButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["nextButton"].image = "https://rustplugins.net/products/welcomepanel/3/page-next.png"; cuiData["nextButton"].fade = 0f;
-                //prev
-                cuiData["previousButton"].anchorMin = "0.893 0.013"; cuiData["previousButton"].anchorMax = "0.94 0.06";
-                cuiData["previousButton"].color = "0 0 0 0.45"; cuiData["previousButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["previousButton"].image = "https://rustplugins.net/products/welcomepanel/3/page-prev.png"; cuiData["previousButton"].fade = 0f;
-
-
                 config.buttonSettings.mainAlign = TextAnchor.MiddleLeft;
                 config.tab1Settings.btnTitle = "          Home";
                 config.tab2Settings.btnTitle = "          Rules";
@@ -1952,104 +1741,9 @@ namespace Oxide.Plugins
                 config.tab9Settings.btnTitle = "          Vip";
                 config.tab10Settings.btnTitle = "          Updates";
                 config.titleSettings.titleText = "<size=13>OCTAVIAN | x5 | ЕЖЕНЕДЕЛЬНЫЕ ВАЙПЫ | АКТИВНЫЕ АДМИНЫ | НАБОРЫ</size>";
-
             }
-
             if (presetNumber == 4)
             {
-                //background
-                cuiData["background"].anchorMin = "0 0"; cuiData["background"].anchorMax = "1 1";
-                cuiData["background"].color = "0 0 0 0.6"; cuiData["background"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["background"].image = ""; cuiData["background"].fade = 0.5f;
-                //background2
-                cuiData["background2"].anchorMin = "0 0"; cuiData["background2"].anchorMax = "1 1";
-                cuiData["background2"].color = "0 0 0 0.0"; cuiData["background2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["background2"].image = ""; cuiData["background2"].fade = 0f;
-                //offsetContainer
-                cuiData["offsetContainer"].anchorMin = "0.5 0.5"; cuiData["offsetContainer"].anchorMax = "0.5 0.5";
-                cuiData["offsetContainer"].color = "0 0 0 0.0"; cuiData["offsetContainer"].material = "assets/icons/iconmaterial.mat";
-                cuiData["offsetContainer"].image = ""; cuiData["offsetContainer"].fade = 0f;
-                //main panel
-                cuiData["mainPanel"].anchorMin = "0.2 0.155"; cuiData["mainPanel"].anchorMax = "0.8 0.798";
-                cuiData["mainPanel"].color = "0 0 0 0.0"; cuiData["mainPanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["mainPanel"].image = "https://rustplugins.net/products/welcomepanel/4/background.png"; cuiData["mainPanel"].fade = 0.5f;
-                //side panel
-                cuiData["sidePanel"].anchorMin = "0 0"; cuiData["sidePanel"].anchorMax = "0 0";
-                cuiData["sidePanel"].color = "0 0 0 0.0"; cuiData["sidePanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["sidePanel"].image = ""; cuiData["sidePanel"].fade = 0.5f;
-                //title panel
-                cuiData["titlePanel"].anchorMin = "0 0"; cuiData["titlePanel"].anchorMax = "0 0";
-                cuiData["titlePanel"].color = "0 0 0 0"; cuiData["titlePanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["titlePanel"].image = ""; cuiData["titlePanel"].fade = 0.5f;
-                //logo panel
-                cuiData["logoPanel"].anchorMin = "0.2 0.695"; cuiData["logoPanel"].anchorMax = "0.27 0.783";
-                cuiData["logoPanel"].color = "0 0 0 0"; cuiData["logoPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["logoPanel"].image = "https://rustplugins.net/products/welcomepanel/4/logo.png"; cuiData["logoPanel"].fade = 0.5f;
-                //close button
-                cuiData["closeButton"].anchorMin = "0.76 0.7219999"; cuiData["closeButton"].anchorMax = "0.781 0.7609999";
-                cuiData["closeButton"].color = "0 0 0 0"; cuiData["closeButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["closeButton"].image = "https://rustplugins.net/products/welcomepanel/4/btn_close1.png"; cuiData["closeButton"].fade = 0.5f;
-                //contentPanel
-                cuiData["contentPanel"].anchorMin = "0.215 0.175"; cuiData["contentPanel"].anchorMax = "0.785 0.688";
-                cuiData["contentPanel"].color = "0 0 0 0.0"; cuiData["contentPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["contentPanel"].image = ""; cuiData["contentPanel"].fade = 0.5f;
-                //menu buttons
-                //hl button
-                cuiData["highlightBtn"].anchorMin = "0 0"; cuiData["highlightBtn"].anchorMax = "1 1";
-                cuiData["highlightBtn"].color = "0 0 0 0"; cuiData["highlightBtn"].material = "assets/icons/iconmaterial.mat";
-                cuiData["highlightBtn"].image = "https://rustplugins.net/products/welcomepanel/4/btn_hl.png"; cuiData["highlightBtn"].fade = 0.5f;
-                //btn 1
-                cuiData["menuBtn1"].anchorMin = "0.2725 0.72"; cuiData["menuBtn1"].anchorMax = "0.3495 0.763";
-                cuiData["menuBtn1"].color = "0 0 0 0"; cuiData["menuBtn1"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn1"].image = ""; cuiData["menuBtn1"].fade = 0f;
-                //btn 2
-                cuiData["menuBtn2"].anchorMin = "0.3515 0.72"; cuiData["menuBtn2"].anchorMax = "0.4295 0.7640001";
-                cuiData["menuBtn2"].color = "0 0 0 0"; cuiData["menuBtn2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn2"].image = ""; cuiData["menuBtn2"].fade = 0f;
-                //btn 3
-                cuiData["menuBtn3"].anchorMin = "0.4305 0.72"; cuiData["menuBtn3"].anchorMax = "0.5155001 0.763";
-                cuiData["menuBtn3"].color = "0 0 0 0"; cuiData["menuBtn3"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn3"].image = ""; cuiData["menuBtn3"].fade = 0f;
-                //btn 4
-                cuiData["menuBtn4"].anchorMin = "0.5165 0.72"; cuiData["menuBtn4"].anchorMax = "0.6115 0.763";
-                cuiData["menuBtn4"].color = "0 0 0 0"; cuiData["menuBtn4"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn4"].image = ""; cuiData["menuBtn4"].fade = 0f;
-                //btn 5
-                cuiData["menuBtn5"].anchorMin = "0.6125 0.72"; cuiData["menuBtn5"].anchorMax = "0.6914998 0.763";
-                cuiData["menuBtn5"].color = "0 0 0 0"; cuiData["menuBtn5"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn5"].image = ""; cuiData["menuBtn5"].fade = 0f;
-                //btn 6
-                cuiData["menuBtn6"].anchorMin = "0 0"; cuiData["menuBtn6"].anchorMax = "0 0";
-                cuiData["menuBtn6"].color = "0 0 0 0"; cuiData["menuBtn6"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn6"].image = ""; cuiData["menuBtn6"].fade = 0f;
-                //btn 7
-                cuiData["menuBtn7"].anchorMin = "0 0"; cuiData["menuBtn7"].anchorMax = "0 0";
-                cuiData["menuBtn7"].color = "0 0 0 0"; cuiData["menuBtn7"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn7"].image = ""; cuiData["menuBtn7"].fade = 0f;
-                //btn 8
-                cuiData["menuBtn8"].anchorMin = "0 0"; cuiData["menuBtn8"].anchorMax = "0 0";
-                cuiData["menuBtn8"].color = "0 0 0 0"; cuiData["menuBtn8"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn8"].image = ""; cuiData["menuBtn8"].fade = 0f;
-                //btn 9
-                cuiData["menuBtn9"].anchorMin = "0 0"; cuiData["menuBtn9"].anchorMax = "0 0";
-                cuiData["menuBtn9"].color = "0 0 0 0"; cuiData["menuBtn9"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn9"].image = ""; cuiData["menuBtn9"].fade = 0f;
-                //btn 10
-                cuiData["menuBtn10"].anchorMin = "0 0"; cuiData["menuBtn10"].anchorMax = "0 0";
-                cuiData["menuBtn10"].color = "0 0 0 0"; cuiData["menuBtn10"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn10"].image = ""; cuiData["menuBtn10"].fade = 0f;
-                //page buttons
-                //next
-                cuiData["nextButton"].anchorMin = "0.95 0.013"; cuiData["nextButton"].anchorMax = "0.978 0.06";
-                cuiData["nextButton"].color = "0 0 0 0"; cuiData["nextButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["nextButton"].image = "https://rustplugins.net/products/welcomepanel/4/btn_next.png"; cuiData["nextButton"].fade = 0f;
-                //prev
-                cuiData["previousButton"].anchorMin = "0.913 0.013"; cuiData["previousButton"].anchorMax = "0.94 0.06";
-                cuiData["previousButton"].color = "0 0 0 0"; cuiData["previousButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["previousButton"].image = "https://rustplugins.net/products/welcomepanel/4/btn_prev.png"; cuiData["previousButton"].fade = 0f;
-
-
-
                 config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
                 config.tab1Settings.btnTitle = "Home";
                 config.tab2Settings.btnTitle = "Rules";
@@ -2062,102 +1756,9 @@ namespace Oxide.Plugins
                 config.tab9Settings.btnTitle = "TEMPLATE #4 supports only 5 buttons by default";
                 config.tab10Settings.btnTitle = "TEMPLATE #4 supports only 5 buttons by default";
                 config.titleSettings.titleText = "Title panel is hidden, needs adjusting in cuiData.json";
-
             }
-
             if (presetNumber == 5)
             {
-                //background
-                cuiData["background"].anchorMin = "0 0"; cuiData["background"].anchorMax = "1 1";
-                cuiData["background"].color = "0 0 0 0.8"; cuiData["background"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["background"].image = ""; cuiData["background"].fade = 0.5f;
-                //background2
-                cuiData["background2"].anchorMin = "0 0"; cuiData["background2"].anchorMax = "1 1";
-                cuiData["background2"].color = "0.12 0.12 0.12 1"; cuiData["background2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["background2"].image = ""; cuiData["background2"].fade = 0f;
-                //offsetContainer
-                cuiData["offsetContainer"].anchorMin = "0.5 0.5"; cuiData["offsetContainer"].anchorMax = "0.5 0.5";
-                cuiData["offsetContainer"].color = "0 0 0 0.0"; cuiData["offsetContainer"].material = "assets/icons/iconmaterial.mat";
-                cuiData["offsetContainer"].image = "https://rustplugins.net/products/welcomepanel/5/background_55.jpg"; cuiData["offsetContainer"].fade = 0f;
-                //main panel
-                cuiData["mainPanel"].anchorMin = "0.4 -0.015"; cuiData["mainPanel"].anchorMax = "0.98 1.008";
-                cuiData["mainPanel"].color = "0 0 0 0.0"; cuiData["mainPanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["mainPanel"].image = ""; cuiData["mainPanel"].fade = 0.5f;
-                //side panel
-                cuiData["sidePanel"].anchorMin = "0 0"; cuiData["sidePanel"].anchorMax = "0 0";
-                cuiData["sidePanel"].color = "0 0 0 0.75"; cuiData["sidePanel"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["sidePanel"].image = ""; cuiData["sidePanel"].fade = 0.5f;
-                //title panel
-                cuiData["titlePanel"].anchorMin = "0.178 0.745"; cuiData["titlePanel"].anchorMax = "0.9 0.85";
-                cuiData["titlePanel"].color = "0 0 0 0"; cuiData["titlePanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["titlePanel"].image = ""; cuiData["titlePanel"].fade = 0.5f;
-                //logo panel
-                cuiData["logoPanel"].anchorMin = "0 0"; cuiData["logoPanel"].anchorMax = "0 0";
-                cuiData["logoPanel"].color = "0 0 0 0"; cuiData["logoPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["logoPanel"].image = ""; cuiData["logoPanel"].fade = 0.5f;
-                //close button
-                cuiData["closeButton"].anchorMin = "0.54 0.035"; cuiData["closeButton"].anchorMax = "0.62 0.07999998";
-                cuiData["closeButton"].color = "0.56 0.20 0.15 0.9"; cuiData["closeButton"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["closeButton"].image = ""; cuiData["closeButton"].fade = 0.5f;
-                //contentPanel
-                cuiData["contentPanel"].anchorMin = "0.42 0.095"; cuiData["contentPanel"].anchorMax = "0.94 0.748";
-                cuiData["contentPanel"].color = "0 0 0 0.0"; cuiData["contentPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["contentPanel"].image = ""; cuiData["contentPanel"].fade = 0.5f;
-                //menu buttons
-                //hl button
-                cuiData["highlightBtn"].anchorMin = "0 0"; cuiData["highlightBtn"].anchorMax = "1 1";
-                cuiData["highlightBtn"].color = "0.80 0.25 0.16 1"; cuiData["highlightBtn"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["highlightBtn"].image = ""; cuiData["highlightBtn"].fade = 0f;
-                //btn 1
-                cuiData["menuBtn1"].anchorMin = "0.4345 0.88"; cuiData["menuBtn1"].anchorMax = "0.5195 0.938";
-                cuiData["menuBtn1"].color = "0 0 0 0"; cuiData["menuBtn1"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn1"].image = ""; cuiData["menuBtn1"].fade = 0f;
-                //btn 2
-                cuiData["menuBtn2"].anchorMin = "0.5195001 0.875"; cuiData["menuBtn2"].anchorMax = "0.6245 0.942";
-                cuiData["menuBtn2"].color = "0 0 0 0"; cuiData["menuBtn2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn2"].image = ""; cuiData["menuBtn2"].fade = 0f;
-                //btn 3
-                cuiData["menuBtn3"].anchorMin = "0.6245 0.8750001"; cuiData["menuBtn3"].anchorMax = "0.7295 0.942";
-                cuiData["menuBtn3"].color = "0 0 0 0"; cuiData["menuBtn3"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn3"].image = ""; cuiData["menuBtn3"].fade = 0f;
-                //btn 4
-                cuiData["menuBtn4"].anchorMin = "0.7295 0.875"; cuiData["menuBtn4"].anchorMax = "0.8395 0.9419999";
-                cuiData["menuBtn4"].color = "0 0 0 0"; cuiData["menuBtn4"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn4"].image = ""; cuiData["menuBtn4"].fade = 0f;
-                //btn 5
-                cuiData["menuBtn5"].anchorMin = "0.8394999 0.875"; cuiData["menuBtn5"].anchorMax = "0.9394999 0.9419998";
-                cuiData["menuBtn5"].color = "0 0 0 0"; cuiData["menuBtn5"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn5"].image = ""; cuiData["menuBtn5"].fade = 0f;
-                //btn 6
-                cuiData["menuBtn6"].anchorMin = "0.0595 0.1"; cuiData["menuBtn6"].anchorMax = "0.1995 0.182";
-                cuiData["menuBtn6"].color = "0 0 0 0"; cuiData["menuBtn6"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn6"].image = "https://rustplugins.net/products/welcomepanel/5/shopbtn.png"; cuiData["menuBtn6"].fade = 0f;
-                //btn 7
-                cuiData["menuBtn7"].anchorMin = "0.2145 0.09999999"; cuiData["menuBtn7"].anchorMax = "0.3545 0.1819999";
-                cuiData["menuBtn7"].color = "0 0 0 0"; cuiData["menuBtn7"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn7"].image = "https://rustplugins.net/products/welcomepanel/5/discordbtn.png"; cuiData["menuBtn7"].fade = 0f;
-                //btn 8
-                cuiData["menuBtn8"].anchorMin = "0 0"; cuiData["menuBtn8"].anchorMax = "0 0";
-                cuiData["menuBtn8"].color = "0 0 0 0"; cuiData["menuBtn8"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn8"].image = ""; cuiData["menuBtn8"].fade = 0f;
-                //btn 9
-                cuiData["menuBtn9"].anchorMin = "0 0"; cuiData["menuBtn9"].anchorMax = "0 0";
-                cuiData["menuBtn9"].color = "0 0 0 0"; cuiData["menuBtn9"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn9"].image = ""; cuiData["menuBtn9"].fade = 0f;
-                //btn 10
-                cuiData["menuBtn10"].anchorMin = "0 0"; cuiData["menuBtn10"].anchorMax = "0 0";
-                cuiData["menuBtn10"].color = "0 0 0 0"; cuiData["menuBtn10"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn10"].image = ""; cuiData["menuBtn10"].fade = 0f;
-                //page buttons
-                //next
-                cuiData["nextButton"].anchorMin = "0.99 0.013"; cuiData["nextButton"].anchorMax = "1.01 0.48";
-                cuiData["nextButton"].color = "0.25 0.23 0.22 0.95"; cuiData["nextButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["nextButton"].image = "https://rustplugins.net/products/welcomepanel/5/btn-pagedown.png"; cuiData["nextButton"].fade = 0f;
-                //prev
-                cuiData["previousButton"].anchorMin = "0.99 0.488"; cuiData["previousButton"].anchorMax = "1.01 0.975";
-                cuiData["previousButton"].color = "0.25 0.23 0.22 0.95"; cuiData["previousButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["previousButton"].image = "https://rustplugins.net/products/welcomepanel/5/btn-pageup.png"; cuiData["previousButton"].fade = 0f;
-
                 config.buttonSettings.mainAlign = TextAnchor.MiddleCenter;
                 config.tab1Settings.btnTitle = "HOME";
                 config.tab2Settings.btnTitle = "RULES";
@@ -2171,327 +1772,152 @@ namespace Oxide.Plugins
                 config.tab10Settings.btnTitle = "TEMPLATE #5 supports only 7 buttons by default";
                 config.titleSettings.titleText = "This template is partialy made from image \n you have to made your own in order to use this layout.";
             }
+        }
 
-            if (presetNumber == 6)
+        // Слоты пресетов в формате layout OctaUI ({slot: {rect,color,mat,image,fade}})
+        private JObject PresetSlots(int presetNumber)
+        {
+            switch (presetNumber)
             {
-                //background
-                cuiData["background"].anchorMin = "0 0"; cuiData["background"].anchorMax = "1 1";
-                cuiData["background"].color = "0 0 0 0.4"; cuiData["background"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["background"].image = ""; cuiData["background"].fade = 0.5f;
-                //background2
-                cuiData["background2"].anchorMin = "0 0"; cuiData["background2"].anchorMax = "1 1";
-                cuiData["background2"].color = "0 0 0 0.0"; cuiData["background2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["background2"].image = ""; cuiData["background2"].fade = 0f;
-                //offsetContainer
-                cuiData["offsetContainer"].anchorMin = "0.5 0.5"; cuiData["offsetContainer"].anchorMax = "0.5 0.5";
-                cuiData["offsetContainer"].color = "0 0 0 0.0"; cuiData["offsetContainer"].material = "assets/icons/iconmaterial.mat";
-                cuiData["offsetContainer"].image = ""; cuiData["offsetContainer"].fade = 0f;
-                //main panel
-                cuiData["mainPanel"].anchorMin = "0.0 0.0"; cuiData["mainPanel"].anchorMax = "1 1";
-                cuiData["mainPanel"].color = "0 0 0 0.0"; cuiData["mainPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["mainPanel"].image = ""; cuiData["mainPanel"].fade = 0.5f;
-                //side panel
-                cuiData["sidePanel"].anchorMin = "0.02500001 -0.00499999"; cuiData["sidePanel"].anchorMax = "0.22 1.008";
-                cuiData["sidePanel"].color = "0 0 0 0.0"; cuiData["sidePanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["sidePanel"].image = ""; cuiData["sidePanel"].fade = 0.5f;
-                //title panel
-                cuiData["titlePanel"].anchorMin = "0.0725 0.615"; cuiData["titlePanel"].anchorMax = "0.89 0.87";
-                cuiData["titlePanel"].color = "0 0 0 0"; cuiData["titlePanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["titlePanel"].image = ""; cuiData["titlePanel"].fade = 0.5f;
-                //logo panel
-                cuiData["logoPanel"].anchorMin = "0.05500001 0.78"; cuiData["logoPanel"].anchorMax = "0.2 0.963";
-                cuiData["logoPanel"].color = "0 0 0 0"; cuiData["logoPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["logoPanel"].image = "https://rustplugins.net/products/welcomepanel/6/logo1.png"; cuiData["logoPanel"].fade = 0.5f;
-                //close button
-                cuiData["closeButton"].anchorMin = "0.08 0.145"; cuiData["closeButton"].anchorMax = "0.17 0.19";
-                cuiData["closeButton"].color = "0.56 0.20 0.15 0.9"; cuiData["closeButton"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["closeButton"].image = ""; cuiData["closeButton"].fade = 0.5f;
-                //contentPanel
-                cuiData["contentPanel"].anchorMin = "0.25 0.04500001"; cuiData["contentPanel"].anchorMax = "0.94 0.82";
-                cuiData["contentPanel"].color = "0 0 0 0.0"; cuiData["contentPanel"].material = "assets/icons/iconmaterial.mat";
-                cuiData["contentPanel"].image = ""; cuiData["contentPanel"].fade = 0.5f;
-                //menu buttons
-                //hl button
-                cuiData["highlightBtn"].anchorMin = "0 0"; cuiData["highlightBtn"].anchorMax = "1 1";
-                cuiData["highlightBtn"].color = "0.16 0.34 0.49 1.0"; cuiData["highlightBtn"].material = "assets/content/ui/uibackgroundblur.mat";
-                cuiData["highlightBtn"].image = ""; cuiData["highlightBtn"].fade = 0f;
-                //btn 1
-                cuiData["menuBtn1"].anchorMin = "0.02450001 0.61"; cuiData["menuBtn1"].anchorMax = "0.2195 0.668";
-                cuiData["menuBtn1"].color = "0 0 0 0"; cuiData["menuBtn1"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn1"].image = ""; cuiData["menuBtn1"].fade = 0f;
-                //btn 2
-                cuiData["menuBtn2"].anchorMin = "0.02450001 0.55"; cuiData["menuBtn2"].anchorMax = "0.2195 0.607";
-                cuiData["menuBtn2"].color = "0 0 0 0"; cuiData["menuBtn2"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn2"].image = ""; cuiData["menuBtn2"].fade = 0f;
-                //btn 3
-                cuiData["menuBtn3"].anchorMin = "0.02450001 0.49"; cuiData["menuBtn3"].anchorMax = "0.2195 0.547";
-                cuiData["menuBtn3"].color = "0 0 0 0"; cuiData["menuBtn3"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn3"].image = ""; cuiData["menuBtn3"].fade = 0f;
-                //btn 4
-                cuiData["menuBtn4"].anchorMin = "0.02450001 0.43"; cuiData["menuBtn4"].anchorMax = "0.2195 0.487";
-                cuiData["menuBtn4"].color = "0 0 0 0"; cuiData["menuBtn4"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn4"].image = ""; cuiData["menuBtn4"].fade = 0f;
-                //btn 5
-                cuiData["menuBtn5"].anchorMin = "0.02450001 0.37"; cuiData["menuBtn5"].anchorMax = "0.2195 0.427";
-                cuiData["menuBtn5"].color = "0 0 0 0"; cuiData["menuBtn5"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn5"].image = ""; cuiData["menuBtn5"].fade = 0f;
-                //btn 6
-                cuiData["menuBtn6"].anchorMin = "0.02450001 0.31"; cuiData["menuBtn6"].anchorMax = "0.2195 0.367";
-                cuiData["menuBtn6"].color = "0 0 0 0"; cuiData["menuBtn6"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn6"].image = ""; cuiData["menuBtn6"].fade = 0f;
-                //btn 7
-                cuiData["menuBtn7"].anchorMin = "0.02450001 0.25"; cuiData["menuBtn7"].anchorMax = "0.2195 0.307";
-                cuiData["menuBtn7"].color = "0 0 0 0"; cuiData["menuBtn7"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn7"].image = ""; cuiData["menuBtn7"].fade = 0f;
-                //btn 8
-                cuiData["menuBtn8"].anchorMin = "0 0"; cuiData["menuBtn8"].anchorMax = "0 0";
-                cuiData["menuBtn8"].color = "0 0 0 0"; cuiData["menuBtn8"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn8"].image = ""; cuiData["menuBtn8"].fade = 0f;
-                //btn 9
-                cuiData["menuBtn9"].anchorMin = "0 0"; cuiData["menuBtn9"].anchorMax = "0 0";
-                cuiData["menuBtn9"].color = "0 0 0 0"; cuiData["menuBtn9"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn9"].image = ""; cuiData["menuBtn9"].fade = 0f;
-                //btn 10
-                cuiData["menuBtn10"].anchorMin = "0 0"; cuiData["menuBtn10"].anchorMax = "0 0";
-                cuiData["menuBtn10"].color = "0 0 0 0"; cuiData["menuBtn10"].material = "assets/icons/iconmaterial.mat";
-                cuiData["menuBtn10"].image = ""; cuiData["menuBtn10"].fade = 0f;
-                //page buttons
-                //next
-                cuiData["nextButton"].anchorMin = "0.95 0.013"; cuiData["nextButton"].anchorMax = "0.99 0.06";
-                cuiData["nextButton"].color = "0 0 0 0"; cuiData["nextButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["nextButton"].image = "https://rustplugins.net/products/welcomepanel/2/btn-nextpage.png"; cuiData["nextButton"].fade = 0f;
-                //prev
-                cuiData["previousButton"].anchorMin = "0.9 0.013"; cuiData["previousButton"].anchorMax = "0.94 0.06";
-                cuiData["previousButton"].color = "0 0 0 0"; cuiData["previousButton"].material = "assets/icons/iconmaterial.mat";
-                cuiData["previousButton"].image = "https://rustplugins.net/products/welcomepanel/2/btn-prevpage.png"; cuiData["previousButton"].fade = 0f;
+            case 1 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.8", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.32 0.175 0.80 0.748", ["color"] = "0 0 0 0.75", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["sidePanel"] = new JObject { ["rect"] = "0.185 0.175 0.31 0.748", ["color"] = "0 0 0 0.75", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.178 0.745 0.9 0.85", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.565 0.76 0.610 0.833", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["closeButton"] = new JObject { ["rect"] = "0.72 0.115 0.80 0.16", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.32 0.175 0.80 0.748", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.16 0.34 0.49 1.0", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.1845 0.700 0.3095 0.748", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/home.png", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.1845 0.650 0.3095 0.697", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/rules.png", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.1845 0.600 0.3095 0.647", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/shop.png", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.1845 0.550 0.3095 0.597", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/wipe.png", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.1845 0.500 0.3095 0.547", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/star.png", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.1845 0.450 0.3095 0.497", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/discord.png", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.1845 0.400 0.3095 0.447", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/admin.png", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.1845 0.350 0.3095 0.397", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/shop.png", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.1845 0.300 0.3095 0.347", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/rules.png", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.1845 0.250 0.3095 0.297", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/1/bug.png", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.95 0.013 0.99 0.06", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/page-next.png", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.9 0.013 0.94 0.06", ["color"] = "0.16 0.34 0.49 0.6", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/page-prev.png", ["fade"] = 0f },
+            };
+
+            case 2 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.85", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.22 -0.00499999 0.97 1.008", ["color"] = "0 0 0 0.4", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["sidePanel"] = new JObject { ["rect"] = "0.02500001 -0.00499999 0.22 1.008", ["color"] = "0 0 0 0.75", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.0725 0.615 0.89 0.87", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.05500001 0.68 0.2 0.963", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/2/templatelogo.png", ["fade"] = 0.5f },
+                ["closeButton"] = new JObject { ["rect"] = "0.08 0.145 0.17 0.19", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.25 0.04500001 0.94 0.82", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.16 0.34 0.49 1.0", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.02450001 0.61 0.2195 0.668", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.02450001 0.55 0.2195 0.607", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.02450001 0.49 0.2195 0.547", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.02450001 0.43 0.2195 0.487", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.02450001 0.37 0.2195 0.427", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.02450001 0.31 0.2195 0.367", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.02450001 0.25 0.2195 0.307", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.95 0.013 0.99 0.06", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/2/btn-nextpage.png", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.9 0.013 0.94 0.06", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/2/btn-prevpage.png", ["fade"] = 0f },
+            };
+
+            case 3 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.8", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.53 0.5 0.53", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.317 0.175 0.80 0.77", ["color"] = "0 0 0 0.0", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/main.png", ["fade"] = 0.5f },
+                ["sidePanel"] = new JObject { ["rect"] = "0.185 0.175 0.32 0.77", ["color"] = "0 0 0 0.0", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/side.png", ["fade"] = 0.5f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.218 0.725 0.9 0.76", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.191 0.73 0.206 0.757", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/rustlogo.png", ["fade"] = 0.5f },
+                ["closeButton"] = new JObject { ["rect"] = "0.72 0.115 0.80 0.16", ["color"] = "0.80 0.25 0.16 1", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.32 0.175 0.80 0.72", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/s-green.png", ["fade"] = 0.5f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.80 0.25 0.16 1", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.1855 0.664 0.3135 0.714", ["color"] = "0 0 0 0.35", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/home-icon.png", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.1855 0.614 0.3135 0.664", ["color"] = "0 0 0 0.45", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/rules-icon.png", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.1855 0.564 0.3135 0.614", ["color"] = "0 0 0 0.35", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/wipe-icon.png", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.1855 0.514 0.3135 0.564", ["color"] = "0 0 0 0.45", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/steam-icon.png", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.1855 0.464 0.3135 0.514", ["color"] = "0 0 0 0.35", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/discord-icon.png", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.1855 0.414 0.3135 0.464", ["color"] = "0 0 0 0.45", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/bug-icon.png", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.1855 0.364 0.3135 0.414", ["color"] = "0 0 0 0.35", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/admin-icon.png", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0.1855 0.314 0.3135 0.364", ["color"] = "0 0 0 0.45", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/shop-icon.png", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0.1855 0.264 0.3135 0.314", ["color"] = "0 0 0 0.35", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/vip-icon.png", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0.1855 0.214 0.3135 0.264", ["color"] = "0 0 0 0.45", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/rules-icon.png", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.95 0.013 0.99 0.06", ["color"] = "0 0 0 0.45", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/page-next.png", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.893 0.013 0.94 0.06", ["color"] = "0 0 0 0.45", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/3/page-prev.png", ["fade"] = 0f },
+            };
+
+            case 4 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.6", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.2 0.155 0.8 0.798", ["color"] = "0 0 0 0.0", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/4/background.png", ["fade"] = 0.5f },
+                ["sidePanel"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0.0", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["titlePanel"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["logoPanel"] = new JObject { ["rect"] = "0.2 0.695 0.27 0.783", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/4/logo.png", ["fade"] = 0.5f },
+                ["closeButton"] = new JObject { ["rect"] = "0.76 0.7219999 0.781 0.7609999", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/4/btn_close1.png", ["fade"] = 0.5f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.215 0.175 0.785 0.688", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/4/btn_hl.png", ["fade"] = 0.5f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.2725 0.72 0.3495 0.763", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.3515 0.72 0.4295 0.7640001", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.4305 0.72 0.5155001 0.763", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.5165 0.72 0.6115 0.763", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.6125 0.72 0.6914998 0.763", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.95 0.013 0.978 0.06", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/4/btn_next.png", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.913 0.013 0.94 0.06", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/4/btn_prev.png", ["fade"] = 0f },
+            };
+
+            case 5 : return new JObject
+            {
+                ["background"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0 0 0 0.8", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["background2"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.12 0.12 0.12 1", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["offsetContainer"] = new JObject { ["rect"] = "0.5 0.5 0.5 0.5", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/5/background_55.jpg", ["fade"] = 0f },
+                ["mainPanel"] = new JObject { ["rect"] = "0.4 -0.015 0.98 1.008", ["color"] = "0 0 0 0.0", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["sidePanel"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0.75", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["titlePanel"] = new JObject { ["rect"] = "0.178 0.745 0.9 0.85", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["logoPanel"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["closeButton"] = new JObject { ["rect"] = "0.54 0.035 0.62 0.07999998", ["color"] = "0.56 0.20 0.15 0.9", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["contentPanel"] = new JObject { ["rect"] = "0.42 0.095 0.94 0.748", ["color"] = "0 0 0 0.0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0.5f },
+                ["highlightBtn"] = new JObject { ["rect"] = "0 0 1 1", ["color"] = "0.80 0.25 0.16 1", ["mat"] = "assets/content/ui/uibackgroundblur.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn1"] = new JObject { ["rect"] = "0.4345 0.88 0.5195 0.938", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn2"] = new JObject { ["rect"] = "0.5195001 0.875 0.6245 0.942", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn3"] = new JObject { ["rect"] = "0.6245 0.8750001 0.7295 0.942", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn4"] = new JObject { ["rect"] = "0.7295 0.875 0.8395 0.9419999", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn5"] = new JObject { ["rect"] = "0.8394999 0.875 0.9394999 0.9419998", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn6"] = new JObject { ["rect"] = "0.0595 0.1 0.1995 0.182", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/5/shopbtn.png", ["fade"] = 0f },
+                ["menuBtn7"] = new JObject { ["rect"] = "0.2145 0.09999999 0.3545 0.1819999", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/5/discordbtn.png", ["fade"] = 0f },
+                ["menuBtn8"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn9"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["menuBtn10"] = new JObject { ["rect"] = "0 0 0 0", ["color"] = "0 0 0 0", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "", ["fade"] = 0f },
+                ["nextButton"] = new JObject { ["rect"] = "0.99 0.013 1.01 0.48", ["color"] = "0.25 0.23 0.22 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/5/btn-pagedown.png", ["fade"] = 0f },
+                ["previousButton"] = new JObject { ["rect"] = "0.99 0.488 1.01 0.975", ["color"] = "0.25 0.23 0.22 0.95", ["mat"] = "assets/icons/iconmaterial.mat", ["image"] = "https://rustplugins.net/products/welcomepanel/5/btn-pageup.png", ["fade"] = 0f },
+            };
+
+
+
+
             }
-            SaveConfig();
-            SaveData();
+            return new JObject();
         }
 
         #endregion
 
-        #region [CUI Classes]
-
-        public class CUIClass
-        {
-            public static CuiElementContainer CreateOverlay(string _name, string _color, string _anchorMin, string _anchorMax, bool _cursorOn = false, float _fade = 0f, string _mat = "assets/content/ui/uibackgroundblur.mat")
-            {
-
-
-                var _element = new CuiElementContainer()
-                {
-                    {
-                        new CuiPanel
-                        {
-                            Image = { Color = _color, Material = _mat, FadeIn = _fade},
-                            RectTransform = { AnchorMin = _anchorMin, AnchorMax = _anchorMax },
-                            CursorEnabled = _cursorOn
-                        },
-                        new CuiElement().Parent = "Overlay",
-                        _name
-                    }
-                };
-                return _element;
-            }
-
-            public static void CreatePanel(ref CuiElementContainer _container, string _name, string _parent, string _color, string _anchorMin, string _anchorMax, bool _cursorOn = false, float _fade = 0f, string _mat2 = "assets/content/ui/uibackgroundblur.mat", string _sprite = "", string _OffsetMin = "", string _OffsetMax = "")
-            {
-                _container.Add(new CuiPanel
-                {
-                    Image = { Color = _color, Material = _mat2, FadeIn = _fade },
-                    RectTransform = { AnchorMin = _anchorMin, AnchorMax = _anchorMax, OffsetMin = _OffsetMin, OffsetMax = _OffsetMax },
-                    CursorEnabled = _cursorOn
-                },
-                _parent,
-                _name);
-            }
-
-            public static void CreateImage(ref CuiElementContainer _container, string _parent, string _image, string _anchorMin, string _anchorMax, float _fade = 0f)
-            {
-                if (_image.StartsWith("http") || _image.StartsWith("www"))
-                {
-                    _container.Add(new CuiElement
-                    {
-                        Parent = _parent,
-                        Components =
-                        {
-                            new CuiRawImageComponent { Url = _image, Sprite = "assets/content/textures/generic/fulltransparent.tga", FadeIn = _fade},
-                            new CuiRectTransformComponent { AnchorMin = _anchorMin, AnchorMax = _anchorMax }
-                        }
-                    });
-                }
-                else
-                {
-                    _container.Add(new CuiElement
-                    {
-                        Parent = _parent,
-                        Components =
-                        {
-                            new CuiRawImageComponent { Png = _image, Sprite = "assets/content/textures/generic/fulltransparent.tga", FadeIn = _fade},
-                            new CuiRectTransformComponent { AnchorMin = _anchorMin, AnchorMax = _anchorMax }
-                        }
-                    });
-                }
-            }
-
-            public static void CreateInput(ref CuiElementContainer _container, string _name, string _parent, string _color, int _size, string _anchorMin, string _anchorMax, string _font = "permanentmarker.ttf", string _command = "command.processinput", TextAnchor _align = TextAnchor.MiddleCenter)
-            {
-                _container.Add(new CuiElement
-                {
-                    Parent = _parent,
-                    Name = _name,
-
-                    Components =
-                    {
-                        new CuiInputFieldComponent
-                        {
-
-                            Text = "0",
-                            CharsLimit = 250,
-                            Color = _color,
-                            IsPassword = false,
-                            Command = _command,
-                            Font = _font,
-                            FontSize = _size,
-                            Align = _align
-                        },
-
-                        new CuiRectTransformComponent
-                        {
-                            AnchorMin = _anchorMin,
-                            AnchorMax = _anchorMax
-
-                        }
-
-                    },
-                });
-            }
-
-            public static void CreateText(ref CuiElementContainer _container, string _name, string _parent, string _color, string _text, int _size, string _anchorMin, string _anchorMax, TextAnchor _align = TextAnchor.MiddleCenter, string _font = "robotocondensed-bold.ttf", string _outlineColor = "", string _outlineScale = "")
-            {
-
-
-                _container.Add(new CuiElement
-                {
-                    Parent = _parent,
-                    Name = _name,
-                    Components =
-                    {
-                        new CuiTextComponent
-                        {
-                            Text = _text,
-                            FontSize = _size,
-                            Font = _font,
-                            Align = _align,
-                            Color = _color,
-                            FadeIn = 0f,
-                        },
-
-                        new CuiOutlineComponent
-                        {
-
-                            Color = _outlineColor,
-                            Distance = _outlineScale
-
-                        },
-
-                        new CuiRectTransformComponent
-                        {
-                             AnchorMin = _anchorMin,
-                             AnchorMax = _anchorMax
-                        }
-                    },
-                });
-            }
-
-            public static void CreateButton(ref CuiElementContainer _container, string _name, string _parent, string _color, string _text, int _size, string _anchorMin, string _anchorMax, string _command = "", string _close = "", string _textColor = "", float _fade = 1f, TextAnchor _align = TextAnchor.MiddleCenter, string _font = "", string _mat = "assets/content/ui/uibackgroundblur.mat")
-            {
-
-                _container.Add(new CuiButton
-                {
-                    Button = { Close = _close, Command = _command, Color = _color, Material = _mat, FadeIn = _fade },
-                    RectTransform = { AnchorMin = _anchorMin, AnchorMax = _anchorMax },
-                    Text = { Text = _text, FontSize = _size, Align = _align, Color = _textColor, Font = _font, FadeIn = _fade }
-                },
-                _parent,
-                _name);
-            }
-
-        }
-        #endregion
-
-        #region [Cui Data]
-
-        private void SaveData()
-        {
-            if (cuiData != null)
-                Interface.Oxide.DataFileSystem.WriteObject($"{Name}/CuiData", cuiData);
-        }
-
-        private Dictionary<string, CuiData> cuiData;
-
-        private class CuiData
-        {
-            public string anchorMin;
-            public string anchorMax;
-            public string color;
-            public string material;
-            public string image;
-            public float fade;
-        }
-
-        private void LoadData()
-        {
-            if (Interface.Oxide.DataFileSystem.ExistsDatafile($"{Name}/CuiData"))
-            {
-                cuiData = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, CuiData>>($"{Name}/CuiData");
-            }
-            else
-            {
-                cuiData = new Dictionary<string, CuiData>();
-                SaveData();
-            }
-        }
-
-        #endregion
-
-        #region [Page Data]
-
-        private void SavePageData()
-        {
-            if (pageData != null)
-                Interface.Oxide.DataFileSystem.WriteObject($"{Name}/PageData", pageData);
-        }
-
-        private Dictionary<string, PageData> pageData;
-
-        private class PageData
-        {
-            public List<string> page2 = new List<string> { };
-            public List<string> page3 = new List<string> { };
-            public List<string> page4 = new List<string> { };
-            public List<string> page5 = new List<string> { };
-            public List<string> page6 = new List<string> { };
-            public List<string> page7 = new List<string> { };
-            public List<string> page8 = new List<string> { };
-            public List<string> page9 = new List<string> { };
-            public List<string> page10 = new List<string> { };
-
-        }
-
-        private void LoadPageData()
-        {
-            if (Interface.Oxide.DataFileSystem.ExistsDatafile($"{Name}/PageData"))
-            {
-                pageData = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, PageData>>($"{Name}/PageData");
-            }
-            else
-            {
-                pageData = new Dictionary<string, PageData>();
-                SavePageData();
-            }
-        }
 
         #region [Boss pages — генерация из OctaBoss.json]
 
@@ -2697,6 +2123,124 @@ namespace Oxide.Plugins
 
         #endregion
 
+
+        #region [CUI Framework]
+
+        // Вся отрисовка идёт через фреймворк OctaUI — класс оставлен как тонкий шим
+        // со старыми сигнатурами, чтобы тело плагина не переписывать.
+        public class CUIClass
+        {
+            internal static Plugin Ui;
+
+            private static string AlignStr(TextAnchor a) => a.ToString().ToLowerInvariant();
+            private static string Off(string oMin, string oMax) =>
+                string.IsNullOrEmpty(oMin) && string.IsNullOrEmpty(oMax) ? null : (oMin + " " + oMax).Trim();
+
+            public static CuiElementContainer CreateOverlay(string _name, string _color, string _anchorMin, string _anchorMax, bool _cursorOn = false, float _fade = 0f, string _mat = "assets/content/ui/uibackgroundblur.mat")
+            {
+                var c = new CuiElementContainer();
+                Ui?.Call("Panel", c, "Overlay", _name, new JObject
+                {
+                    ["plugin"] = "OctaWelcome",
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
+                    ["cursor"] = _cursorOn, ["fadeIn"] = _fade, ["mat"] = _mat
+                });
+                return c;
+            }
+
+            public static void CreatePanel(ref CuiElementContainer _container, string _name, string _parent, string _color, string _anchorMin, string _anchorMax, bool _cursorOn = false, float _fade = 0f, string _mat2 = "assets/content/ui/uibackgroundblur.mat", string _sprite = "", string _OffsetMin = "", string _OffsetMax = "")
+            {
+                Ui?.Call("Panel", _container, _parent, _name, new JObject
+                {
+                    ["plugin"] = "OctaWelcome",
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["offset"] = Off(_OffsetMin, _OffsetMax),
+                    ["color"] = _color, ["cursor"] = _cursorOn, ["fadeIn"] = _fade, ["mat"] = _mat2
+                });
+            }
+
+            public static void CreateImage(ref CuiElementContainer _container, string _parent, string _image, string _anchorMin, string _anchorMax, float _fade = 0f)
+            {
+                Ui?.Call("Image", _container, _parent, null, new JObject
+                {
+                    ["plugin"] = "OctaWelcome",
+                    ["rect"] = _anchorMin + " " + _anchorMax,
+                    ["src"] = _image, ["fadeIn"] = _fade
+                });
+            }
+
+            // ItemIcon: иконка предмета + опциональная подпись xN (заменяет пару RawImage+Text)
+            public static void CreateItemIcon(ref CuiElementContainer _container, string _name, string _parent, string _shortname, ulong _skin = 0UL, int _amount = 0, string _anchorMin = "0.10 0.10", string _anchorMax = "0.90 0.90", float _fadeIn = 0.2f)
+            {
+                Ui?.Call("ItemIcon", _container, _parent, _name, new JObject
+                {
+                    ["plugin"] = "OctaWelcome",
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["item"] = _shortname,
+                    ["skin"] = _skin, ["amount"] = _amount, ["fadeIn"] = _fadeIn
+                });
+            }
+
+            public static void CreateText(ref CuiElementContainer _container, string _name, string _parent, string _color, string _text, int _size, string _anchorMin, string _anchorMax, TextAnchor _align = TextAnchor.MiddleCenter, string _font = "robotocondensed-bold.ttf", string _outlineColor = "", string _outlineScale = "")
+            {
+                Ui?.Call("Text", _container, _parent, _name, new JObject
+                {
+                    ["plugin"] = "OctaWelcome",
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
+                    ["text"] = _text, ["size"] = _size, ["align"] = AlignStr(_align),
+                    ["font"] = _font, ["outline"] = _outlineColor, ["outlineScale"] = _outlineScale
+                });
+            }
+
+            public static void CreateButton(ref CuiElementContainer _container, string _name, string _parent, string _color, string _text, int _size, string _anchorMin, string _anchorMax, string _command = "", string _close = "", string _textColor = "", float _fade = 1f, TextAnchor _align = TextAnchor.MiddleCenter, string _font = "", string _mat = "assets/content/ui/uibackgroundblur.mat")
+            {
+                Ui?.Call("Button", _container, _parent, _name, new JObject
+                {
+                    ["plugin"] = "OctaWelcome",
+                    ["rect"] = _anchorMin + " " + _anchorMax, ["color"] = _color,
+                    ["text"] = _text, ["size"] = _size, ["align"] = AlignStr(_align),
+                    ["font"] = _font, ["cmd"] = _command, ["close"] = _close,
+                    ["textColor"] = _textColor, ["fadeIn"] = _fade, ["mat"] = _mat
+                });
+            }
+        }
+        #endregion
+
+        #region [Page Data]
+
+        private void SavePageData()
+        {
+            if (pageData != null)
+                Interface.Oxide.DataFileSystem.WriteObject($"{Name}/PageData", pageData);
+        }
+
+        private Dictionary<string, PageData> pageData;
+
+        private class PageData
+        {
+            public List<string> page2 = new List<string> { };
+            public List<string> page3 = new List<string> { };
+            public List<string> page4 = new List<string> { };
+            public List<string> page5 = new List<string> { };
+            public List<string> page6 = new List<string> { };
+            public List<string> page7 = new List<string> { };
+            public List<string> page8 = new List<string> { };
+            public List<string> page9 = new List<string> { };
+            public List<string> page10 = new List<string> { };
+
+        }
+
+        private void LoadPageData()
+        {
+            if (Interface.Oxide.DataFileSystem.ExistsDatafile($"{Name}/PageData"))
+            {
+                pageData = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, PageData>>($"{Name}/PageData");
+            }
+            else
+            {
+                pageData = new Dictionary<string, PageData>();
+                SavePageData();
+            }
+        }
+
         #endregion
 
         #region [Preset Data]
@@ -2713,6 +2257,8 @@ namespace Oxide.Plugins
         {
             public bool presetInit;
             public int presetNumber;
+            // layout CuiData.json уже перенесён в слоты OctaUI — миграция одноразовая
+            public bool layoutMigrated;
             public List<ulong> seen = new List<ulong> { };
 
         }
@@ -2744,7 +2290,7 @@ namespace Oxide.Plugins
             lang.RegisterMessages(new Dictionary<string, string>
             {
                 ["_noPerm"] = "<color=#E8B84B>[OctaWelcome]</color> У вас нет разрешения на это.",
-                ["_dataWiped"] = "<color=#E8B84B>[OctaWelcome]</color> CuiData игроков очищена. Перезагрузите плагин.",
+                ["_dataWiped"] = "<color=#E8B84B>[OctaWelcome]</color> Layout игроков очищен. Перезагрузите плагин.",
                 ["_typeKdrshow"] = "<color=#E8B84B>[OctaWelcome]</color> Наберите /kdrshow, чтобы открыть панель KDR.",
                 ["_typeKdrhide"] = "<color=#E8B84B>[OctaWelcome]</color> Наберите /kdrhide, чтобы закрыть панель KDR.",
                 ["_hidden"] = "<color=#E8B84B>[OctaWelcome]</color> Скрыто.",
@@ -2757,7 +2303,7 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region [Config] 
+        #region [Config]
 
         private Configuration config;
         protected override void LoadConfig()
@@ -3681,6 +3227,7 @@ namespace Oxide.Plugins
                 };
             }
         }
+
         #endregion
 
     }
