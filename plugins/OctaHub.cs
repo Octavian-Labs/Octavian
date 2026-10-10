@@ -1236,28 +1236,23 @@ namespace Oxide.Plugins
 
             if (st.Page == 1)
             {
-                // ── приветствие + онлайн ────────────────────────────────────
-                CUIClass.CreateText(ref ui, "oh_cnt_hello", UiCnt, "text",
-                    $"<b>Добро пожаловать, <color=@accent>{player.displayName}</color>!</b>", 16,
-                    "0.02 0.90", "0.70 0.985", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-                CUIClass.CreateText(ref ui, "oh_cnt_online", UiCnt, "muted",
-                    $"онлайн: <color=@accent>{BasePlayer.activePlayerList.Count}</color>", 11,
-                    "0.70 0.90", "0.985 0.985", TextAnchor.MiddleRight, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
-
-                // ── стильные карточки: вайп / событие / наборы ──────────────
+                // ── компактная полоса виджетов сверху ───────────────────────
                 var ev = EventCardText();
                 var (kitsOk, kitsAll) = KitsCounts(player);
-                DrawHomeCard(ref ui, "0.015 0.50-0.325 0.885".Split('-'), "accent", "explosive.timed",
-                    "ДО ВАЙПА", WipeText(), "подробнее", "octahub_infotab 4 1 home");
-                DrawHomeCard(ref ui, "0.345 0.50-0.655 0.885".Split('-'), ev.Spec, "rocket.launcher",
+                DrawHomeCard(ref ui, "0.015 0.865-0.325 0.985".Split('-'), "accent", "explosive.timed",
+                    "ДО ВАЙПА", WipeText(), "", "octahub_infotab 4 1 home");
+                DrawHomeCard(ref ui, "0.345 0.865-0.655 0.985".Split('-'), ev.Spec, "rocket.launcher",
                     "СОБЫТИЕ", ev.Value, ev.Sub, "octahub_sec events");
-                DrawHomeCard(ref ui, "0.675 0.50-0.985 0.885".Split('-'), "green", "supply.signal",
-                    "НАБОРЫ", kitsOk.ToString(), $"из {kitsAll} доступно — открыть", "octahub_sec kits");
+                DrawHomeCard(ref ui, "0.675 0.865-0.985 0.985".Split('-'), "green", "supply.signal",
+                    "НАБОРЫ", $"{kitsOk} из {kitsAll}", "открыть", "octahub_sec kits");
 
-                // ── персональная статистика одной строкой ───────────────────
+                // ── приветствие + статистика ────────────────────────────────
+                CUIClass.CreateText(ref ui, "oh_cnt_hello", UiCnt, "text",
+                    $"<b>Добро пожаловать, <color=@accent>{player.displayName}</color>!</b>", 14,
+                    "0.02 0.785", "0.985 0.85", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 CUIClass.CreateText(ref ui, "oh_cnt_stats", UiCnt, "muted",
                     HomeStatsText(player), 11,
-                    "0.02 0.43", "0.985 0.485", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    "0.02 0.745", "0.985 0.785", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
             }
 
             // ── текст: первая страница — hero из конфига, 2+ — PageData ─────
@@ -1276,20 +1271,20 @@ namespace Oxide.Plugins
             }
 
             if (headTitle != null)
-                CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 18,
-                    "0.035 0.35", "0.965 0.425", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 22,
+                    "0.035 0.655", "0.965 0.725", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             if (headSub != null)
                 CUIClass.CreateText(ref ui, "oh_cnt_sub", UiCnt, "muted", StripSize(R(player, headSub)), 12,
-                    "0.035 0.315", "0.965 0.35", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.305", "0.965 0.31", false, 0f, Mat);
+                    "0.035 0.615", "0.965 0.655", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.605", "0.965 0.61", false, 0f, Mat);
 
             CUIClass.CreateText(ref ui, "oh_cnt_text", UiCnt, tab.mainFontColor, R(player, string.Join("\n", body)),
-                tab.mainFontSize, "0.035 0.06", "0.965 0.30", tab.mainAlign,
+                tab.mainFontSize, "0.035 0.10", "0.965 0.60", tab.mainAlign,
                 tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
 
             if (foot.Count > 0)
                 CUIClass.CreateText(ref ui, "oh_cnt_foot", UiCnt, "muted", R(player, string.Join("\n", foot)), 11,
-                    "0.035 0.01", "0.875 0.055", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    "0.035 0.02", "0.875 0.09", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
             DrawPageArrows(ref ui, 1, st.Page);
         }
@@ -1322,14 +1317,14 @@ namespace Oxide.Plugins
             string n = $"oh_c_{i}";
             CUIClass.CreateButton(ref ui, n, UiCnt, "panel", "", 10, a[0], a[1], cmd, "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
-            CUIClass.CreatePanel(ref ui, n + "_bar", n, spec, "0 0.955", "1 1", false, 0f, Mat);
-            CUIClass.CreateItemIcon(ref ui, n + "_ic", n, itemIcon, 0UL, 0, "0.05 0.66", "0.20 0.92", 0.15f);
-            CUIClass.CreateText(ref ui, n + "_t", n, "muted", label, 11, "0.24 0.74", "0.96 0.92",
+            CUIClass.CreatePanel(ref ui, n + "_bar", n, spec, "0 0", "0.012 1", false, 0f, Mat);
+            CUIClass.CreateItemIcon(ref ui, n + "_ic", n, itemIcon, 0UL, 0, "0.05 0.15", "0.17 0.85", 0.15f);
+            CUIClass.CreateText(ref ui, n + "_t", n, "muted", label, 10, "0.21 0.60", "0.97 0.92",
                 TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreateText(ref ui, n + "_v", n, spec, $"<b>{value}</b>", 26, "0.06 0.28", "0.96 0.70",
+            var val = string.IsNullOrEmpty(sub) ? $"<b>{value}</b>"
+                                              : $"<b>{value}</b> <size=9>· {sub}</size>";
+            CUIClass.CreateText(ref ui, n + "_v", n, spec, val, 16, "0.21 0.08", "0.97 0.58",
                 TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreateText(ref ui, n + "_s", n, "muted", sub, 10, "0.06 0.06", "0.96 0.24",
-                TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
         }
 
         // Данные карточки события: цвет по состоянию (красный = активно),
