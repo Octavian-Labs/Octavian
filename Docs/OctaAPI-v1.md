@@ -306,6 +306,45 @@ Vip_GetPlayerStatus(uid)         → data: {level, name, color, expiresAt,
   // один вызов вместо четырёх; benefit-слой — реализован (см. выше)
 ```
 
+### Реестр провайдеров событий (реализовано, фаза 5: OctaHub v2.2.0, OctaBoss v1.9.0)
+
+Провайдер событий — любой плагин с API:
+
+```
+Events_GetSnapshot(player) → data: {categories: [
+  { id, title, image, active, status, tone, detail, items[] }
+]}
+```
+
+Поля категории:
+
+| Поле | Смысл |
+|---|---|
+| `id` | стабильный id категории ("bosses") |
+| `title` | заголовок карточки |
+| `image` | PNG-хендл ImageLibrary или http; пусто → Hub подставит `tiles/<id>.png` по соглашению |
+| `active` | bool — акцентная кайма карточки |
+| `status` | строка статуса без разметки ("ЖИВЫХ СЕЙЧАС: 2") |
+| `tone` | `accent`/`red`/`muted` — Hub обернёт status в цвет; `raw` — status уже html |
+| `detail` | ключ детал-вида для `octahub_evt`: `"bosses"` — встроенная сетка боссов; иные встроенные — `"we:<cat>"`; **пусто** → генерический `pv:<plugin>:<catId>` по `items[]` |
+| `items` | строки генерического детала: `{name,status,tone,active,image,hp,hpMax,grid,cmd}`; `cmd` — необязательный ключ деталя item'а |
+
+Хук изменения (провайдер → broadcast):
+
+```
+OnOctaEventChanged(pluginName, categoryId)
+```
+
+Hub перечитывает снапшоты у всех с открытым разделом СОБЫТИЯ —
+мгновенный рефреш вместо ожидания 20-сек сканера. OctaBoss эмитит его
+внутри `EmitBossHook` на каждый lifecycle-хук.
+
+Реестр — конфиг Hub `generalSettings.eventProviders` (имена плагинов,
+порядок = порядок карточек). Провайдер недоступен → карточка-заглушка
+«модуль недоступен» (правило «нет провайдера ≠ пусто»). Провайдер без
+контракта → legacy-мост только для OctaBoss (карточка из GetBossStates).
+Новый провайдер подключается добавлением имени в конфиг — без правок Hub.
+
 ### OctaHub
 
 Не является провайдером данных. Хранит только настройки интерфейса
@@ -345,4 +384,4 @@ Vip_GetPlayerStatus(uid)         → data: {level, name, color, expiresAt,
 | 2 | OctaBoss: `Boss_*` + хуки; OctaFeed → `Boss_ResolveEntity`; Hub → snapshot | киллфид отличает босса от свиты; reload не ломает карточки |
 | 3 | Конверт для OctaRel/OctaFeed/OctaWC/OctVIP-геттеров + TP_GetHomes (JSON) | Hub работает целиком на конвертах |
 | 4 | ✅ OctVIP: level→benefits, `Vip_HasBenefit` + `octaben.<id>` в Kits | Kits проверяет benefit, а не level |
-| 5 | Реестр провайдеров событий в Hub (`Events_GetSnapshot` + `OnOctaEvent*`) | второй провайдер (airstrike/ваниль) подключается без правок Hub |
+| 5 | ✅ Реестр провайдеров событий в Hub (`Events_GetSnapshot` + `OnOctaEventChanged`) | второй провайдер (airstrike/ваниль) подключается без правок Hub |

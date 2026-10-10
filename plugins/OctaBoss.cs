@@ -27,7 +27,7 @@ namespace Oxide.Plugins
     //    переходы в flee перенаправляем на экземпляре босса (TameFlee);
     //  - PopulateObject при сохранении админки дублировал списки лута —
     //    заменено на замену экземпляра + авто-дедупликация при загрузке.
-    [Info("OctaBoss", "Octavian", "1.8.0")]
+    [Info("OctaBoss", "Octavian", "1.9.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -1427,6 +1427,9 @@ namespace Oxide.Plugins
         private void EmitBossHook(string hook, JObject payload)
         {
             try { Interface.CallHook(hook, payload); } catch { }
+            // реестр событий Hub: любая смена жизненного цикла — повод
+            // перечитать снапшот (мгновенный рефреш вместо 20-сек поллинга)
+            try { Interface.CallHook("OnOctaEventChanged", "octaboss", "bosses"); } catch { }
         }
 
         private void EmitBossStarted(BossState st, bool restored)
@@ -1571,6 +1574,62 @@ namespace Oxide.Plugins
                 return OctaOk(d);
             }
             return OctaFail("NOT_FOUND", "Не босс и не свита");
+        }
+
+        // ── Провайдер событий OctaHub (Docs/OctaAPI-v1.md §Реестр событий) ──
+        // Одна категория "bosses": карточка раздела СОБЫТИЯ. detail="bosses" —
+        // встроенный вид Hub (сетка видов + лор); items — те же строки, что и
+        // data.bosses, для потребителей, рисующих свой детал-вид.
+        [HookMethod("Events_GetSnapshot")]
+        public JObject Events_GetSnapshot(BasePlayer player)
+        {
+            var all = GetBossStates();
+            long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            int aliveN = 0; long nextAt = long.MaxValue; string nextName = null;
+            bool anyEnabled = false;
+            foreach (var o in all.OfType<JObject>())
+            {
+                if (o["enabled"]?.Value<bool>() != true) continue;
+                anyEnabled = true;
+                if (o["alive"]?.Value<bool>() == true) { aliveN++; continue; }
+                long ns = o["nextSpawnUnix"]?.Value<long>() ?? 0;
+                if (ns > 0 && ns < nextAt) { nextAt = ns; nextName = o["name"]?.ToString(); }
+            }
+            string status, tone;
+            if (aliveN > 0) { status = $"ЖИВЫХ СЕЙЧАС: {aliveN}"; tone = "red"; }
+            else if (nextName != null)
+            { status = $"ближайший: {nextName} · {FmtDur(nextAt - now)}"; tone = "accent"; }
+            else if (anyEnabled) { status = "ожидают расписания"; tone = "muted"; }
+            else { status = "все выключены"; tone = "muted"; }
+
+            return OctaOk(new JObject
+            {
+                ["categories"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["id"] = "bosses",
+                        ["title"] = "БОССЫ ОСТРОВА",
+                        ["image"] = "",            // Hub подставит тайл по id
+                        ["active"] = aliveN > 0,
+                        ["status"] = status,
+                        ["tone"] = tone,
+                        ["detail"] = "bosses",     // встроенный вид Hub
+                        ["items"] = all
+                    }
+                }
+            });
+        }
+
+        // "12м" / "1ч 23м" / "2д 5ч" — как FmtLeft в OctaHub, дублируем:
+        // провайдер сам форматирует статусную строку категории.
+        private static string FmtDur(long seconds)
+        {
+            if (seconds <= 0) return "скоро";
+            var ts = TimeSpan.FromSeconds(seconds);
+            if (ts.TotalDays >= 1) return $"{(int)ts.TotalDays}д {ts.Hours}ч";
+            if (ts.TotalHours >= 1) return $"{(int)ts.TotalHours}ч {ts.Minutes}м";
+            return $"{(int)ts.TotalMinutes}м";
         }
 
         // скорость по фазе: ApplySpeed умножает ТЕКУЩИЕ значения агента —

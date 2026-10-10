@@ -19,7 +19,7 @@ namespace Oxide.Plugins
     // OctVIP (статус), OctaTP (дома), OctaFeed (настройки ленты), OctaWC (вайп).
     // Обратная совместимость: octahub_open <tab> <page>, кастомные чат-команды,
     // PageData.json, пермишены octawelcome.tabN (инфо-страницы).
-    [Info("OctaHub", "Octavian", "2.1.0")]
+    [Info("OctaHub", "Octavian", "2.2.0")]
     [Description("Игровой портал Octavian: разделы, живые данные провайдеров, OctaUI")]
     public class OctaHub : RustPlugin
     {
@@ -1032,8 +1032,7 @@ namespace Oxide.Plugins
             foreach (var p in BasePlayer.activePlayerList)
             {
                 UiState s;
-                if (_ui.TryGetValue(p.userID, out s) && s.Section == "events"
-                    && (s.EvtKey == null || s.EvtKey.StartsWith("we:")))
+                if (_ui.TryGetValue(p.userID, out s) && s.Section == "events")
                     UiRefresh(p, UiCnt);
             }
         }
@@ -1406,8 +1405,10 @@ namespace Oxide.Plugins
                 "0.945 0.925", "0.99 0.99", "octahub_refresh", "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
-            // карточки-категории: БОССЫ первой, дальше мировые в фиксированном порядке
-            int cardCount = 1 + _worldCats.Count;
+            // карточки-категории: сначала провайдеры из реестра (порядок конфига),
+            // дальше мировые категории в фиксированном порядке
+            var provCats = ProviderCats(player);
+            int cardCount = provCats.Count + _worldCats.Count;
             int totalPages = (int)Math.Ceiling(cardCount / 6.0);
             st.EvtPage = Math.Max(0, Math.Min(st.EvtPage, totalPages - 1));
             int start = st.EvtPage * 6;
@@ -1420,16 +1421,24 @@ namespace Oxide.Plugins
 
                 string name, status, img = "", cmd;
                 bool active;
-                if (ci == 0)
+                if (ci < provCats.Count)
                 {
-                    name = "БОССЫ ОСТРОВА";
-                    status = BossAggStatus(out active, out _);
-                    img = EvtImg + "bosses.png";
-                    cmd = "octahub_evt bosses";
+                    var c = provCats[ci];
+                    name = c["title"]?.ToString() ?? "СОБЫТИЕ";
+                    img = c["image"]?.ToString() ?? "";
+                    // тайл по соглашению: images/events/tiles/<id>.png в ассет-репо
+                    if (string.IsNullOrEmpty(img))
+                        img = EvtImg + (c["id"]?.ToString() ?? "event") + ".png";
+                    active = c["active"]?.Value<bool>() ?? false;
+                    status = CatStatusHtml(c);
+                    var detail = c["detail"]?.ToString();
+                    cmd = string.IsNullOrEmpty(detail)
+                        ? $"octahub_evt pv:{c["_pv"]}:{c["id"]}"
+                        : $"octahub_evt {detail}";
                 }
                 else
                 {
-                    var c = _worldCats[ci - 1];
+                    var c = _worldCats[ci - provCats.Count];
                     name = c.Title;
                     img = c.Image;
                     active = c.Count > 0;
@@ -1446,9 +1455,11 @@ namespace Oxide.Plugins
                 CUIClass.CreatePanel(ref ui, card, UiCnt, "bg", a[0], a[1], false, 0f, Mat);
                 CUIClass.CreatePanel(ref ui, card + "_g", card, active ? "accent" : "accent.dark",
                     "0 0.97", "1 1", false, 0f, Mat);
-                // квадратный якорь: карточка ≈ 1.2:1 по пикселям — 30% ширины ≈ 36% высоты
-                if (img.StartsWith("http"))
-                    CUIClass.CreateImage(ref ui, card, Img3(img), "0.05 0.32", "0.35 0.68", 0.15f);
+                // квадратный якорь: карточка ≈ 1.2:1 по пикселям — 30% ширины ≈ 36% высоты;
+                // http → Img3-хендл, иначе считаем уже PNG-хендлом ImageLibrary
+                if (!string.IsNullOrEmpty(img))
+                    CUIClass.CreateImage(ref ui, card,
+                        img.StartsWith("http") ? Img3(img) : img, "0.05 0.32", "0.35 0.68", 0.15f);
 
                 CUIClass.CreateText(ref ui, card + "_n", card, "text", $"<b>{name}</b>", 14,
                     "0.38 0.74", "0.97 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
@@ -1604,10 +1615,19 @@ namespace Oxide.Plugins
             }
         }
 
-        // Детальный вид: «bosses» → сетка боссов, «we:<кат>» → мировое событие, иначе → лор босса
+        // Детальный вид: «bosses» → сетка боссов, «we:<кат>» → мировое событие,
+        // «pv:<plugin>:<cat>» → генерический вид провайдера, иначе → лор босса
         private void DrawEventDetail(ref CuiElementContainer ui, BasePlayer player, string key)
         {
             if (key == "bosses") { DrawBossGrid(ref ui, player); return; }
+
+            if (key.StartsWith("pv:"))
+            {
+                var pp = key.Substring(3).Split(':');
+                if (pp.Length >= 2)
+                    DrawProviderDetail(ref ui, player, pp[0], pp[1]);
+                return;
+            }
 
             // мировое событие — категория из трекера
             if (key.StartsWith("we:"))
@@ -1691,6 +1711,199 @@ namespace Oxide.Plugins
 
             CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "text", string.Join("\n", lines), 13,
                 tx2 + " 0.03", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+        }
+
+        // Генерический детал-вид категории провайдера: свежий снапшот на каждую
+        // перерисовку (провайдер — источник истины), сетка items[] 3x2.
+        private void DrawProviderDetail(ref CuiElementContainer ui, BasePlayer player,
+            string pvName, string catId)
+        {
+            var st = St(player);
+            JObject cat = null;
+            var plug = EvtProvider(pvName);
+            if (plug != null)
+            {
+                try
+                {
+                    var res = plug.Call("Events_GetSnapshot", player) as JObject;
+                    cat = (res?["data"]?["categories"] as JArray)?.OfType<JObject>()
+                        .FirstOrDefault(o => string.Equals(o["id"]?.ToString(),
+                            catId, StringComparison.OrdinalIgnoreCase));
+                }
+                catch { }
+            }
+
+            // шапка: статус категории + назад в обзор
+            CUIClass.CreatePanel(ref ui, "oh_evd", UiCnt, "row", "0.015 0.90", "0.985 0.985", false, 0f, Mat);
+            CUIClass.CreateText(ref ui, "oh_evd_s", "oh_evd", "text",
+                cat != null
+                    ? $"<b>{cat["title"]}</b>  <color=@muted>·</color>  {CatStatusHtml(cat)}"
+                    : "<color=@muted>провайдер недоступен</color>", 12,
+                "0.02 0", "0.85 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateButton(ref ui, "oh_evd_b", "oh_evd", "accent.glass", "<color=@accent>← НАЗАД</color>", 10,
+                "0.86 0.15", "0.99 0.85", "octahub_evt back", "", "white", 0f,
+                TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+
+            var items = (cat?["items"] as JArray)?.OfType<JObject>().ToList() ?? new List<JObject>();
+            if (cat == null || items.Count == 0)
+            {
+                CUIClass.CreateText(ref ui, "oh_evd_t", UiCnt, "muted",
+                    cat == null ? $"Модуль {pvName} не загружен." : "Записей нет.", 14,
+                    "0 0", "1 0.85", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                return;
+            }
+
+            int totalPages = (int)Math.Ceiling(items.Count / 6.0);
+            st.EvtPage = Math.Max(0, Math.Min(st.EvtPage, totalPages - 1));
+            int start = st.EvtPage * 6;
+
+            for (int idx = 0; idx < 6 && start + idx < items.Count; idx++)
+            {
+                var o = items[start + idx];
+                string[] a = EvtGrid[idx].Split('-');
+                string card = $"oh_pv_{idx}";
+                bool active = o["active"]?.Value<bool>() ?? false;
+
+                CUIClass.CreatePanel(ref ui, card, UiCnt, "bg", a[0], a[1], false, 0f, Mat);
+                CUIClass.CreatePanel(ref ui, card + "_g", card, active ? "accent" : "accent.dark",
+                    "0 0.97", "1 1", false, 0f, Mat);
+
+                string img = o["image"]?.ToString() ?? "";
+                if (!string.IsNullOrEmpty(img))
+                    CUIClass.CreateImage(ref ui, card,
+                        img.StartsWith("http") ? Img3(img) : img, "0.05 0.32", "0.35 0.68", 0.15f);
+
+                // квадрат к имени, если провайдер его отдал
+                string nameTxt = $"<b>{o["name"]}</b>";
+                string grid = o["grid"]?.ToString();
+                if (!string.IsNullOrEmpty(grid)) nameTxt += $"  <color=@muted>[{grid}]</color>";
+
+                CUIClass.CreateText(ref ui, card + "_n", card, "text", nameTxt, 14,
+                    "0.38 0.74", "0.97 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, card + "_s", card, "muted", CatStatusHtml(o), 11,
+                    "0.38 0.52", "0.97 0.76", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+
+                // hp-бар, если item отдал hp/hpMax
+                var hp = o["hp"]?.Value<int>();
+                var hpMax = o["hpMax"]?.Value<int>();
+                if (hp != null && hpMax != null && hpMax > 0)
+                {
+                    float frac = Math.Max(0f, Math.Min(1f, (float)hp.Value / hpMax.Value));
+                    CUIClass.CreatePanel(ref ui, card + "_hpb", card, "row", "0.38 0.40", "0.97 0.46", false, 0f, Mat);
+                    CUIClass.CreatePanel(ref ui, card + "_hpf", card + "_hpb", "red",
+                        "0 0", $"{frac.ToString("0.###", CultureInfo.InvariantCulture)} 1", false, 0f, Mat);
+                }
+
+                // item может задать свой ключ деталя (octahub_evt <cmd>)
+                var icmd = o["cmd"]?.ToString();
+                if (!string.IsNullOrEmpty(icmd))
+                    CUIClass.CreateButton(ref ui, card + "_b", card, "hover", "<color=@accent>ПОДРОБНЕЕ</color>", 10,
+                        "0.38 0.10", "0.97 0.28", $"octahub_evt {icmd}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            }
+
+            if (totalPages > 1)
+            {
+                if (st.EvtPage > 0)
+                    CUIClass.CreateButton(ref ui, "oh_pv_prev", UiCnt, "accent.glass", "<color=@accent>‹</color>", 16,
+                        "0.885 0.015", "0.93 0.08", $"octahub_evt_page {st.EvtPage - 1}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                if (st.EvtPage + 1 < totalPages)
+                    CUIClass.CreateButton(ref ui, "oh_pv_next", UiCnt, "accent.glass", "<color=@accent>›</color>", 16,
+                        "0.935 0.015", "0.985 0.08", $"octahub_evt_page {st.EvtPage + 1}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            }
+        }
+
+        // Провайдер сообщил об изменении состояния — перечитываем снапшоты
+        // у всех, у кого открыт раздел СОБЫТИЯ (в т.ч. детал-виды: данные
+        // подтягиваются свежие на каждую перерисовку)
+        private void OnOctaEventChanged(string provider, string categoryId)
+        {
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                UiState s;
+                if (_ui.TryGetValue(p.userID, out s) && s.Section == "events")
+                    UiRefresh(p, UiCnt);
+            }
+        }
+
+        // ── Реестр провайдеров событий (Docs/OctaAPI-v1.md, фаза 5) ─────────
+        // Провайдер — любой плагин с API Events_GetSnapshot(player) →
+        // {categories:[{id,title,image,active,status,tone,detail,items[]}]}.
+        // Карточки категорий идут в сетку СОБЫТИЙ перед мировыми категориями.
+        // detail: "bosses"/"we:*" — встроенные виды; "pv:<plugin>:<catId>" —
+        // генерический детал по items[]; пусто — генерический по умолчанию.
+        // Живой поиск по имени (PITFALLS §11) — PluginReference залипает на reload.
+        private Plugin EvtProvider(string name)
+        {
+            try
+            {
+                foreach (var pl in Interface.Oxide.RootPluginManager.GetPlugins())
+                    if (string.Equals(pl.Name, name, StringComparison.OrdinalIgnoreCase) && pl.IsLoaded)
+                        return pl;
+            }
+            catch { }
+            return null;
+        }
+
+        // Категории от всех сконфигурированных провайдеров, в порядке конфига.
+        // Провайдер недоступен → карточка-заглушка (не молчаливый пропуск).
+        private List<JObject> ProviderCats(BasePlayer player)
+        {
+            var list = new List<JObject>();
+            var names = config?.generalSettings?.eventProviders;
+            if (names == null) return list;
+            foreach (var pn in names)
+            {
+                var plug = EvtProvider(pn);
+                if (plug == null)
+                {
+                    list.Add(new JObject
+                    {
+                        ["_pv"] = pn, ["id"] = pn.ToLowerInvariant(),
+                        ["title"] = pn.ToUpperInvariant(),
+                        ["status"] = "модуль недоступен", ["tone"] = "muted",
+                        ["active"] = false
+                    });
+                    continue;
+                }
+                JObject res = null;
+                try { res = plug.Call("Events_GetSnapshot", player) as JObject; } catch { }
+                if (res == null)
+                {
+                    // провайдер старой версии без контракта — legacy-мост
+                    // для OctaBoss: карточка собирается из GetBossStates
+                    if (string.Equals(pn, "OctaBoss", StringComparison.OrdinalIgnoreCase))
+                        list.Add(new JObject
+                        {
+                            ["_pv"] = pn, ["id"] = "bosses",
+                            ["title"] = "БОССЫ ОСТРОВА", ["image"] = "",
+                            ["status"] = BossAggStatus(out var act2, out _),
+                            ["tone"] = "raw", ["active"] = act2,
+                            ["detail"] = "bosses"
+                        });
+                    continue;
+                }
+                if (res["ok"]?.Value<bool>() != true) continue;
+                foreach (var c in (res["data"]?["categories"] as JArray)
+                     ?.OfType<JObject>() ?? Enumerable.Empty<JObject>())
+                {
+                    var cc = (JObject)c.DeepClone();
+                    cc["_pv"] = pn;
+                    list.Add(cc);
+                }
+            }
+            return list;
+        }
+
+        // status + tone → html: tone "raw" — провайдер сам отформатировал
+        private static string CatStatusHtml(JObject c)
+        {
+            var s = c?["status"]?.ToString() ?? "";
+            var t = c?["tone"]?.ToString() ?? "muted";
+            if (string.IsNullOrEmpty(s) || t == "raw") return s;
+            return $"<color=@{t}>{s}</color>";
         }
 
         // Снапшот боссов: v1-конверт Boss_GetActiveInstances (data.bosses —
@@ -3049,6 +3262,9 @@ namespace Oxide.Plugins
 
                 [JsonProperty("Custom chat commands (don't delete from list, just rename).")]
                 public List<string> customCommands { get; set; }
+
+                [JsonProperty("Event providers (plugin names exposing Events_GetSnapshot API).")]
+                public List<string> eventProviders { get; set; } = new List<string> { "OctaBoss" };
             }
 
             [JsonProperty(PropertyName = "Sections")]
