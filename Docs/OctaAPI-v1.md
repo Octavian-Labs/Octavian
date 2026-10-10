@@ -345,6 +345,53 @@ Hub перечитывает снапшоты у всех с открытым р
 контракта → legacy-мост только для OctaBoss (карточка из GetBossStates).
 Новый провайдер подключается добавлением имени в конфиг — без правок Hub.
 
+### OctaLoadouts (реализовано, v1.0.0)
+
+Владелец: пресеты экипировки при возрождении — серверные по правам
+(permission и/или `Vip_HasBenefit`, deny-by-default без OctVIP) и личные
+сохранения игроков. Не OctaKits: выдача наборов — отдельная система.
+
+```
+Octa_GetManifest()               → {module, version, api, methods[]}
+Loadouts_GetCatalog(player)      → data: {server:[{key,name,priority,enabled,
+                                   selectable,autoSpawn,itemsCount,allowSaves,
+                                   maxSaves,accessible,reason,active}],
+                                   own:[{id,name,level,itemsCount,saved,
+                                   accessible,reason,active}],
+                                   active, mode}
+Loadouts_GetPlayerState(player)  → data: {active, ownCount, ownLimit,
+                                   saveLevel, mode}
+Loadouts_GetPreset(player, ref)  → data: {name, items:[{shortname, amount,
+                                   container, pos, skin, ammoType, ammoCount,
+                                   mods[]}], limits?}
+  // ref = "srv:<key>" | "own:<id>"; серверный снапшот безопасен (копия,
+  // не изменяемый объект), личный — только свой
+Loadouts_PreviewSave(player)     → data: {level, kept:[item], skipped:
+                                   [{shortname,amount,reason}]}
+  // что войдёт и что отфильтруется — до записи (обязательный обзор)
+Loadouts_Save(player,name,reqId) → data: {id,name,level,kept,skipped[]}
+  // requestId дедуплицирует 300с; лимиты уровня проверяются на сервере
+Loadouts_Select(player, ref)     → ok | NO_PERMISSION/NOT_FOUND
+  // ref | "none" — сброс; недоступный пресет выбрать нельзя
+Loadouts_Delete(player,id,reqId) → ok | NOT_FOUND; только свой пресет
+```
+
+Особенности:
+- Режимы возрождения (`Режим возрождения`): `add` (дефолт, в свободные
+  слоты, переполнение → дроп под ноги), `replace` (явный opt-in на
+  `inventory.Strip()`), `disabled`. `Strip()` без режима не вызывается.
+- Одна выдача на респавн: `OnPlayerRespawned` + гард 4с на uid + NextTick.
+- Личный пресет при потере доступа помечается недоступным, не удаляется.
+- Лимиты: `-1` без лимита, `0` запрещено, ключ отсутствует → общий/категорийный.
+- Миграция `LoadoutController`: `data/LoadoutController/PlayerLoadouts/*.json`
+  → личный пресет «Мигрированный», отчёт `data/OctaLoadouts/migration-report.log`,
+  идемпотентно по маркеру `MigratedFrom`, legacy-файлы не трогаются.
+- Админ-операции: `octaloadouts.admin/.admin.presets/.admin.limits`;
+  импорт из админ-инвентаря — `octaloadouts.import <key> [confirm]` с превью
+  и записью в `data/OctaLoadouts/audit.log`.
+- UI: самостоятельное окно через OctaUI (`/loadout`); без OctaUI —
+  чат-команды. Данные игрока не зависят от UI-провайдеров.
+
 ### OctaHub
 
 Не является провайдером данных. Хранит только настройки интерфейса
