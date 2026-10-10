@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -55,6 +56,10 @@ namespace Oxide.Plugins
             public int PingHz = 10;
             [JsonProperty("Пинг: сообщить цели после завершения")]
             public bool PingNotifyTarget = false;
+            [JsonProperty("Тест: спящие считаются в сети (радар и пинг)")]
+            public bool SleepersCountAsOnline = false;
+            [JsonProperty("Тест: пинг любой цели, не только врагов")]
+            public bool PingTestMode = false;
         }
 
         protected override void LoadDefaultConfig() => Config.WriteObject(new ConfigData(), true);
@@ -73,11 +78,16 @@ namespace Oxide.Plugins
         private const long EnemyNoticeCooldownSec = 600;
         private Timer _radar;
 
-        // платный ESP-пинг: payer uid -> сессия
-        private class PingSession { public ulong Target; public float Until; }
+        // платный ESP-пинг: payer uid -> сессия (сущность — работает и с NPC-целью)
+        private class PingSession { public BasePlayer Target; public float Until; }
         private readonly Dictionary<ulong, PingSession> _pings = new Dictionary<ulong, PingSession>();
         private Timer _pingTimer;
         private const string PingUi = "orel_ping";
+        private const string AdminUi = "orel_admin";
+        // тестовая цель, заспавненная из админки
+        private BasePlayer _testDummy;
+
+        [PluginReference] private Plugin OctaUI;
 
         private RelData Rel(ulong uid)
         {
@@ -94,6 +104,7 @@ namespace Oxide.Plugins
             if (Interface.Oxide.DataFileSystem.ExistsDatafile($"{Name}/Relations"))
                 _data = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, RelData>>($"{Name}/Relations")
                         ?? new Dictionary<ulong, RelData>();
+            permission.RegisterPermission("octarel.admin", this);
             _radar = timer.Every(Math.Max(10, Cfg.ProximityCheckSec), RadarTick);
             _pingTimer = timer.Every(1f / Mathf.Max(2, Cfg.PingHz), PingTick);
         }
@@ -108,6 +119,9 @@ namespace Oxide.Plugins
                 if (p != null) CuiHelper.DestroyUi(p, PingUi + kv.Key);
             }
             _pings.Clear();
+            // админка и тест-цель не переживают reload
+            foreach (var pl in BasePlayer.activePlayerList) CuiHelper.DestroyUi(pl, AdminUi);
+            if (_testDummy != null && !_testDummy.IsDestroyed) { _testDummy.Kill(); _testDummy = null; }
             SaveData();
         }
 
@@ -173,7 +187,7 @@ namespace Oxide.Plugins
                 foreach (var eid in d.Enemies)
                 {
                     var enemy = BasePlayer.FindByID(eid);
-                    if (enemy == null || enemy.IsSleeping()) continue;
+                    if (enemy == null || (!Cfg.SleepersCountAsOnline && enemy.IsSleeping())) continue;
                     if ((enemy.transform.position - p.transform.position).sqrMagnitude > r2) continue;
 
                     string pair = $"{p.userID}:{eid}";
@@ -205,10 +219,11 @@ namespace Oxide.Plugins
         {
             if (Cfg == null || payer == null) return "сервис недоступен";
             RelData d;
-            if (!_data.TryGetValue(payer.userID, out d) || !d.Enemies.Contains(target))
+            if (!Cfg.PingTestMode &&
+                (!_data.TryGetValue(payer.userID, out d) || !d.Enemies.Contains(target)))
                 return "Это не твой враг — сначала /enemy add ник";
             var t = BasePlayer.FindByID(target);
-            if (t == null || t.IsSleeping()) return "Цель не в сети.";
+            if (t == null || (!Cfg.SleepersCountAsOnline && t.IsSleeping())) return "Цель не в сети.";
             if (t.IsDead()) return "Цель уже мертва.";
             if (_pings.ContainsKey(payer.userID)) return "Пинг уже активен — дождись конца.";
 
@@ -228,7 +243,7 @@ namespace Oxide.Plugins
         {
             _pings[payer.userID] = new PingSession
             {
-                Target = target.userID,
+                Target = target,
                 Until = Time.realtimeSinceStartup + Mathf.Max(3, Cfg.PingSeconds)
             };
             payer.ChatMessage($"<color=#83b8c7>◆ ПИНГ:</color> <color=#E8B84B>{Clean(target.displayName)}</color> " +
@@ -243,9 +258,9 @@ namespace Oxide.Plugins
             foreach (var kv in _pings)
             {
                 var payer = BasePlayer.FindByID(kv.Key);
-                var target = BasePlayer.FindByID(kv.Value.Target);
+                var target = kv.Value.Target;
                 if (Time.realtimeSinceStartup >= kv.Value.Until ||
-                    payer == null || target == null || target.IsDead())
+                    payer == null || target == null || target.IsDestroyed || target.IsDead())
                 {
                     if (payer != null) CuiHelper.DestroyUi(payer, PingUi + kv.Key);
                     if (done == null) done = new List<ulong>();
@@ -261,8 +276,9 @@ namespace Oxide.Plugins
                 _pings.Remove(id);
                 // честное «вас сканировали» — только по завершении и только если включено
                 if (!Cfg.PingNotifyTarget) continue;
-                var t = BasePlayer.FindByID(s.Target);
+                var t = s.Target;
                 var p = BasePlayer.FindByID(id);
+                if (t != null && !t.IsDestroyed && p != null)
                 if (t != null && p != null)
                     t.ChatMessage($"<color=#cd412b>◆ Внимание:</color> <color=#E8B84B>{Clean(p.displayName)}</color> " +
                                   $"отслеживал тебя {Cfg.PingSeconds} сек.");
@@ -515,6 +531,262 @@ namespace Oxide.Plugins
 
         [ChatCommand("friend")] private void CmdFriend(BasePlayer p, string c, string[] a) => CmdRelation(p, a, "friend");
         [ChatCommand("enemy")]  private void CmdEnemy(BasePlayer p, string c, string[] a) => CmdRelation(p, a, "enemy");
+
+        // ── Админ-панель (OctaUI) ────────────────────────────────────────────
+
+        private bool CanAdmin(BasePlayer p) =>
+            p != null && (p.IsAdmin || permission.UserHasPermission(p.UserIDString, "octarel.admin"));
+
+        private void Toast(BasePlayer p, string text, string color = "accent") =>
+            OctaUI?.Call("Toast", p, AdminUi, text, color, 2.5f);
+
+        private class AdmFld
+        {
+            public string Id, Label, Fmt = "0";
+            public float Min, Max, Step;
+            public Func<ConfigData, float> Get;
+            public Action<ConfigData, float> Set;
+            public AdmFld(string id, string label, float min, float max, float step,
+                          Func<ConfigData, float> g, Action<ConfigData, float> s, string fmt = "0")
+            { Id = id; Label = label; Min = min; Max = max; Step = step; Get = g; Set = s; Fmt = fmt; }
+        }
+        private static readonly AdmFld[] AdmNums =
+        {
+            new AdmFld("maxfriends", "Лимит друзей",         1, 50,     1,   c => c.MaxFriends,           (c, v) => c.MaxFriends = (int)v),
+            new AdmFld("maxenemies", "Лимит врагов",         1, 20,     1,   c => c.MaxEnemies,           (c, v) => c.MaxEnemies = (int)v),
+            new AdmFld("radius",     "Радиус радара (м)",    10, 500,   10,  c => c.ProximityRadius,      (c, v) => c.ProximityRadius = v),
+            new AdmFld("checksec",   "Проверка радара (с)",  5, 300,    5,   c => c.ProximityCheckSec,    (c, v) => c.ProximityCheckSec = (int)v),
+            new AdmFld("cooldown",   "Кулдаун алерта (с)",   30, 3600,  30,  c => c.ProximityCooldownSec, (c, v) => c.ProximityCooldownSec = (int)v),
+            new AdmFld("pingrp",     "Пинг: цена RP",        0, 10000,  5,   c => c.PingCostRp,           (c, v) => c.PingCostRp = (int)v),
+            new AdmFld("pingcoins",  "Пинг: цена монет",     0, 100000, 100, c => c.PingCostCoins,        (c, v) => c.PingCostCoins = (int)v),
+            new AdmFld("pingsec",    "Пинг: длительность (с)",3, 120,   1,   c => c.PingSeconds,          (c, v) => c.PingSeconds = (int)v),
+            new AdmFld("pinghz",     "Пинг: Гц",             2, 30,     1,   c => c.PingHz,               (c, v) => c.PingHz = (int)v),
+        };
+        private static readonly string[] AdmLeft  = { "maxfriends", "maxenemies", "radius", "checksec", "cooldown" };
+        private static readonly string[] AdmRight = { "pingrp", "pingcoins", "pingsec", "pinghz" };
+
+        private void Num(ref CuiElementContainer c, Plugin ui, string parent,
+                                AdmFld f, float x, float y, float w)
+        {
+            float h = 0.068f;
+            ui.Call("Stepper", c, parent, null, new JObject
+            {
+                ["rect"] = I($"{x} {y - h} {x + w} {y}"),
+                ["label"] = f.Label, ["value"] = f.Get(Cfg),
+                ["min"] = f.Min, ["max"] = f.Max, ["fmt"] = f.Fmt,
+                ["cmdMinus"] = $"octarel_num {f.Id} -{f.Step:0.###}",
+                ["cmdPlus"]  = $"octarel_num {f.Id} {f.Step:0.###}",
+                ["cmdSet"]   = $"octarel_set {f.Id}",
+                ["plugin"] = "OctaRel",
+            });
+        }
+        private static string I(FormattableString s) => FormattableString.Invariant(s);
+
+        private void Tgl(ref CuiElementContainer c, Plugin ui, string parent,
+                                string label, bool on, string cmd, float x, float y, float w)
+        {
+            float h = 0.048f;
+            ui.Call("Toggle", c, parent, null, new JObject
+            {
+                ["rect"] = I($"{x} {y - h} {x + w} {y}"),
+                ["label"] = label, ["on"] = on, ["cmd"] = cmd, ["plugin"] = "OctaRel",
+            });
+        }
+
+        private void Sec(ref CuiElementContainer c, Plugin ui, string parent,
+                                string text, float x, float y, float w)
+        {
+            ui.Call("Section", c, parent, null, new JObject
+            {
+                ["rect"] = I($"{x} {y - 0.045f} {x + w} {y}"), ["text"] = text, ["plugin"] = "OctaRel",
+            });
+        }
+
+        private void Btn(ref CuiElementContainer c, Plugin ui, string parent, string name,
+                                string text, string color, string cmd, float x, float y, float w, float h)
+        {
+            ui.Call("Button", c, parent, name, new JObject
+            {
+                ["rect"] = I($"{x} {y} {x + w} {y + h}"),
+                ["text"] = text, ["color"] = color, ["cmd"] = cmd,
+                ["size"] = 10, ["plugin"] = "OctaRel",
+            });
+        }
+
+        private void DrawAdmin(BasePlayer p)
+        {
+            if (OctaUI == null || !OctaUI.IsLoaded)
+            { p.ChatMessage("OctaUI не загружен — админка недоступна."); return; }
+
+            var c = new CuiElementContainer();
+            var root = OctaUI.Call("Root", c, new JObject
+            {
+                ["name"] = AdminUi, ["plugin"] = "OctaRel",
+                ["title"] = "◆ OCTAREL — НАСТРОЙКИ", ["subtitle"] = "списки · радар · платный пинг",
+                ["close"] = "octarel_close", ["rect"] = "0.24 0.14 0.76 0.90",
+            }) as JObject;
+            var cnt = root["content"].ToString();
+
+            float cw = 0.475f, xL = 0.015f, xR = 0.51f;
+            float yL = 0.98f, yR = 0.98f;
+
+            // ── левая колонка: списки и радар
+            Sec(ref c, OctaUI, cnt, "СПИСКИ И РАДАР", xL, yL, cw); yL -= 0.055f;
+            foreach (var id in AdmLeft)
+            {
+                var f = AdmNums.First(n => n.Id == id);
+                Num(ref c, OctaUI, cnt, f, xL, yL, cw); yL -= 0.074f;
+            }
+            Tgl(ref c, OctaUI, cnt, "Уведомления вход/выход", Cfg.NotifyJoinLeave,
+                "octarel_tgl joinleave", xL, yL, cw); yL -= 0.054f;
+
+            // ── правая колонка: пинг + тест
+            Sec(ref c, OctaUI, cnt, "ПИНГ (ESP)", xR, yR, cw); yR -= 0.055f;
+            foreach (var id in AdmRight)
+            {
+                var f = AdmNums.First(n => n.Id == id);
+                Num(ref c, OctaUI, cnt, f, xR, yR, cw); yR -= 0.074f;
+            }
+            Tgl(ref c, OctaUI, cnt, "Сообщать цели после пинга", Cfg.PingNotifyTarget,
+                "octarel_tgl pingnotify", xR, yR, cw); yR -= 0.054f;
+
+            Sec(ref c, OctaUI, cnt, "ТЕСТ / ОТЛАДКА", xR, yR, cw); yR -= 0.055f;
+            Tgl(ref c, OctaUI, cnt, "Спящие = в сети (радар/пинг)", Cfg.SleepersCountAsOnline,
+                "octarel_tgl sleepon", xR, yR, cw); yR -= 0.054f;
+            Tgl(ref c, OctaUI, cnt, "Пинг любой цели (без списка)", Cfg.PingTestMode,
+                "octarel_tgl pingany", xR, yR, cw); yR -= 0.062f;
+
+            bool dummyAlive = _testDummy != null && !_testDummy.IsDestroyed && !_testDummy.IsDead();
+            Btn(ref c, OctaUI, cnt, "orel_adm_d",
+                dummyAlive ? "<color=#8dd06f>ЦЕЛЬ ЖИВА</color>" : "СПАВНИТЬ ТЕСТ-ЦЕЛЬ",
+                dummyAlive ? "0.15 0.30 0.10 0.9" : "0.10 0.22 0.16 0.9",
+                "octarel_dummy spawn", xR, yR - 0.055f, 0.31f, 0.055f);
+            Btn(ref c, OctaUI, cnt, "orel_adm_dp", "ПИНГ ЦЕЛИ", "0.25 0.32 0.38 0.9",
+                "octarel_dummy ping", xR + 0.325f, yR - 0.055f, 0.075f, 0.055f);
+            Btn(ref c, OctaUI, cnt, "orel_adm_dk", "✕", "0.30 0.10 0.08 0.9",
+                "octarel_dummy kill", xR + 0.41f, yR - 0.055f, 0.06f, 0.055f);
+
+            // подпись-подсказка внизу
+            OctaUI.Call("Text", c, cnt, "orel_adm_hint", new JObject
+            {
+                ["rect"] = I($"{xL} 0.01 {xL + cw} 0.05"), ["plugin"] = "OctaRel",
+                ["text"] = "<color=#888>Тест-цель — мирный учёный рядом с тобой. Пинг цели бесплатный и не пишет в чат.</color>",
+                ["size"] = 9, ["align"] = "left",
+            });
+
+            CuiHelper.DestroyUi(p, AdminUi);
+            CuiHelper.AddUi(p, c);
+        }
+
+        private void SpawnDummy(BasePlayer admin)
+        {
+            var pos = admin.transform.position + admin.transform.forward * 4f + Vector3.up * 0.5f;
+            var npc = GameManager.server.CreateEntity(
+                "assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistpeacekeeper.prefab",
+                pos, Quaternion.identity) as BasePlayer;
+            if (npc == null) { Toast(admin, "✕ Префаб не найден", "0.30 0.10 0.08 0.9"); return; }
+            npc.Spawn();
+            npc.displayName = "ТЕСТ-ЦЕЛЬ";
+            _testDummy = npc;
+        }
+
+        [ConsoleCommand("octarel_admin")]
+        private void CmdAdm(ConsoleSystem.Arg arg)
+        {
+            var p = arg?.Connection?.player as BasePlayer;
+            if (!CanAdmin(p)) return;
+            DrawAdmin(p);
+        }
+
+        [ChatCommand("reladmin")]
+        private void CmdRelAdmin(BasePlayer p, string c, string[] a)
+        {
+            if (!CanAdmin(p)) { p.ChatMessage("Нет прав (octarel.admin)."); return; }
+            DrawAdmin(p);
+        }
+
+        [ConsoleCommand("octarel_close")]
+        private void CmdAdmClose(ConsoleSystem.Arg arg)
+        {
+            var p = arg?.Connection?.player as BasePlayer;
+            if (p != null) CuiHelper.DestroyUi(p, AdminUi);
+        }
+
+        [ConsoleCommand("octarel_num")]
+        private void CmdAdmNum(ConsoleSystem.Arg arg)
+        {
+            var p = arg?.Connection?.player as BasePlayer;
+            if (!CanAdmin(p) || arg.Args == null || arg.Args.Length < 2) return;
+            var f = AdmNums.FirstOrDefault(n => n.Id == arg.Args[0].ToString());
+            if (f == null) return;
+            float delta;
+            if (!float.TryParse(arg.Args[1].ToString(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out delta)) return;
+            f.Set(Cfg, Mathf.Clamp(f.Get(Cfg) + delta, f.Min, f.Max));
+            SaveCfg();
+            DrawAdmin(p);
+        }
+
+        [ConsoleCommand("octarel_set")]
+        private void CmdAdmSet(ConsoleSystem.Arg arg)
+        {
+            var p = arg?.Connection?.player as BasePlayer;
+            if (!CanAdmin(p) || arg.Args == null || arg.Args.Length < 2) return;
+            var f = AdmNums.FirstOrDefault(n => n.Id == arg.Args[0].ToString());
+            if (f == null) return;
+            float v;
+            if (!float.TryParse(arg.Args[1].ToString(), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out v)) return;
+            f.Set(Cfg, Mathf.Clamp(v, f.Min, f.Max));
+            SaveCfg();
+            DrawAdmin(p);
+        }
+
+        [ConsoleCommand("octarel_tgl")]
+        private void CmdAdmTgl(ConsoleSystem.Arg arg)
+        {
+            var p = arg?.Connection?.player as BasePlayer;
+            if (!CanAdmin(p) || arg.Args == null || arg.Args.Length < 1) return;
+            switch (arg.Args[0].ToString())
+            {
+                case "joinleave":  Cfg.NotifyJoinLeave = !Cfg.NotifyJoinLeave; break;
+                case "pingnotify": Cfg.PingNotifyTarget = !Cfg.PingNotifyTarget; break;
+                case "sleepon":    Cfg.SleepersCountAsOnline = !Cfg.SleepersCountAsOnline; break;
+                case "pingany":    Cfg.PingTestMode = !Cfg.PingTestMode; break;
+                default: return;
+            }
+            SaveCfg();
+            DrawAdmin(p);
+        }
+
+        [ConsoleCommand("octarel_dummy")]
+        private void CmdAdmDummy(ConsoleSystem.Arg arg)
+        {
+            var p = arg?.Connection?.player as BasePlayer;
+            if (!CanAdmin(p) || arg.Args == null || arg.Args.Length < 1) return;
+            switch (arg.Args[0].ToString())
+            {
+                case "spawn":
+                    if (_testDummy != null && !_testDummy.IsDestroyed && !_testDummy.IsDead())
+                        _testDummy.Kill();
+                    SpawnDummy(p);
+                    Toast(p, "✓ Тест-цель заспавнена", "accent");
+                    break;
+                case "kill":
+                    if (_testDummy != null && !_testDummy.IsDestroyed) { _testDummy.Kill(); _testDummy = null; }
+                    break;
+                case "ping":
+                    if (_testDummy == null || _testDummy.IsDestroyed || _testDummy.IsDead())
+                    { Toast(p, "✕ Цели нет — заспавни", "0.30 0.10 0.08 0.9"); break; }
+                    if (_pings.ContainsKey(p.userID))
+                    { Toast(p, "✕ Пинг уже активен", "0.30 0.10 0.08 0.9"); break; }
+                    StartPing(p, _testDummy, "0 RP (тест)");
+                    break;
+            }
+            DrawAdmin(p);
+        }
+
+        private void SaveCfg() => Config.WriteObject(Cfg, true);
 
         [ChatCommand("relnotify")]
         private void CmdNotify(BasePlayer p, string c, string[] a)
