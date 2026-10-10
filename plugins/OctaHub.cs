@@ -77,6 +77,7 @@ namespace Oxide.Plugins
         {
             switch (tab)
             {
+                case 0:                          // 0 в конфиге = «открывать на главной»
                 case 1: return "home";
                 case 3: return "kits";
                 case 10: return "events";
@@ -3251,7 +3252,7 @@ namespace Oxide.Plugins
                 [JsonProperty("Open when player connected.")]
                 public bool openOnConnect { get; set; }
 
-                [JsonProperty("Open on tab number (1=home, 3=kits, 10=events, остальные=info-страницы).")]
+                [JsonProperty("Open on tab number (0/1=home, 3=kits, 10=events, остальные=info-страницы).")]
                 public int openTab { get; set; }
 
                 [JsonProperty("Open only once per wipe.")]
