@@ -1372,10 +1372,9 @@ namespace Oxide.Plugins
             var pr = config.homePromos.Where(p => p != null && !string.IsNullOrEmpty(p.title)).Take(8).ToList();
             int n = pr.Count;
             if (n == 0) return;
-            int cols = Math.Min(4, n), rows = (n + cols - 1) / cols;
-            const float x0 = 0.035f, x1 = 0.965f, yTop = 0.615f, yBot = 0.385f, gap = 0.015f;
+            int cols = Math.Min(4, n);
+            const float x0 = 0.035f, x1 = 0.965f, yTop = 0.615f, gap = 0.015f, h = 0.105f;
             float w = (x1 - x0 - gap * (cols - 1)) / cols;
-            float h = (yTop - yBot - gap * (rows - 1)) / rows;
             for (int i = 0; i < n; i++)
             {
                 var p = pr[i];
