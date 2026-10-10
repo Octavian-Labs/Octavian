@@ -271,7 +271,7 @@ namespace Oxide.Plugins
         private void Unload()
         {
             foreach (var pl in BasePlayer.activePlayerList)
-                if (pl != null) CuiHelper.DestroyUi(pl, UiName);
+                if (pl != null) UiDestroyAll(pl);
             _appliedThisSpawn.Clear(); _lastOp.Clear();
             _idem.Clear(); _idemAt.Clear();
             _pendingName.Clear(); _pendingRename.Clear(); _pendingChatSave.Clear();
@@ -283,7 +283,7 @@ namespace Oxide.Plugins
         private void OnPlayerDisconnected(BasePlayer player)
         {
             if (player == null) return;
-            CuiHelper.DestroyUi(player, UiName);
+            UiDestroyAll(player);
             var duid = (ulong)player.userID;
             _appliedThisSpawn.Remove(duid);
             _pendingName.Remove(duid);
@@ -1624,8 +1624,28 @@ namespace Oxide.Plugins
         // Живой поиск OctaUI; при отсутствии — команды/чат продолжают работать
         private void UiOpen(BasePlayer p) => UiDraw(p, null);
 
+        // Имена оверлеев, которые OctaUI вешает на UiName: Confirm/Prompt/Toast.
+        // Если родителя нет — они становятся сиротами на Overlay и DestroyUi(UiName)
+        // до них не достаёт; сносим всегда по всем известным именам.
+        private void UiDestroyAll(BasePlayer p)
+        {
+            CuiHelper.DestroyUi(p, UiName);
+            CuiHelper.DestroyUi(p, UiName + "_CFM");
+            CuiHelper.DestroyUi(p, UiName + "_PRM");
+            CuiHelper.DestroyUi(p, UiName + "_TST");
+        }
+
+        // только оверлеи — корневое окно остаётся (Prompt/Confirm — его дети)
+        private void UiDestroyOverlays(BasePlayer p)
+        {
+            CuiHelper.DestroyUi(p, UiName + "_CFM");
+            CuiHelper.DestroyUi(p, UiName + "_PRM");
+        }
+
         private void UiDraw(BasePlayer p, string sel)
         {
+            UiDestroyAll(p); // иначе повторная отрисовка наслаивает слои с теми же именами
+
             var ui = UiLib();
             if (ui == null) { Chat(p, "UI недоступен (нет OctaUI) — используй /loadout list"); return; }
             var cat = API_GetCatalog(p) as JObject;
@@ -1755,6 +1775,7 @@ namespace Oxide.Plugins
         // Превью сохранения: kept-иконки + причины отфильтрованных, подтверждение
         private void UiDrawSavePreview(Plugin ui, BasePlayer p)
         {
+            UiDestroyAll(p);
             var prev = API_PreviewSave(p) as JObject;
             if (prev == null || prev["ok"]?.Value<bool>() != true)
             { ui.Call("Toast", p, UiName, "Превью: " + prev?["msg"], "red"); return; }
@@ -1808,7 +1829,7 @@ namespace Oxide.Plugins
             switch (a0)
             {
                 case "close":
-                    CuiHelper.DestroyUi(p, UiName);
+                    UiDestroyAll(p);
                     return;
                 case "view":
                     UiDraw(p, arg.GetString(1));
@@ -1825,6 +1846,7 @@ namespace Oxide.Plugins
                     return;
                 case "saveask":
                 {
+                    UiDestroyOverlays(p);
                     var pc = new CuiElementContainer();
                     ui?.Call("Prompt", pc, UiName, null, new JObject
                     {
@@ -1861,6 +1883,7 @@ namespace Oxide.Plugins
                     return;
                 case "askdel":
                 {
+                    UiDestroyOverlays(p);
                     var c = new CuiElementContainer();
                     ui?.Call("Confirm", c, UiName, null, new JObject
                     {
@@ -1882,6 +1905,7 @@ namespace Oxide.Plugins
                 }
                 case "askrepl":
                 {
+                    UiDestroyOverlays(p);
                     var c = new CuiElementContainer();
                     ui?.Call("Confirm", c, UiName, null, new JObject
                     {
@@ -1904,6 +1928,7 @@ namespace Oxide.Plugins
                 case "rename":
                 {
                     var oid = arg.GetString(1);
+                    UiDestroyOverlays(p);
                     var rc = new CuiElementContainer();
                     ui?.Call("Prompt", rc, UiName, null, new JObject
                     {
