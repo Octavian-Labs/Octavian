@@ -147,12 +147,18 @@ namespace Oxide.Plugins
             var hitPos = info.HitPositionWorld;
             if (hitPos == Vector3.zero) hitPos = victim.bounds.center;
             if (hitPos == Vector3.zero) hitPos = victim.transform.position;
+            // isHeadshot — вычисляемое свойство через skeletonProperties жертвы:
+            // у части сущностей его нет/не замаплено. Имя кости надёжнее — сама
+            // игра сравнивает StringPool.Get(HitBone) с "spine"/"spine2".
+            var bone = StringPool.Get(info.HitBone);
+            var head = info.isHeadshot ||
+                       (bone != null && bone.IndexOf("head", StringComparison.OrdinalIgnoreCase) >= 0);
             // летальный исход виден только после применения урона — на следующий тик
             NextTick(() =>
             {
                 var vp = victim as BasePlayer;
                 var kill = victim.IsDestroyed || (vp != null && (vp.IsDead() || vp.IsWounded()));
-                Show(attacker, hitPos, dmg, info.isHeadshot, kill);
+                Show(attacker, hitPos, dmg, head, kill);
             });
         }
 
