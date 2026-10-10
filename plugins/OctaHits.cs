@@ -34,7 +34,7 @@ namespace Oxide.Plugins
             [JsonProperty("Максимум цифр в секунду на игрока")]
             public int MaxPerSecond = 8;
 
-            [JsonProperty("Время жизни цифры, сек")]       public float Lifetime = 1.5f;
+            [JsonProperty("Время жизни цифры, сек")]       public float Lifetime = 1.2f;
             [JsonProperty("Отступ цифры от точки попадания наружу от прицела (доля экрана)")]
             public float OffsetOut = 0.07f;
             [JsonProperty("Случайный разброс позиции (доля экрана)")]
@@ -252,13 +252,14 @@ namespace Oxide.Plugins
 
         private static string HexAlpha(string hex, float a)
         {
-            // "#rrggbb" → "r g b a"
-            try
-            {
-                var col = ColorEx.Parse(hex);
-                return $"{col.r:0.###} {col.g:0.###} {col.b:0.###} {a:0.##}";
-            }
-            catch { return $"1 1 1 {a:0.##}"; }
+            // "#rrggbb" → "r g b a" для CUI (ColorEx.Parse hex не ест)
+            var h = (hex ?? "").TrimStart('#');
+            if (h.Length < 6) return $"1 1 1 {a:0.##}";
+            var r = int.Parse(h.Substring(0, 2), System.Globalization.NumberStyles.HexNumber) / 255f;
+            var g = int.Parse(h.Substring(2, 2), System.Globalization.NumberStyles.HexNumber) / 255f;
+            var b = int.Parse(h.Substring(4, 2), System.Globalization.NumberStyles.HexNumber) / 255f;
+            return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0:0.###} {1:0.###} {2:0.###} {3:0.##}", r, g, b, a);
         }
 
         #endregion
