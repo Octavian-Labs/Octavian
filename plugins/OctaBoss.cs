@@ -595,6 +595,17 @@ namespace Oxide.Plugins
         }
         private readonly Dictionary<ulong, Watch> _watch = new Dictionary<ulong, Watch>();
 
+        // «клеймо» компонентом на GameObject сущности: переживает reload
+        // плагина, потому что живёт на самой энтити, а не в стейте. По нему
+        // после аварийной выгрузки (дата-файл OctaBoss_state потерян) находим
+        // наших зверей и зачищаем сирот
+        private class OctaBossTag : MonoBehaviour
+        {
+            public string SpecKey;
+            public int Role; // 0 = босс, 1 = свита, 2 = маркер карты
+        }
+        private const string TagTypeName = "OctaBossTag";
+
         private readonly List<PendingCorpse> _corpses = new List<PendingCorpse>();
         private readonly Dictionary<DroppedItemContainer, DateTime> _lockedBags = new Dictionary<DroppedItemContainer, DateTime>();
         private readonly Dictionary<ulong, Buff> _buffs = new Dictionary<ulong, Buff>();
@@ -622,6 +633,7 @@ namespace Oxide.Plugins
             _timerSpawn = timer.Every(30f, SpawnTick);
             _timerAggro = timer.Every(1f, AggroTick);
             ReattachSaved();
+            SweepOrphans();
         }
 
         private void Unload()
@@ -675,16 +687,7 @@ namespace Oxide.Plugins
                 // после рестарта netID могли переиспользовать — сверяем префаб,
                 // иначе подхватим чужую сущность как «босса»
                 if (!string.Equals(ent.PrefabName, spec.Prefab, StringComparison.OrdinalIgnoreCase)) continue;
-                st.Spec = CloneSpec(st.Live); // как при спавне — свой слепок
-                st.Entity = ent;
-                _bossNames[ent] = st.Spec.DisplayName;
-                st.Ai = ent as Rust.Ai.Gen2.BaseNPC2;
-                st.Livestock = ent as Rust.Ai.Gen2.LivestockAnimal;
-                st.SpawnedAt = DateTime.UtcNow;
-                st.LastDamageAt = DateTime.UtcNow;
-                st.ResetDone = true;
-                st.DeathHandled = false;
-                st.CurSpeedMult = spec.SpeedMultiplier;
+                AdoptBoss(st, spec, ent);
                 foreach (var eid in sb.EscortIds)
                 {
                     var e = BaseNetworkable.serverEntities.Find(new NetworkableId(eid)) as BaseCombatEntity;
@@ -692,6 +695,7 @@ namespace Oxide.Plugins
                     {
                         st.Escorts.Add(e);
                         _bossNames[e] = $"Свита ({st.Spec.DisplayName})";
+                        EnsureTag(e, spec.Key, 1);
                     }
                 }
                 var guardN = Mathf.CeilToInt(st.Escorts.Count * 0.6f);
@@ -700,11 +704,127 @@ namespace Oxide.Plugins
                     st.EscortRoles[st.Escorts[i]] = i < guardN ? 0 : 1;
                     try { TameFlee(st.Escorts[i].GetComponent<Rust.Ai.Gen2.FSMComponent>()); } catch { }
                 }
-                TameBossFlee(st);
-                SpawnMarker(st, ent.transform.position);
                 Puts($"OctaBoss[{spec.Key}]: босс пережил reload — стейт подхвачен (свита: {st.Escorts.Count})");
                 EmitBossStarted(st, restored: true);
             }
+        }
+
+        // общий код «усыновления» найденного на карте босса — и по netID
+        // из дата-файла (ReattachSaved), и по клейму (SweepOrphans)
+        private void AdoptBoss(BossState st, BossSpec spec, BaseCombatEntity ent)
+        {
+            st.Spec = CloneSpec(st.Live); // как при спавне — свой слепок
+            st.Entity = ent;
+            _bossNames[ent] = st.Spec.DisplayName;
+            st.Ai = ent as Rust.Ai.Gen2.BaseNPC2;
+            st.Livestock = ent as Rust.Ai.Gen2.LivestockAnimal;
+            st.SpawnedAt = DateTime.UtcNow;
+            st.LastDamageAt = DateTime.UtcNow;
+            st.ResetDone = true;
+            st.DeathHandled = false;
+            st.CurSpeedMult = spec.SpeedMultiplier;
+            EnsureTag(ent, spec.Key, 0);
+            TameBossFlee(st);
+            SpawnMarker(st, ent.transform.position);
+        }
+
+        // находит наше клеймо на сущности: компонент свежего билда — прямо,
+        // копию от ПРОШЛОЙ загрузки плагина (тип старой сборки, GetComponent
+        // её не видит) — по имени класса, данные переливаем в свежий тег
+        private static OctaBossTag TagOf(BaseEntity ent)
+        {
+            var tag = ent.GetComponent<OctaBossTag>();
+            if (tag != null) return tag;
+            OctaBossTag fresh = null;
+            foreach (var c in ent.GetComponents<MonoBehaviour>())
+            {
+                if (c == null || c.GetType().Name != TagTypeName) continue;
+                if (fresh == null)
+                {
+                    fresh = ent.gameObject.AddComponent<OctaBossTag>();
+                    fresh.SpecKey = c.GetType().GetField("SpecKey")?.GetValue(c) as string;
+                    var r = c.GetType().GetField("Role")?.GetValue(c);
+                    if (r is int ri) fresh.Role = ri;
+                }
+                UnityEngine.Object.Destroy(c);
+            }
+            return fresh;
+        }
+
+        // вешает/обновляет клеймо — идемпотентно, дублей не плодит
+        private static void EnsureTag(BaseEntity ent, string specKey, int role)
+        {
+            var t = TagOf(ent) ?? ent.gameObject.AddComponent<OctaBossTag>();
+            t.SpecKey = specKey;
+            t.Role = role;
+        }
+
+        // свип по клеймам: что удалось усыновить — возвращаем в стейт,
+        // остальных (сирот после аварийной выгрузки / потерянного дата-файла /
+        // маркеры-призраки) убиваем, чтобы не бродили «дикими» по карте
+        private void SweepOrphans()
+        {
+            var tagged = new List<KeyValuePair<BaseEntity, OctaBossTag>>();
+            foreach (var nb in BaseNetworkable.serverEntities)
+            {
+                var ent = nb as BaseEntity;
+                if (ent == null || ent.IsDestroyed) continue;
+                var tag = TagOf(ent);
+                if (tag != null) tagged.Add(new KeyValuePair<BaseEntity, OctaBossTag>(ent, tag));
+            }
+            if (tagged.Count == 0) return;
+
+            var tracked = new HashSet<BaseEntity>();
+            foreach (var st in _bosses.Values)
+            {
+                if (st.Entity != null) tracked.Add(st.Entity);
+                foreach (var e in st.Escorts) if (e != null) tracked.Add(e);
+                if (st.Marker != null) tracked.Add(st.Marker);
+            }
+
+            var adopted = 0;
+            // проход 1 — боссы: свой вид, живой, без живого стейта
+            foreach (var kv in tagged)
+            {
+                if (kv.Value.Role != 0 || tracked.Contains(kv.Key)) continue;
+                var combat = kv.Key as BaseCombatEntity;
+                var spec = _cfg.Bosses.FirstOrDefault(b => b.Key == kv.Value.SpecKey && b.Enabled);
+                BossState st;
+                if (spec == null || combat == null || !combat.IsAlive()
+                    || !_bosses.TryGetValue(spec.Key, out st) || st.Alive
+                    || !string.Equals(combat.PrefabName, spec.Prefab, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                AdoptBoss(st, spec, combat);
+                tracked.Add(kv.Key);
+                adopted++;
+                Puts($"OctaBoss[{spec.Key}]: босс подхвачен по клейму");
+                EmitBossStarted(st, restored: true);
+            }
+            // проход 2 — свита, только при живом боссе своего вида
+            foreach (var kv in tagged)
+            {
+                if (kv.Value.Role != 1 || tracked.Contains(kv.Key)) continue;
+                var combat = kv.Key as BaseCombatEntity;
+                BossState st;
+                if (combat == null || !combat.IsAlive() || !(combat is Rust.Ai.Gen2.BaseNPC2)
+                    || !_bosses.TryGetValue(kv.Value.SpecKey ?? "", out st) || !st.Alive)
+                    continue;
+                st.Escorts.Add(combat);
+                st.EscortRoles[combat] = 0;
+                _bossNames[combat] = $"Свита ({st.Spec.DisplayName})";
+                try { TameFlee(combat.GetComponent<Rust.Ai.Gen2.FSMComponent>()); } catch { }
+                tracked.Add(kv.Key);
+                adopted++;
+            }
+            // остаток — сироты и маркеры-призраки
+            var killed = 0;
+            foreach (var kv in tagged)
+            {
+                if (tracked.Contains(kv.Key) || kv.Key.IsDestroyed) continue;
+                try { kv.Key.Kill(); killed++; } catch { }
+            }
+            if (adopted > 0 || killed > 0)
+                Puts($"OctaBoss: свип по клеймам — усыновлено {adopted}, сирот убито {killed}");
         }
 
         private void ScheduleNext(BossState st, bool first = false)
@@ -929,6 +1049,7 @@ namespace Oxide.Plugins
                 try { livestock.AnimalName = st.Spec.DisplayName; } catch { }
             }
             ent.Spawn();
+            EnsureTag(ent, st.Spec.Key, 0);
 
             st.Entity = ent;
             _bossNames[ent] = st.Spec.DisplayName;
@@ -1010,6 +1131,7 @@ namespace Oxide.Plugins
             if (marker == null) return;
             marker.enableSaving = false;
             marker.Spawn();
+            EnsureTag(marker, st.Spec.Key, 2);
             marker.radius = st.Spec.Spawn.MarkerRadius;
             marker.color1 = new Color(0.85f, 0.1f, 0.1f);
             marker.color2 = new Color(0.4f, 0f, 0f);
@@ -1042,6 +1164,7 @@ namespace Oxide.Plugins
                 var ai = e as Rust.Ai.Gen2.LivestockAnimal;
                 if (ai != null && esc.Male.HasValue) { try { ai.IsMale = esc.Male.Value; } catch { } }
                 e.Spawn();
+                EnsureTag(e, st.Spec.Key, 1);
                 try { e.SendNetworkUpdateImmediate(); } catch { }
                 // свита — тоже без боевой паники
                 try { TameFlee(e.GetComponent<Rust.Ai.Gen2.FSMComponent>()); } catch { }
