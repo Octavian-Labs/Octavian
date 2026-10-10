@@ -3561,13 +3561,13 @@ namespace Oxide.Plugins
                     {
                         rows = new List<ServiceRow>
                         {
-                            new ServiceRow { title = "ВИТРИНА НАБОРОВ", desc = "каталог китов — откроется раздел НАБОРЫ", chatCommand = "sec:kits" },
-                            new ServiceRow { title = "СОБЫТИЯ ОСТРОВА", desc = "кто гуляет по карте прямо сейчас", chatCommand = "sec:events" },
-                            new ServiceRow { title = "ДОМОЙ", desc = "телепорт к сохранённой точке «home»", chatCommand = "home home" },
+                            new ServiceRow { title = "ЭКИПИРОВКИ", desc = "личные пресеты инвентаря при респавне — /loadout", chatCommand = "loadout" },
+                            new ServiceRow { title = "АПГРЕЙД БАЗЫ", desc = "улучшить все постройки рядом — /upall", chatCommand = "upall" },
+                            new ServiceRow { title = "РЕМУВЕР", desc = "снять свою постройку — /remove", chatCommand = "remove" },
+                            new ServiceRow { title = "РЮКЗАК", desc = "дополнительный инвентарь — /backpackgui", chatCommand = "backpackgui" },
+                            new ServiceRow { title = "VIP СТАТУС", desc = "твоя привилегия и её срок — /vip", chatCommand = "vip" },
                             new ServiceRow { title = "РАСПИСАНИЕ БОССОВ", desc = "кто и когда появится — в чат", chatCommand = "bosstimer" },
-                            new ServiceRow { title = "ЖАЛОБА", desc = "открыть форму репорта на игрока", chatCommand = "report" },
-                            new ServiceRow { title = "ДИСКОРД", desc = "ссылка на сервер Discord в чате", chatCommand = "discord" },
-                            new ServiceRow { title = "КЛАН", desc = "управление командой — /clan", chatCommand = "clan" },
+                            new ServiceRow { title = "ТЕЛЕПОРТЫ", desc = "справка по командам телепортации — /tphelp", chatCommand = "tphelp" },
                         }
                     },
 
