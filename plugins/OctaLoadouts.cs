@@ -24,7 +24,8 @@ namespace Oxide.Plugins
     {
         #region Константы и поля
 
-        private const string PermUse          = "octaloadouts.use";
+        // Игровые команды открыты всем — доступ к контенту решают пресеты
+        // (permission/benefit на уровне пресета). Админские пермишены гранулярны.
         private const string PermAdmin        = "octaloadouts.admin";
         private const string PermAdminPresets = "octaloadouts.admin.presets";
         private const string PermAdminLimits  = "octaloadouts.admin.limits";
@@ -41,8 +42,13 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, PlayerLo> _players = new Dictionary<ulong, PlayerLo>();
         private readonly HashSet<ulong> _dirty = new HashSet<ulong>();
 
-        // Гард от двойной выдачи на один респавн (повторные вызовы хука/таймеров)
-        private readonly Dictionary<ulong, float> _spawnApplied = new Dictionary<ulong, float>();
+        // Гард «одна выдача на один цикл респавна»: OnPlayerRespawn снимает метку
+        // (новый цикл смерть→возрождение), OnPlayerRespawned ставит её. Дубли хука
+        // внутри одного цикла — no-op; новый респавн всегда получает выдачу.
+        private readonly HashSet<ulong> _appliedThisSpawn = new HashSet<ulong>();
+
+        // анти-даблклик по операции (uid|op) — защита команд без requestId
+        private readonly Dictionary<string, float> _lastOp = new Dictionary<string, float>();
 
         // Идемпотентность мутирующих вызовов API (requestId → ответ, 300с)
         private readonly Dictionary<string, JObject> _idem = new Dictionary<string, JObject>();
@@ -57,12 +63,22 @@ namespace Oxide.Plugins
         private class Cfg
         {
             // "add" — докидывать в свободные слоты (дефолт, безопасно)
-            // "replace" — Strip() всего инвентаря перед выдачей (явный opt-in админа)
+            // "replace" — Strip() всего инвентаря перед выдачей (явный opt-in админа;
+            //             предметы предсобираются и валидируются ДО очистки, но отката
+            //             уже размещённых нет — это не транзакция Rust-инвентаря)
             // "disabled" — авто-выдача выключена, пресеты только по командам
             [JsonProperty("Режим возрождения (add|replace|disabled)")]
             public string RespawnMode = "add";
 
-            [JsonProperty("Сохранять заряженный магазин (глобально, по умолчанию выкл — баланс)")]
+            // что делать с предметом, который не влез в контейнеры:
+            // "skip_with_message" (дефолт) — не выдавать, сообщить игроку;
+            // "drop_near_player" — выбросить под ноги; "cancel_loadout" — прервать выдачу
+            [JsonProperty("Политика переполнения (skip_with_message|drop_near_player|cancel_loadout)")]
+            public string OverflowPolicy = "skip_with_message";
+
+            // глобальный верхний выключатель заряженных магазинов:
+            // магазин сохраняется только если StoreLoadedAmmo И lim.StoreAmmo одновременно
+            [JsonProperty("Глобально разрешить заряженные магазины (master-switch, дефолт выкл)")]
             public bool StoreLoadedAmmo = false;
 
             [JsonProperty("Задержка применения после респавна, сек")]
@@ -85,6 +101,8 @@ namespace Oxide.Plugins
             [JsonProperty("Авто-выдача при возрождении")] public bool AutoSpawn = true;
             [JsonProperty("Oxide permission")]        public string Permission = "";
             [JsonProperty("OctVIP benefit")]          public string Benefit = "";
+            [JsonProperty("Показывать в каталоге недоступным игрокам")]
+            public bool VisibleWhenUnavailable = true;
             [JsonProperty("Личные сохранения разрешены")] public bool AllowPersonalSaves = true;
             [JsonProperty("Максимум личных сохранений")]  public int MaxPersonalSaves = 2;
 
@@ -111,8 +129,13 @@ namespace Oxide.Plugins
             [JsonProperty("Разрешённые категории (пусто = все)")]
             public List<string> AllowedCategories = new List<string>();
 
-            [JsonProperty("Максимум по shortname (-1 = без лимита, 0 = запрещён)")]
-            public Dictionary<string, int> MaxPerShortname = new Dictionary<string, int>();
+            // семантика — ШТУКИ предмета (item.amount), не стаки/слоты
+            [JsonProperty("Максимум штук по shortname (-1 = без лимита, 0 = запрещён)")]
+            public Dictionary<string, int> MaxAmountPerShortname = new Dictionary<string, int>();
+
+            // семантика — суммарное количество по ItemCategory (Weapon, Ammo и т.д.)
+            [JsonProperty("Максимум штук по категории (-1 = без лимита, 0 = запрещена)")]
+            public Dictionary<string, int> MaxAmountPerCategory = new Dictionary<string, int>();
 
             [JsonProperty("Запрещённые скины")]  public List<ulong> BannedSkins = new List<ulong>();
             [JsonProperty("Разрешённые скины (пусто = все)")] public List<ulong> AllowedSkins = new List<ulong>();
@@ -153,6 +176,7 @@ namespace Oxide.Plugins
         protected override void SaveConfig()
         {
             if (_cfg == null) return;
+            _rev++; // конфиг — часть состояния, которое видит envelope
             Config.WriteObject(_cfg, true);
         }
 
@@ -164,7 +188,7 @@ namespace Oxide.Plugins
                 Limits = new LimitsCfg
                 {
                     MaxItemsTotal = 12,
-                    MaxPerShortname = new Dictionary<string, int>
+                    MaxAmountPerShortname = new Dictionary<string, int>
                     {
                         ["rifle.ak"] = 0, ["rifle.bolt"] = 0, ["rifle.lr300"] = 0  // пример: 0 = запрещён
                     }
@@ -237,12 +261,10 @@ namespace Oxide.Plugins
 
         private void Init()
         {
-            permission.RegisterPermission(PermUse, this);
             permission.RegisterPermission(PermAdmin, this);
             permission.RegisterPermission(PermAdminPresets, this);
             permission.RegisterPermission(PermAdminLimits, this);
             permission.RegisterPermission("octaloadouts.event", this);
-            LoadAllPlayers();
             if (_cfg.MigrateLegacy) TryMigrateLegacy();
         }
 
@@ -250,6 +272,9 @@ namespace Oxide.Plugins
         {
             foreach (var pl in BasePlayer.activePlayerList)
                 if (pl != null) CuiHelper.DestroyUi(pl, UiName);
+            _appliedThisSpawn.Clear(); _lastOp.Clear();
+            _idem.Clear(); _idemAt.Clear();
+            _pendingName.Clear(); _pendingRename.Clear(); _pendingChatSave.Clear();
             SaveAllDirty();
         }
 
@@ -259,7 +284,11 @@ namespace Oxide.Plugins
         {
             if (player == null) return;
             CuiHelper.DestroyUi(player, UiName);
-            _spawnApplied.Remove((ulong)player.userID);
+            var duid = (ulong)player.userID;
+            _appliedThisSpawn.Remove(duid);
+            _pendingName.Remove(duid);
+            _pendingRename.Remove(duid);
+            _pendingChatSave.Remove(duid);
         }
 
         #endregion
@@ -268,30 +297,19 @@ namespace Oxide.Plugins
 
         private string DataPath(ulong uid) => $"OctaLoadouts/players/{uid}";
 
-        private void LoadAllPlayers()
-        {
-            var dir = Path.Combine(Interface.Oxide.DataDirectory, "OctaLoadouts", "players");
-            if (!Directory.Exists(dir)) return;
-            foreach (var file in Directory.GetFiles(dir, "*.json"))
-            {
-                try
-                {
-                    var uidStr = Path.GetFileNameWithoutExtension(file);
-                    ulong uid;
-                    if (!ulong.TryParse(uidStr, out uid)) continue;
-                    var pd = Interface.Oxide.DataFileSystem.ReadObject<PlayerLo>(DataPath(uid));
-                    if (pd != null) _players[uid] = pd;
-                }
-                catch (Exception ex) { PrintError($"Не удалось прочитать данные {file}: {ex.Message}"); }
-            }
-            Puts($"Данных игроков: {_players.Count}");
-        }
-
+        // Ленивая загрузка: файл читается по первому обращению к uid —
+        // на крупном сервере не держим все JSON в памяти сразу
         private PlayerLo Pd(ulong uid)
         {
             PlayerLo pd;
-            if (!_players.TryGetValue(uid, out pd)) pd = _players[uid] = new PlayerLo();
-            return pd;
+            if (_players.TryGetValue(uid, out pd)) return pd;
+            pd = null;
+            if (Interface.Oxide.DataFileSystem.ExistsDatafile(DataPath(uid)))
+            {
+                try { pd = Interface.Oxide.DataFileSystem.ReadObject<PlayerLo>(DataPath(uid)); }
+                catch (Exception ex) { PrintError($"Данные {uid} не прочитались: {ex.Message}"); }
+            }
+            return _players[uid] = pd ?? new PlayerLo();
         }
 
         private void MarkDirty(ulong uid)
@@ -461,8 +479,11 @@ namespace Oxide.Plugins
         }
 
         // Проверка предмета на возможность сохранения. Возвращает код причины или null.
-        private string CheckSaveAllowed(Item item, LimitsCfg lim, Dictionary<string, int> perShort,
-                                        Dictionary<string, int> perCont, int keptTotal)
+        // perShort/perCont/perCat считают ШТУКИ (item.amount), а не слоты.
+        private string CheckSaveAllowed(Item item, string contKey, LimitsCfg lim,
+                                        Dictionary<string, int> perShort,
+                                        Dictionary<string, int> perCont,
+                                        Dictionary<string, int> perCat, int keptTotal)
         {
             var def = item.info;
             if (def == null) return "unknown";
@@ -475,37 +496,32 @@ namespace Oxide.Plugins
                 !lim.AllowedCategories.Contains(baseDef.category.ToString()))
                 return "category:" + baseDef.category;
 
-            int perShortLimit;
-            if (lim.MaxPerShortname != null && lim.MaxPerShortname.TryGetValue(baseDef.shortname, out perShortLimit))
+            int lim2, used;
+            if (lim.MaxAmountPerShortname != null &&
+                lim.MaxAmountPerShortname.TryGetValue(baseDef.shortname, out lim2))
             {
-                if (perShortLimit == 0) return "banned_item";
-                int used;
+                if (lim2 == 0) return "banned_item";
                 perShort.TryGetValue(baseDef.shortname, out used);
-                if (perShortLimit > 0 && used >= perShortLimit) return "shortname_limit";
+                if (lim2 > 0 && used + item.amount > lim2) return "shortname_limit";
+            }
+            var cat = baseDef.category.ToString();
+            if (lim.MaxAmountPerCategory != null &&
+                lim.MaxAmountPerCategory.TryGetValue(cat, out lim2))
+            {
+                if (lim2 == 0) return "category_banned";
+                perCat.TryGetValue(cat, out used);
+                if (lim2 > 0 && used + item.amount > lim2) return "category_limit";
             }
 
             if (lim.MaxItemsTotal >= 0 && keptTotal >= lim.MaxItemsTotal) return "total_limit";
 
-            int contMax = ContainerMax(lim, ContainerKeyOf(item));
+            var contMax = ContainerMax(lim, contKey);
             if (contMax >= 0)
             {
-                int used;
-                perCont.TryGetValue(ContainerKeyOf(item), out used);
-                if (used >= contMax) return "container_limit";
+                perCont.TryGetValue(contKey, out used);
+                if (used + item.amount > contMax) return "container_limit";
             }
             return null;
-        }
-
-        private static string ContainerKeyOf(Item item)
-        {
-            var cont = item.GetRootContainer();
-            var owner = cont?.GetOwnerPlayer() as BasePlayer;
-            if (owner != null)
-            {
-                if (cont == owner.inventory.containerBelt) return "belt";
-                if (cont == owner.inventory.containerWear) return "wear";
-            }
-            return "main";
         }
 
         // Захват инвентаря с отчётом: kept — что войдёт в пресет, skipped — что отфильтруется и почему
@@ -520,6 +536,7 @@ namespace Oxide.Plugins
             var rep = new CaptureReport();
             var perShort = new Dictionary<string, int>();
             var perCont = new Dictionary<string, int>();
+            var perCat  = new Dictionary<string, int>();
             foreach (var kv in new[]
                      {
                          new KeyValuePair<string, ItemContainer>("main", p.inventory.containerMain),
@@ -536,7 +553,7 @@ namespace Oxide.Plugins
                     var baseDef = def?.isRedirectOf ?? def;
                     var shortname = baseDef?.shortname ?? "unknown";
 
-                    var reason = CheckSaveAllowed(item, lim, perShort, perCont, rep.Kept.Count);
+                    var reason = CheckSaveAllowed(item, kv.Key, lim, perShort, perCont, perCat, rep.Kept.Count);
                     if (reason != null)
                     {
                         rep.Skipped.Add(new JObject
@@ -554,11 +571,11 @@ namespace Oxide.Plugins
                         Skin = item.skin
                     };
 
-                    // боеприпасы — только если разрешены политикой уровня
+                    // боеприпасы — только если и глобальный master-switch, И уровень разрешили
                     var proj = item.GetHeldEntity() as BaseProjectile;
                     if (proj != null && proj.primaryMagazine != null)
                     {
-                        var storeAmmo = lim.StoreAmmo || _cfg.StoreLoadedAmmo;
+                        var storeAmmo = _cfg.StoreLoadedAmmo && lim.StoreAmmo;
                         var atype = proj.primaryMagazine.ammoType?.shortname;
                         if (storeAmmo && proj.primaryMagazine.contents > 0 &&
                             (lim.AllowedAmmo == null || lim.AllowedAmmo.Count == 0 || lim.AllowedAmmo.Contains(atype)))
@@ -597,8 +614,10 @@ namespace Oxide.Plugins
                     }
 
                     rep.Kept.Add(li);
-                    perShort[shortname] = (perShort.ContainsKey(shortname) ? perShort[shortname] : 0) + 1;
-                    perCont[kv.Key] = (perCont.ContainsKey(kv.Key) ? perCont[kv.Key] : 0) + 1;
+                    perShort[shortname] = (perShort.ContainsKey(shortname) ? perShort[shortname] : 0) + item.amount;
+                    perCont[kv.Key] = (perCont.ContainsKey(kv.Key) ? perCont[kv.Key] : 0) + item.amount;
+                    var catN = (baseDef ?? def).category.ToString();
+                    perCat[catN] = (perCat.ContainsKey(catN) ? perCat[catN] : 0) + item.amount;
                 }
             }
             return rep;
@@ -622,16 +641,22 @@ namespace Oxide.Plugins
 
         #region Выдача и респавн
 
-        // Одна операция на один респавн: повторный вызов хука/колбэка — no-op
+        // Начало нового цикла «смерть→возрождение»: снимаем метку — следующий
+        // OnPlayerRespawned гарантированно отработает, даже если респавны идут подряд
+        private void OnPlayerRespawn(BasePlayer player)
+        {
+            if (player == null || player.IsNpc) return;
+            _appliedThisSpawn.Remove((ulong)player.userID);
+        }
+
+        // Одна выдача на один цикл: дубль OnPlayerRespawned в том же цикле — no-op,
+        // новый цикл разблокирован предыдущим хуком — кулдаунов по времени нет
         private void OnPlayerRespawned(BasePlayer player)
         {
             if (player == null || player.IsNpc) return;
             if (string.Equals(_cfg.RespawnMode, "disabled", StringComparison.OrdinalIgnoreCase)) return;
             var uid = (ulong)player.userID;
-            float last;
-            var now = UnityEngine.Time.realtimeSinceStartup;
-            if (_spawnApplied.TryGetValue(uid, out last) && now - last < 4f) return;
-            _spawnApplied[uid] = now;
+            if (!_appliedThisSpawn.Add(uid)) return;
             var delay = _cfg.ApplyDelay <= 0 ? 0f : _cfg.ApplyDelay;
             if (delay <= 0f) NextTick(() => ApplyLoadout(player));
             else timer.Once(delay, () => ApplyLoadout(player));
@@ -646,70 +671,144 @@ namespace Oxide.Plugins
             GiveLoadout(player, items, src);
         }
 
-        // Выдача: replace = Strip() по явному opt-in; add = в свободные слоты,
-        // не влезшее падает под ноги — ничего не теряется молча
+        // Выдача в два прохода:
+        // 1) предсборка — все предметы создаются и валидируются ДО любых изменений;
+        //    если собрать нечего — инвентарь игрока не трогаем вообще (в т.ч. replace)
+        // 2) раскладка по контейнерам; не влезшее — по OverflowPolicy
+        // replace: Strip() после успешной предсборки; отката уже размещённого нет —
+        // это НЕ транзакция Rust-инвентаря, режим opt-in и выключен по умолчанию
         private void GiveLoadout(BasePlayer player, List<LoItem> items, string srcDesc)
         {
-            if (string.Equals(_cfg.RespawnMode, "replace", StringComparison.OrdinalIgnoreCase))
-                player.inventory.Strip();
-
-            int given = 0, skipped = 0;
+            // проход 1: предсборка
+            var built = new List<KeyValuePair<LoItem, Item>>();
+            var invalid = 0;
             foreach (var li in items)
             {
                 var def = ValidateItem(li);
-                if (def == null) { skipped++; continue; }
+                var item = def == null ? null
+                         : ItemManager.CreateByItemID(def.itemid, Math.Max(1, li.Amount), li.Skin);
+                if (item == null) { invalid++; continue; }
+                SetupWeapon(li, item);
+                built.Add(new KeyValuePair<LoItem, Item>(li, item));
+            }
+            if (built.Count == 0) return;
 
-                var item = ItemManager.CreateByItemID(def.itemid, Math.Max(1, li.Amount), li.Skin);
-                if (item == null) { skipped++; continue; }
+            var replace = string.Equals(_cfg.RespawnMode, "replace", StringComparison.OrdinalIgnoreCase);
+            var policy  = _cfg.OverflowPolicy ?? "skip_with_message";
 
-                var proj = item.GetHeldEntity() as BaseProjectile;
-                if (proj != null && proj.primaryMagazine != null)
-                {
-                    if (!string.IsNullOrEmpty(li.AmmoType))
-                    {
-                        var aDef = ItemManager.FindItemDefinition(li.AmmoType);
-                        if (aDef != null) proj.primaryMagazine.ammoType = aDef;
-                    }
-                    proj.primaryMagazine.contents = Math.Max(0, li.AmmoCount);
+            if (replace) player.inventory.Strip();
 
-                    if (li.Mods != null && item.contents != null)
-                    {
-                        foreach (var modName in li.Mods)
-                        {
-                            var md = ItemManager.FindItemDefinition(modName);
-                            if (md == null) continue;
-                            var mod = ItemManager.CreateByItemID(md.itemid, 1, 0);
-                            if (mod == null) continue;
-                            if (!mod.MoveToContainer(item.contents)) mod.Remove();
-                        }
-                    }
-                    item.MarkDirty();
-                }
+            // проход 2: раскладка
+            var given = 0;
+            var lost = new List<string>(); // имена не размещённых — отчёт игроку
+            var cancelled = false;
+            for (var i = 0; i < built.Count; i++)
+            {
+                var li = built[i].Key;
+                var item = built[i].Value;
+                if (cancelled) { item?.Remove(); continue; }
+                if (item == null || !item.IsValid()) { lost.Add(li.Short); continue; }
 
+                // wear принимает только носимое — иначе цель переносится в main
                 var cont = ContainerOf(player, li.Cont);
-                if (cont == null) { item.Remove(); skipped++; continue; }
-                bool ok = li.Pos >= 0 && item.MoveToContainer(cont, li.Pos, false);
-                if (!ok) ok = item.MoveToContainer(cont, -1, false);
-                if (!ok)
+                if (li.Cont == "wear" && item.info != null && !item.info.isWearable)
+                    cont = player.inventory.containerMain;
+
+                var ok = false;
+                if (cont != null)
                 {
-                    // все контейнеры перебираем, потом — дроп под ноги
+                    // позиция только если валидна и свободна; иначе — любой слот контейнера
+                    if (li.Pos >= 0 && li.Pos < cont.capacity && cont.GetSlot(li.Pos) == null)
+                        ok = item.MoveToContainer(cont, li.Pos, false);
+                    if (!ok) ok = item.MoveToContainer(cont, -1, false);
+                }
+                if (!ok)
                     ok = item.MoveToContainer(player.inventory.containerMain, -1, false) ||
                          item.MoveToContainer(player.inventory.containerBelt, -1, false);
-                    if (!ok) item.Drop(player.GetDropPosition(), Vector3.up * 0.5f);
+
+                if (ok) { given++; continue; }
+
+                switch (policy)
+                {
+                    case "drop_near_player":
+                        item.Drop(player.GetDropPosition(), Vector3.up * 0.5f);
+                        given++;
+                        break;
+                    case "cancel_loadout":
+                        item.Remove();
+                        lost.Add(li.Short);
+                        cancelled = true; // остальные не размещаем и не теряем молча
+                        for (var j = i + 1; j < built.Count; j++)
+                        { built[j].Value?.Remove(); lost.Add(built[j].Key.Short); }
+                        i = built.Count;
+                        break;
+                    default: // skip_with_message
+                        item.Remove();
+                        lost.Add(li.Short);
+                        break;
                 }
-                given++;
             }
-            if (given > 0 || skipped > 0)
-            {
-                Msg(player, skipped > 0
-                    ? $"Применён loadout ({srcDesc}): выдано {given}, пропущено {skipped}"
+
+            // событие для Hub/наблюдателей: итог применения после респавна
+            Interface.Oxide.CallHook("OnOctaLoadoutApplied", player, srcDesc, given, lost.Count);
+
+            var totalSkipped = invalid + lost.Count;
+            if (given == 0 && totalSkipped == 0) return;
+            var names = lost.Count > 0
+                ? " — не влезло: " + string.Join(", ", lost.Take(6)) + (lost.Count > 6 ? "…" : "")
+                : "";
+            Msg(player, cancelled
+                ? $"Выдача прервана ({srcDesc}): инвентарь полон{names}"
+                : totalSkipped > 0
+                    ? $"Применён loadout ({srcDesc}): выдано {given}, пропущено {totalSkipped}{names}"
                     : $"Применён loadout ({srcDesc}): выдано {given}");
+        }
+
+        // магазин (с клампом по вместимости — PITFALLS §3 builtInSize) и модули оружия
+        private void SetupWeapon(LoItem li, Item item)
+        {
+            var proj = item.GetHeldEntity() as BaseProjectile;
+            if (proj == null || proj.primaryMagazine == null) return;
+            if (!string.IsNullOrEmpty(li.AmmoType))
+            {
+                var aDef = ItemManager.FindItemDefinition(li.AmmoType);
+                if (aDef != null) proj.primaryMagazine.ammoType = aDef;
             }
+            var magDef = proj.primaryMagazine.definition;
+            var cap = magDef.builtInSize > 0 ? magDef.builtInSize
+                    : proj.primaryMagazine.capacity;
+            var ammo = Math.Max(0, li.AmmoCount);
+            proj.primaryMagazine.contents = cap > 0 ? Math.Min(ammo, cap) : ammo;
+
+            if (li.Mods != null && item.contents != null)
+            {
+                foreach (var modName in li.Mods)
+                {
+                    var md = ItemManager.FindItemDefinition(modName);
+                    if (md == null) continue;
+                    var mod = ItemManager.CreateByItemID(md.itemid, 1, 0);
+                    if (mod == null) continue;
+                    if (!mod.MoveToContainer(item.contents)) mod.Remove();
+                }
+            }
+            item.MarkDirty();
         }
 
         #endregion
 
         #region Внутренние операции (общий путь для команд и API)
+
+        // Анти-даблклик: один и тот же op у того же игрока чаще, чем раз в window сек — no-op.
+        // Защищает пути без requestId (chat-confirm, кнопки UI).
+        private bool OpRepeat(ulong uid, string op, float window = 1.5f)
+        {
+            var k = uid + "|" + op;
+            float last;
+            var now = UnityEngine.Time.realtimeSinceStartup;
+            if (_lastOp.TryGetValue(k, out last) && now - last < window) return true;
+            _lastOp[k] = now;
+            return false;
+        }
 
         private (string code, string msg, JObject data) SavePersonal(BasePlayer p, string name)
         {
@@ -724,6 +823,8 @@ namespace Oxide.Plugins
 
             name = SanitizeName(name);
             if (string.IsNullOrEmpty(name)) return ("INVALID_ARGUMENT", "Укажи имя пресета", null);
+            if (pd.Presets.Any(o => string.Equals(o.Name, name, StringComparison.OrdinalIgnoreCase)))
+                return ("INVALID_ARGUMENT", "Имя уже занято другим твоим пресетом", null);
 
             var rep = CaptureInventory(p, lvl.Limits);
             if (rep.Kept.Count == 0) return ("INVALID_ARGUMENT", "В инвентаре нет предметов, разрешённых к сохранению", null);
@@ -774,6 +875,11 @@ namespace Oxide.Plugins
             return ("INVALID_ARGUMENT", "Неизвестный идентификатор пресета", null);
         }
 
+        // Политика личных пресетов (явно зафиксирована):
+        //   просмотр недоступного — разрешён;
+        //   удаление своего недоступного — разрешено (уборка собственных данных);
+        //   переименование и замена содержимого — только при действующем уровне;
+        //   чужой id никогда не открывает чужие данные.
         private (string code, string msg, JObject data) DeletePreset(BasePlayer p, string id)
         {
             var uid = (ulong)p.userID;
@@ -784,6 +890,42 @@ namespace Oxide.Plugins
             if (pd.Active == "own:" + id) pd.Active = null;
             MarkDirty(uid);
             return ("OK", $"Пресет «{own.Name}» удалён", null);
+        }
+
+        private (string code, string msg, JObject data) RenamePreset(BasePlayer p, string id, string name)
+        {
+            var uid = (ulong)p.userID;
+            var pd = Pd(uid);
+            var own = pd.Presets?.FirstOrDefault(o => o.Id == id);
+            if (own == null) return ("NOT_FOUND", "Личный пресет не найден", null);
+            string reason;
+            if (!OwnAccessible(p, own, out reason)) return ("NO_PERMISSION", reason ?? "no_access", null);
+            var nm = SanitizeName(name);
+            if (string.IsNullOrEmpty(nm)) return ("INVALID_ARGUMENT", "Плохое имя", null);
+            if (pd.Presets.Any(o => o.Id != id && string.Equals(o.Name, nm, StringComparison.OrdinalIgnoreCase)))
+                return ("INVALID_ARGUMENT", "Имя уже занято", null);
+            own.Name = nm;
+            MarkDirty(uid);
+            return ("OK", $"Переименовано в «{nm}»", null);
+        }
+
+        // Перезапись содержимого своего пресета текущим инвентарём (уровень пресета — прежний)
+        private (string code, string msg, JObject data) ReplacePresetItems(BasePlayer p, string id)
+        {
+            var uid = (ulong)p.userID;
+            var pd = Pd(uid);
+            var own = pd.Presets?.FirstOrDefault(o => o.Id == id);
+            if (own == null) return ("NOT_FOUND", "Личный пресет не найден", null);
+            string reason;
+            if (!OwnAccessible(p, own, out reason)) return ("NO_PERMISSION", reason ?? "no_access", null);
+            var lvl = FindPreset(own.LevelKey);
+            var rep = CaptureInventory(p, lvl?.Limits ?? new LimitsCfg());
+            if (rep.Kept.Count == 0) return ("INVALID_ARGUMENT", "В инвентаре нет предметов, разрешённых к сохранению", null);
+            own.Items = rep.Kept;
+            own.SavedUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            MarkDirty(uid);
+            return ("OK", $"Содержимое «{own.Name}» обновлено: {rep.Kept.Count} предм., отфильтровано {rep.Skipped.Count}",
+                new JObject { ["kept"] = rep.Kept.Count, ["skipped"] = new JArray(rep.Skipped) });
         }
 
         private static string SanitizeName(string s)
@@ -807,23 +949,36 @@ namespace Oxide.Plugins
         private JObject ResErr(string code, string msg) => Res(false, code, msg);
         private JObject ResOk(object data, string msg = "") => Res(true, "OK", msg, data);
 
-        private bool IdemHit(string requestId, out JObject cached)
+        // Ключ идемпотентности: uid|op|requestId — одинаковый requestId у двух
+        // игроков или в двух операциях никогда не пересекается
+        private bool IdemHit(ulong uid, string op, string requestId, out JObject cached)
         {
             cached = null;
             if (string.IsNullOrEmpty(requestId)) return false;
+            var k = $"{uid}|{op}|{requestId}";
             float at;
-            if (_idem.TryGetValue(requestId, out cached) && _idemAt.TryGetValue(requestId, out at) &&
+            if (_idem.TryGetValue(k, out cached) && _idemAt.TryGetValue(k, out at) &&
                 UnityEngine.Time.realtimeSinceStartup - at < 300f)
                 return true;
             cached = null;
             return false;
         }
 
-        private void IdemStore(string requestId, JObject res)
+        private void IdemStore(ulong uid, string op, string requestId, JObject res)
         {
             if (string.IsNullOrEmpty(requestId) || res == null) return;
-            _idem[requestId] = res;
-            _idemAt[requestId] = UnityEngine.Time.realtimeSinceStartup;
+            // подчистка: истёкшие ключи и потолок размера, чтобы словари не росли вечно
+            if (_idem.Count > 300)
+            {
+                var now = UnityEngine.Time.realtimeSinceStartup;
+                foreach (var kv in _idemAt.Where(kv => now - kv.Value > 300f).Select(kv => kv.Key).ToList())
+                { _idem.Remove(kv); _idemAt.Remove(kv); }
+                foreach (var kv in _lastOp.Where(kv => now - kv.Value > 60f).Select(kv => kv.Key).ToList())
+                    _lastOp.Remove(kv);
+            }
+            var k = $"{uid}|{op}|{requestId}";
+            _idem[k] = res;
+            _idemAt[k] = UnityEngine.Time.realtimeSinceStartup;
         }
 
         [HookMethod("Octa_GetManifest")]
@@ -833,7 +988,8 @@ namespace Oxide.Plugins
             ["version"] = "1.0.0",
             ["api"] = 1,
             ["methods"] = new JArray("Loadouts_GetCatalog", "Loadouts_GetPlayerState", "Loadouts_GetPreset",
-                                     "Loadouts_PreviewSave", "Loadouts_Save", "Loadouts_Select", "Loadouts_Delete")
+                                     "Loadouts_PreviewSave", "Loadouts_Save", "Loadouts_Select",
+                                     "Loadouts_Delete", "Loadouts_Rename", "Loadouts_Replace")
         };
 
         // Каталог: серверные пресеты (с доступностью) + личные сохранения игрока
@@ -844,19 +1000,29 @@ namespace Oxide.Plugins
             var uid = (ulong)player.userID;
             var pd = Pd(uid);
             var srv = new JArray();
+            var isAdmin = IsAdmin(player);
             foreach (var pr in _cfg.Presets ?? new List<PresetCfg>())
             {
                 string reason;
                 var access = CanAccess(player, pr, out reason);
-                srv.Add(new JObject
+                // приватный пресет недоступному игроку не раскрываем вообще
+                if (!access && !isAdmin && !pr.VisibleWhenUnavailable) continue;
+                var o = new JObject
                 {
-                    ["key"] = pr.Key, ["name"] = pr.DisplayName, ["priority"] = pr.Priority,
-                    ["enabled"] = pr.Enabled, ["selectable"] = pr.Selectable, ["autoSpawn"] = pr.AutoSpawn,
-                    ["itemsCount"] = pr.Items?.Count ?? 0,
-                    ["allowSaves"] = pr.AllowPersonalSaves, ["maxSaves"] = pr.MaxPersonalSaves,
-                    ["accessible"] = access, ["reason"] = reason,
+                    ["key"] = pr.Key, ["name"] = pr.DisplayName,
+                    ["accessible"] = access, ["reason"] = access ? null : (reason ?? "no_access"),
                     ["active"] = pd.Active == "srv:" + pr.Key
-                });
+                };
+                // детали (счётчик, флаги) — только доступному или админу
+                if (access || isAdmin)
+                {
+                    o["priority"] = pr.Priority;
+                    o["enabled"] = pr.Enabled; o["selectable"] = pr.Selectable;
+                    o["autoSpawn"] = pr.AutoSpawn;
+                    o["itemsCount"] = pr.Items?.Count ?? 0;
+                    o["allowSaves"] = pr.AllowPersonalSaves; o["maxSaves"] = pr.MaxPersonalSaves;
+                }
+                srv.Add(o);
             }
             var own = new JArray();
             foreach (var o in pd.Presets ?? new List<OwnPreset>())
@@ -908,12 +1074,15 @@ namespace Oxide.Plugins
                 string reason;
                 var access = CanAccess(player, pr, out reason);
                 if (!access) return ResErr("NO_PERMISSION", reason);
-                return ResOk(new JObject
+                var resp = new JObject
                 {
                     ["key"] = pr.Key, ["name"] = pr.DisplayName,
-                    ["items"] = new JArray((pr.Items ?? new List<LoItem>()).Select(i => i.ToJson())),
-                    ["limits"] = JObject.FromObject(pr.Limits ?? new LimitsCfg())
-                });
+                    ["items"] = new JArray((pr.Items ?? new List<LoItem>()).Select(i => i.ToJson()))
+                };
+                // внутренние правила — только админу; клиентскому потребителю они не нужны
+                if (IsAdmin(player))
+                    resp["limits"] = JObject.FromObject(pr.Limits ?? new LimitsCfg());
+                return ResOk(resp);
             }
             if (presetRef.StartsWith("own:"))
             {
@@ -953,11 +1122,12 @@ namespace Oxide.Plugins
         private object API_Save(BasePlayer player, string name, string requestId)
         {
             if (player == null || player.IsNpc) return ResErr("INVALID_ARGUMENT", "player required");
+            var uid = (ulong)player.userID;
             JObject cached;
-            if (IdemHit(requestId, out cached)) return cached;
+            if (IdemHit(uid, "save", requestId, out cached)) return cached;
             var r = SavePersonal(player, name);
             var res = r.code == "OK" ? Res(true, r.code, r.msg, r.data) : ResErr(r.code, r.msg);
-            IdemStore(requestId, res);
+            IdemStore(uid, "save", requestId, res);
             return res;
         }
 
@@ -973,11 +1143,39 @@ namespace Oxide.Plugins
         private object API_Delete(BasePlayer player, string presetId, string requestId)
         {
             if (player == null) return ResErr("INVALID_ARGUMENT", "player required");
+            var uid = (ulong)player.userID;
             JObject cached;
-            if (IdemHit(requestId, out cached)) return cached;
+            if (IdemHit(uid, "del", requestId, out cached)) return cached;
             var r = DeletePreset(player, presetId);
             var res = r.code == "OK" ? ResOk(null, r.msg) : ResErr(r.code, r.msg);
-            IdemStore(requestId, res);
+            IdemStore(uid, "del", requestId, res);
+            return res;
+        }
+
+        [HookMethod("Loadouts_Rename")]
+        private object API_Rename(BasePlayer player, string presetId, string name, string requestId)
+        {
+            if (player == null) return ResErr("INVALID_ARGUMENT", "player required");
+            var uid = (ulong)player.userID;
+            JObject cached;
+            if (IdemHit(uid, "ren", requestId, out cached)) return cached;
+            var r = RenamePreset(player, presetId, name);
+            var res = r.code == "OK" ? ResOk(null, r.msg) : ResErr(r.code, r.msg);
+            IdemStore(uid, "ren", requestId, res);
+            return res;
+        }
+
+        // Перезапись содержимого своего пресета текущим инвентарём
+        [HookMethod("Loadouts_Replace")]
+        private object API_Replace(BasePlayer player, string presetId, string requestId)
+        {
+            if (player == null) return ResErr("INVALID_ARGUMENT", "player required");
+            var uid = (ulong)player.userID;
+            JObject cached;
+            if (IdemHit(uid, "repl", requestId, out cached)) return cached;
+            var r = ReplacePresetItems(player, presetId);
+            var res = r.code == "OK" ? Res(true, r.code, r.msg, r.data) : ResErr(r.code, r.msg);
+            IdemStore(uid, "repl", requestId, res);
             return res;
         }
 
@@ -1002,9 +1200,10 @@ namespace Oxide.Plugins
                 Chat(p, "◆ <color=#E8B84B>OctaLoadouts</color> — пресеты экипировки\n" +
                         "  /loadout — открыть меню\n" +
                         "  /loadout list — доступные и личные пресеты\n" +
-                        "  /loadout save <имя> — сохранить инвентарь (превью)\n" +
+                        "  /loadout save <имя> — превью, затем /loadout confirm\n" +
                         "  /loadout select srv:<ключ> | own:<id> | none — выбор для респавна\n" +
-                        "  /loadout delete <id> — удалить свой пресет");
+                        "  /loadout delete <id> confirm — удалить свой пресет\n" +
+                        "  /loadout rename <id> <новое имя> — переименовать");
                 if (sub == "") UiOpen(p);
                 return;
             }
@@ -1034,29 +1233,43 @@ namespace Oxide.Plugins
                 }
                 case "save":
                 {
+                    // имя — ВСЕ аргументы после sub: «/loadout save PvP Set» → «PvP Set»
                     if (args.Length < 2) { Chat(p, "Укажи имя: /loadout save <имя>"); return; }
-                    if (args.Length >= 3 && args[2] == "confirm")
-                    {
-                        var r = SavePersonal(p, args[1]);
-                        Chat(p, r.code == "OK"
-                            ? $"Сохранено «{r.data["name"]}»: предметов {r.data["kept"]}, отфильтровано {((JArray)r.data["skipped"]).Count}"
-                            : $"Не сохранено: {r.msg}");
-                        return;
-                    }
+                    var name = SanitizeName(string.Join(" ", args.Skip(1)));
+                    if (string.IsNullOrEmpty(name)) { Chat(p, "Укажи имя: /loadout save <имя>"); return; }
                     var prev = API_PreviewSave(p) as JObject;
                     if (prev == null || prev["ok"]?.Value<bool>() != true)
                     { Chat(p, $"Превью недоступно: {prev?["msg"]}"); return; }
+                    // превью закрепляется за именем; выполняет его отдельный /loadout confirm —
+                    // так пробелы в имени не ломают подтверждение
+                    _pendingChatSave[(ulong)p.userID] = name;
                     var kept = (JArray)prev["data"]["kept"];
                     var skipped = (JArray)prev["data"]["skipped"];
                     var sb2 = new System.Text.StringBuilder();
-                    sb2.AppendLine($"◆ Превью «{args[1]}» — войдёт {kept.Count} предм.:");
+                    sb2.AppendLine($"◆ Превью «{name}» — войдёт {kept.Count} предм.:");
                     foreach (var it in kept.Take(12))
                         sb2.AppendLine($"  <color=#9BC76B>✓</color> {it["shortname"]} x{it["amount"]}");
                     if (kept.Count > 12) sb2.AppendLine($"  … и ещё {kept.Count - 12}");
                     foreach (var it in skipped)
                         sb2.AppendLine($"  <color=#E06666>✗</color> {it["shortname"]} — {it["reason"]}");
-                    sb2.AppendLine($"Подтверди: /loadout save {args[1]} confirm");
+                    sb2.AppendLine("Подтверди: /loadout confirm");
                     Chat(p, sb2.ToString());
+                    return;
+                }
+                case "confirm":
+                {
+                    var uidC = (ulong)p.userID;
+                    string pend;
+                    if (!_pendingChatSave.TryGetValue(uidC, out pend))
+                    { Chat(p, "Нет ожидающего сохранения — сначала /loadout save <имя>"); return; }
+                    _pendingChatSave.Remove(uidC);
+                    if (OpRepeat(uidC, "save")) { Chat(p, "Повтори чуть позже"); return; }
+                    // инвентарь перечитывается заново — сохраняется актуальное состояние,
+                    // а не устаревшее превью
+                    var r = SavePersonal(p, pend);
+                    Chat(p, r.code == "OK"
+                        ? $"Сохранено «{r.data["name"]}»: предметов {r.data["kept"]}, отфильтровано {((JArray)r.data["skipped"]).Count}"
+                        : $"Не сохранено: {r.msg}");
                     return;
                 }
                 case "select":
@@ -1069,20 +1282,19 @@ namespace Oxide.Plugins
                 case "delete":
                 {
                     if (args.Length < 2) { Chat(p, "Укажи: /loadout delete <id>"); return; }
+                    // единая политика подтверждения: как в UI, сначала предупреждение
+                    if (args.Length < 3 || !string.Equals(args[2], "confirm", StringComparison.OrdinalIgnoreCase))
+                    { Chat(p, $"Безвозвратно. Подтверди: /loadout delete {args[1]} confirm"); return; }
+                    if (OpRepeat((ulong)p.userID, "del:" + args[1])) { Chat(p, "Повтори чуть позже"); return; }
                     var r = DeletePreset(p, args[1]);
                     Chat(p, r.code == "OK" ? $"✓ {r.msg}" : $"✗ {r.msg}");
                     return;
                 }
                 case "rename":
                 {
-                    if (args.Length < 3) { Chat(p, "Укажи: /loadout rename <id> <имя>"); return; }
-                    var pd2 = Pd((ulong)p.userID);
-                    var own = pd2.Presets?.FirstOrDefault(o => o.Id == args[1]);
-                    if (own == null) { Chat(p, "Пресет не найден"); return; }
-                    var nm = SanitizeName(args[2]);
-                    if (string.IsNullOrEmpty(nm)) { Chat(p, "Плохое имя"); return; }
-                    own.Name = nm; MarkDirty((ulong)p.userID);
-                    Chat(p, $"Переименовано в «{nm}»");
+                    if (args.Length < 3) { Chat(p, "Укажи: /loadout rename <id> <новое имя>"); return; }
+                    var r = RenamePreset(p, args[1], string.Join(" ", args.Skip(2)));
+                    Chat(p, r.code == "OK" ? $"✓ {r.msg}" : $"✗ {r.msg}");
                     return;
                 }
             }
@@ -1144,6 +1356,33 @@ namespace Oxide.Plugins
             catch (Exception ex) { PrintError($"audit: {ex.Message}"); }
         }
 
+        // Правка лимитов пресета из консоли: octaloadouts.setlimit <key> <field> <value>
+        [ConsoleCommand("octaloadouts.setlimit")]
+        private void CCmdSetLimit(ConsoleSystem.Arg arg)
+        {
+            var p = arg.Connection?.player as BasePlayer;
+            if (p != null && !p.IsAdmin && !permission.UserHasPermission(p.UserIDString, PermAdminLimits)) return;
+            var pr = FindPreset(arg.GetString(0));
+            if (pr == null) { arg.ReplyWith("octaloadouts.setlimit <preset> <field> <value>"); return; }
+            var field = arg.GetString(1).ToLowerInvariant();
+            var val = arg.GetInt(2, int.MinValue);
+            if (val == int.MinValue) { arg.ReplyWith("value должен быть числом"); return; }
+            pr.Limits = pr.Limits ?? new LimitsCfg();
+            switch (field)
+            {
+                case "maxitemstotal": pr.Limits.MaxItemsTotal = val; break;
+                case "maxmain":       pr.Limits.MaxMain = val; break;
+                case "maxbelt":       pr.Limits.MaxBelt = val; break;
+                case "maxwear":       pr.Limits.MaxWear = val; break;
+                case "maxloadedammo": pr.Limits.MaxLoadedAmmo = val; break;
+                case "maxattachments":pr.Limits.MaxAttachments = val; break;
+                default: arg.ReplyWith("field: maxitemstotal|maxmain|maxbelt|maxwear|maxloadedammo|maxattachments"); return;
+            }
+            SaveConfig();
+            Audit(p, $"setlimit preset={pr.Key} {field}={val}");
+            arg.ReplyWith($"«{pr.Key}»: {field} = {val} (аудит записан)");
+        }
+
         [ConsoleCommand("octaloadouts.migrate")]
         private void CCmdMigrate(ConsoleSystem.Arg arg)
         {
@@ -1156,61 +1395,158 @@ namespace Oxide.Plugins
 
         #region Миграция LoadoutController
 
-        // Читает legacy-файлы (НЕ изменяя их), конвертирует валидное, пишет отчёт.
-        // Идемпотентно: маркер MigratedFrom + файл-отчёт — повтор не создаёт дублей.
+        // ── Миграция LoadoutController ──────────────────────────────────────
+        // Формат файла игрока data/LoadoutController/PlayerLoadouts/<uid>.json:
+        //   PlayerLoadoutOption {
+        //     ActiveLoadout: <int индекс | string имя>,
+        //     Loadouts[] { SavedPerm, SaveName, Items[] }
+        //   }
+        // Каждый сохранённый loadout → отдельный личный пресет; ActiveLoadout →
+        // выбранный пресет. Файлы legacy НЕ изменяются. Идемпотентность:
+        // pd.MigratedFrom (данные) + migration-state.json (в т.ч. пустые/битые
+        // файлы получают статус и не переобрабатываются бесконечно).
+        // Порядок на файл: запись данных игрока → строка отчёта → метка статуса.
+        private const string MigStatePath = "OctaLoadouts/migration-state.json";
+
+        private Dictionary<string, string> MigStateLoad()
+        {
+            try
+            {
+                if (!Interface.Oxide.DataFileSystem.ExistsDatafile(MigStatePath))
+                    return new Dictionary<string, string>();
+                return Interface.Oxide.DataFileSystem.ReadObject<Dictionary<string, string>>(MigStatePath)
+                       ?? new Dictionary<string, string>();
+            }
+            catch { return new Dictionary<string, string>(); }
+        }
+
+        private void MigStateSave(Dictionary<string, string> st)
+        {
+            try { Interface.Oxide.DataFileSystem.WriteObject(MigStatePath, st); }
+            catch (Exception ex) { PrintError($"migration-state: {ex.Message}"); }
+        }
+
         private string TryMigrateLegacy(bool verbose = false)
         {
             var report = new List<string>();
-            int okCnt = 0, skipCnt = 0;
+            int okCnt = 0, skipCnt = 0, errCnt = 0;
             try
             {
                 var legDir = Path.Combine(Interface.Oxide.DataDirectory, "LoadoutController", "PlayerLoadouts");
+                var repDir = Path.Combine(Interface.Oxide.DataDirectory, "OctaLoadouts");
+                Directory.CreateDirectory(repDir);
+                var state = MigStateLoad();
+
+                // серверные LoadoutOptions — отдельный слой; переносим честно: только в отчёт
+                var legRoot = Path.Combine(Interface.Oxide.DataDirectory, "LoadoutController");
+                if (Directory.Exists(legRoot))
+                {
+                    var srvFiles = Directory.GetFiles(legRoot, "*.json", SearchOption.TopDirectoryOnly);
+                    if (srvFiles.Length > 0)
+                        report.Add($"серверные пресеты LoadoutController ({srvFiles.Length} файл. в корне data/LoadoutController) — автоперенос НЕ выполняется, требуется ручной перенос в конфиг");
+                }
+
                 if (!Directory.Exists(legDir))
                     return verbose ? "LoadoutController/PlayerLoadouts не найден — миграция не требуется" : null;
 
-                var repDir = Path.Combine(Interface.Oxide.DataDirectory, "OctaLoadouts");
-                Directory.CreateDirectory(repDir);
                 foreach (var file in Directory.GetFiles(legDir, "*.json"))
                 {
                     var uidStr = Path.GetFileNameWithoutExtension(file);
                     ulong uid;
-                    if (!ulong.TryParse(uidStr, out uid)) { skipCnt++; report.Add($"{uidStr}: не steamid — пропуск"); continue; }
+                    if (!ulong.TryParse(uidStr, out uid))
+                    { skipCnt++; report.Add($"{uidStr}: не steamid — пропуск"); continue; }
+
+                    // статусные метки: не переобрабатываем то, что уже разобрано
+                    string st;
+                    if (state.TryGetValue(uidStr, out st)) { skipCnt++; continue; }
 
                     var pd = Pd(uid);
-                    if (pd.MigratedFrom == "LoadoutController") { continue; } // уже мигрирован
+                    if (pd.MigratedFrom == "LoadoutController") { state[uidStr] = "migrated"; skipCnt++; continue; }
 
                     JObject leg;
                     try { leg = JObject.Parse(File.ReadAllText(file)); }
-                    catch (Exception ex) { skipCnt++; report.Add($"{uid}: не JSON ({ex.Message})"); continue; }
-
-                    var items = new List<LoItem>();
-                    // Толерантный парсинг: ищем массивы предметов по типичным именам
-                    foreach (var prop in leg.Properties())
+                    catch (Exception ex)
                     {
-                        var arr = prop.Value as JArray;
-                        if (arr == null) continue;
-                        foreach (var el in arr.OfType<JObject>())
-                        {
-                            var it = LegacyItem(el);
-                            if (it != null) items.Add(it);
-                        }
+                        errCnt++; report.Add($"{uid}: не JSON ({ex.Message})");
+                        state[uidStr] = "error:invalid_json"; MigStateSave(state);
+                        continue;
                     }
-                    if (items.Count == 0) { skipCnt++; report.Add($"{uid}: валидных предметов не найдено"); continue; }
 
-                    pd.Presets.Add(new OwnPreset
+                    var loadouts = leg["Loadouts"] as JArray;
+                    if (loadouts == null || loadouts.Count == 0)
                     {
-                        Id = "legacy" + uidStr.Substring(Math.Max(0, uidStr.Length - 4)),
-                        Name = "Мигрированный",
-                        LevelKey = _cfg.Presets.FirstOrDefault()?.Key ?? "default",
-                        SavedUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                        Items = items
-                    });
+                        skipCnt++; report.Add($"{uid}: пустой список Loadouts — статус 'empty'");
+                        state[uidStr] = "empty"; MigStateSave(state);
+                        continue;
+                    }
+
+                    // каждый сохранённый loadout → отдельный личный пресет
+                    var migratedIds = new List<string>();
+                    var emptySaves = 0;
+                    for (var i = 0; i < loadouts.Count; i++)
+                    {
+                        var sv = loadouts[i] as JObject;
+                        if (sv == null) continue;
+                        var items = new List<LoItem>();
+                        var itArr = sv["Items"] as JArray;
+                        if (itArr != null)
+                            foreach (var el in itArr.OfType<JObject>())
+                            {
+                                var it = LegacyItem(el);
+                                if (it != null) items.Add(it);
+                            }
+                        if (items.Count == 0) { emptySaves++; continue; }
+
+                        var sPerm = (string)(sv["SavedPerm"] ?? sv["savedPerm"] ?? sv["Permission"]);
+                        var sName = (string)(sv["SaveName"] ?? sv["saveName"] ?? sv["Name"]) ?? $"Мигрированный {i + 1}";
+                        var oid = $"leg{i}";
+                        pd.Presets.Add(new OwnPreset
+                        {
+                            Id = oid,
+                            Name = SanitizeName(sName) ?? $"Мигрированный {i + 1}",
+                            LevelKey = MapLegacyPerm(sPerm),
+                            SavedUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                            Items = items
+                        });
+                        migratedIds.Add(oid);
+                    }
+
+                    if (migratedIds.Count == 0)
+                    {
+                        skipCnt++; report.Add($"{uid}: ни в одном сохранении нет валидных предметов — статус 'empty'");
+                        state[uidStr] = "empty"; MigStateSave(state);
+                        continue;
+                    }
+
+                    // ActiveLoadout: int-индекс или имя сохранения → own:<id>
+                    var act = leg["ActiveLoadout"] ?? leg["activeLoadout"];
+                    var actIdx = -1;
+                    if (act != null && act.Type == JTokenType.Integer) actIdx = act.Value<int>();
+                    else if (act != null && act.Type == JTokenType.String)
+                    {
+                        var nm = act.Value<string>();
+                        for (var i = 0; i < loadouts.Count; i++)
+                        {
+                            var sname = loadouts[i]?["SaveName"]?.Value<string>() ??
+                                        loadouts[i]?["saveName"]?.Value<string>();
+                            if (string.Equals(sname, nm, StringComparison.OrdinalIgnoreCase)) { actIdx = i; break; }
+                        }
+                        int parsed;
+                        if (actIdx < 0 && int.TryParse(nm, out parsed)) actIdx = parsed;
+                    }
+                    if (actIdx >= 0 && actIdx < migratedIds.Count)
+                        pd.Active = "own:" + migratedIds[Math.Min(actIdx, migratedIds.Count - 1)];
+
+                    // атомарность: сначала данные и отчёт, потом метка статуса
                     pd.MigratedFrom = "LoadoutController";
-                    MarkDirty(uid);
+                    MarkDirty(uid); // запись данных игрока (с .bak)
                     okCnt++;
-                    report.Add($"{uid}: перенесено предметов {items.Count}");
+                    report.Add($"{uid}: пресетов {migratedIds.Count} (пустых сохранений: {emptySaves})" +
+                               (actIdx >= 0 ? $", активный → own:{migratedIds[Math.Min(actIdx, migratedIds.Count - 1)]}" : ""));
+                    state[uidStr] = "migrated"; MigStateSave(state);
                 }
-                var stamp = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} миграция: ok={okCnt} skip={skipCnt}";
+
+                var stamp = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} миграция: ok={okCnt} skip={skipCnt} err={errCnt}";
                 File.AppendAllText(Path.Combine(repDir, "migration-report.log"),
                     stamp + "\n" + string.Join("\n", report) + "\n\n");
                 return $"{stamp}; подробности — data/OctaLoadouts/migration-report.log";
@@ -1222,25 +1558,63 @@ namespace Oxide.Plugins
             }
         }
 
-        // Лучшее-усилие парсинг записи старого формата: поля называются иначе —
-        // берём из нескольких вариантов, shortname обязателен
+        // SavedPerm старого плагина → ключ нашего пресета: точный матч по permission,
+        // иначе первый уровень с личными сохранениями, иначе дефолт
+        private string MapLegacyPerm(string savedPerm)
+        {
+            if (!string.IsNullOrEmpty(savedPerm))
+            {
+                var byPerm = _cfg.Presets?.FirstOrDefault(pr =>
+                    string.Equals(pr.Permission, savedPerm, StringComparison.OrdinalIgnoreCase));
+                if (byPerm != null) return byPerm.Key;
+            }
+            return _cfg.Presets?.FirstOrDefault(pr => pr.AllowPersonalSaves)?.Key
+                   ?? _cfg.Presets?.FirstOrDefault()?.Key ?? "default";
+        }
+
+        // Парсинг записи предмета старого формата: поля берём из нескольких
+        // вариантов имён, shortname обязателен и должен резолвиться
         private LoItem LegacyItem(JObject el)
         {
-            var sn = (string)(el["Shortname"] ?? el["shortname"] ?? el["ShortName"]);
+            var sn = (string)(el["Shortname"] ?? el["shortname"] ?? el["ShortName"] ?? el["Name"]);
             if (string.IsNullOrEmpty(sn)) return null;
             var def = ItemManager.FindItemDefinition(sn);
+            if (def == null)
+            {
+                var id = (int?)(el["ItemID"] ?? el["itemId"] ?? el["ItemId"]) ?? 0;
+                if (id != 0 && id != -1) def = ItemManager.FindItemDefinition(id);
+            }
             if (def == null) return null;
+            var mods = new List<string>();
+            var modsArr = el["Mods"] as JArray ?? el["mods"] as JArray ?? el["Attachments"] as JArray;
+            if (modsArr != null)
+                foreach (var m in modsArr)
+                {
+                    var msn = m.Value<string>();
+                    if (!string.IsNullOrEmpty(msn) && ItemManager.FindItemDefinition(msn) != null)
+                        mods.Add(msn);
+                }
             return new LoItem
             {
                 Short = def.shortname,
                 ItemId = def.itemid,
                 Amount = Math.Max(1, (int?)(el["Amount"] ?? el["amount"]) ?? 1),
-                Cont = (string)(el["Container"] ?? el["container"]) ?? "main",
-                Pos = (int?)(el["Position"] ?? el["pos"]) ?? -1,
+                Cont = NormContainer((string)(el["Container"] ?? el["container"])),
+                Pos = (int?)(el["Position"] ?? el["pos"] ?? el["Slot"]) ?? -1,
                 Skin = (ulong?)(el["SkinID"] ?? el["skin"] ?? el["Skin"]) ?? 0UL,
-                AmmoType = (string)(el["Ammotype"] ?? el["ammoType"]),
-                AmmoCount = (int?)(el["Ammo"] ?? el["ammoCount"]) ?? 0
+                AmmoType = (string)(el["Ammotype"] ?? el["ammoType"] ?? el["AmmoType"]),
+                AmmoCount = (int?)(el["Ammo"] ?? el["ammoCount"] ?? el["AmmoCount"]) ?? 0,
+                Mods = mods.Count > 0 ? mods : null
             };
+        }
+
+        private static string NormContainer(string c)
+        {
+            if (string.IsNullOrEmpty(c)) return "main";
+            c = c.ToLowerInvariant();
+            if (c.Contains("belt")) return "belt";
+            if (c.Contains("wear")) return "wear";
+            return "main";
         }
 
         #endregion
@@ -1354,31 +1728,25 @@ namespace Oxide.Plugins
             { ["rect"] = "0.35 0.90 0.98 0.97", ["text"] = (string)(d["name"] ?? d["key"]), ["size"] = 15, ["align"] = "middleleft", ["color"] = "0.95 0.75 0.30 1" });
 
             var items = d["items"] as JArray ?? new JArray();
-            var i = 0;
-            foreach (var it in items.Take(30))
+            ui.Call("ItemGrid", c, content, UiName + "_grid", new JObject
             {
-                var rect = ui.Call("GridRect", new JObject
-                { ["rect"] = "0.35 0.30 0.98 0.86", ["cols"] = 6, ["gap"] = 0.012f, ["index"] = i }) as string;
-                ui.Call("Panel", c, content, null, new JObject { ["rect"] = rect, ["color"] = "0.08 0.08 0.07 0.9" });
-                ui.Call("ItemIcon", c, content, null, new JObject
-                {
-                    ["rect"] = rect, ["item"] = (string)it["shortname"],
-                    ["skin"] = it["skin"]?.Value<ulong>() ?? 0UL, ["amount"] = it["amount"]?.Value<int>() ?? 0
-                });
-                i++;
-            }
+                ["rect"] = "0.35 0.30 0.98 0.86", ["cols"] = 6, ["gap"] = 0.012f,
+                ["max"] = 30, ["items"] = items
+            });
 
             // Кнопки действий
             var y = 0.20f;
             ui.Call("Button", c, content, UiName + "_SEL", new JObject
-            { ["rect"] = $"0.35 {y:0.###} 0.55 {y + 0.06f:0.###}", ["text"] = "ВЫБРАТЬ ДЛЯ РЕСПАВНА", ["cmd"] = $"octaloadoutsui select {sel}", ["accent"] = "gold" });
+            { ["rect"] = $"0.35 {y:0.###} 0.50 {y + 0.06f:0.###}", ["text"] = "ВЫБРАТЬ", ["cmd"] = $"octaloadoutsui select {sel}", ["accent"] = "gold" });
             if (sel.StartsWith("own:"))
             {
                 var oid = sel.Substring(4);
                 ui.Call("Button", c, content, UiName + "_REN", new JObject
-                { ["rect"] = $"0.56 {y:0.###} 0.76 {y + 0.06f:0.###}", ["text"] = "ПЕРЕИМЕНОВАТЬ", ["cmd"] = $"octaloadoutsui rename {oid}", ["color"] = "0.20 0.20 0.18 0.95" });
+                { ["rect"] = $"0.51 {y:0.###} 0.64 {y + 0.06f:0.###}", ["text"] = "ИМЯ", ["cmd"] = $"octaloadoutsui rename {oid}", ["color"] = "0.20 0.20 0.18 0.95" });
+                ui.Call("Button", c, content, UiName + "_REPL", new JObject
+                { ["rect"] = $"0.65 {y:0.###} 0.82 {y + 0.06f:0.###}", ["text"] = "ОБНОВИТЬ ИЗ ИНВЕНТАРЯ", ["cmd"] = $"octaloadoutsui askrepl {oid}", ["color"] = "0.14 0.28 0.14 0.95" });
                 ui.Call("Button", c, content, UiName + "_DEL", new JObject
-                { ["rect"] = $"0.77 {y:0.###} 0.98 {y + 0.06f:0.###}", ["text"] = "УДАЛИТЬ", ["cmd"] = $"octaloadoutsui askdel {oid}", ["color"] = "0.45 0.12 0.10 0.95" });
+                { ["rect"] = $"0.83 {y:0.###} 0.98 {y + 0.06f:0.###}", ["text"] = "УДАЛИТЬ", ["cmd"] = $"octaloadoutsui askdel {oid}", ["color"] = "0.45 0.12 0.10 0.95" });
             }
             ui.Call("Button", c, content, UiName + "_NONE", new JObject
             { ["rect"] = $"0.35 {y - 0.075f:0.###} 0.55 {y - 0.015f:0.###}", ["text"] = "СБРОСИТЬ ВЫБОР", ["cmd"] = "octaloadoutsui select none", ["color"] = "0.15 0.15 0.15 0.9" });
@@ -1405,16 +1773,11 @@ namespace Oxide.Plugins
             if (root == null) return;
             var content = (string)root["content"];
 
-            var i = 0;
-            foreach (var it in kept.Take(42))
+            ui.Call("ItemGrid", c, content, UiName + "_pg", new JObject
             {
-                var rect = ui.Call("GridRect", new JObject
-                { ["rect"] = "0.02 0.30 0.66 0.94", ["cols"] = 7, ["gap"] = 0.010f, ["index"] = i }) as string;
-                ui.Call("Panel", c, content, null, new JObject { ["rect"] = rect, ["color"] = "0.08 0.08 0.07 0.9" });
-                ui.Call("ItemIcon", c, content, null, new JObject
-                { ["rect"] = rect, ["item"] = (string)it["shortname"], ["skin"] = it["skin"]?.Value<ulong>() ?? 0UL, ["amount"] = it["amount"]?.Value<int>() ?? 0 });
-                i++;
-            }
+                ["rect"] = "0.02 0.30 0.66 0.94", ["cols"] = 7, ["gap"] = 0.010f,
+                ["max"] = 42, ["items"] = kept
+            });
             var sb = new System.Text.StringBuilder();
             foreach (var sk in skipped.Take(16))
                 sb.AppendLine($"✗ {sk["shortname"]} — {sk["reason"]}");
@@ -1422,16 +1785,18 @@ namespace Oxide.Plugins
             ui.Call("Text", c, content, null, new JObject
             { ["rect"] = "0.68 0.30 0.98 0.94", ["text"] = sb.Length > 0 ? sb.ToString() : "Всё войдёт в пресет.", ["size"] = 10, ["align"] = "upperleft", ["color"] = "0.9 0.55 0.45 1" });
 
-            ui.Call("Input", c, content, UiName + "_nm", new JObject
-            { ["rect"] = "0.02 0.10 0.50 0.20", ["text"] = "имя пресета", ["limit"] = MaxNameLen, ["cmd"] = "octaloadoutsui savename" });
+            // имя вводится в Prompt-модалке: кнопка открывает её, текст прилетает в savename
             ui.Call("Button", c, content, UiName + "_ok", new JObject
-            { ["rect"] = "0.52 0.10 0.72 0.20", ["text"] = "СОХРАНИТЬ", ["cmd"] = "octaloadoutsui savedo", ["accent"] = "gold" });
+            { ["rect"] = "0.02 0.10 0.50 0.20", ["text"] = "СОХРАНИТЬ (указать имя)", ["cmd"] = "octaloadoutsui saveask", ["accent"] = "gold" });
             ui.Call("Button", c, content, UiName + "_no", new JObject
-            { ["rect"] = "0.73 0.10 0.98 0.20", ["text"] = "ОТМЕНА", ["cmd"] = "octaloadoutsui cancel", ["color"] = "0.30 0.10 0.08 0.95" });
+            { ["rect"] = "0.52 0.10 0.72 0.20", ["text"] = "ОТМЕНА", ["cmd"] = "octaloadoutsui cancel", ["color"] = "0.30 0.10 0.08 0.95" });
             ui.Call("Show", p, c);
         }
 
         private readonly Dictionary<ulong, string> _pendingName = new Dictionary<ulong, string>();
+        private readonly Dictionary<ulong, string> _pendingRename = new Dictionary<ulong, string>();
+        // ожидающее chat-сохранение (uid → имя пресета), живёт до /loadout confirm
+        private readonly Dictionary<ulong, string> _pendingChatSave = new Dictionary<ulong, string>();
 
         [ConsoleCommand("octaloadoutsui")]
         private void CCmdUi(ConsoleSystem.Arg arg)
@@ -1458,6 +1823,20 @@ namespace Oxide.Plugins
                 case "presave":
                     if (ui != null) UiDrawSavePreview(ui, p);
                     return;
+                case "saveask":
+                {
+                    var pc = new CuiElementContainer();
+                    ui?.Call("Prompt", pc, UiName, null, new JObject
+                    {
+                        ["title"] = "ИМЯ ПРЕСЕТА", ["text"] = "Как назвать этот loadout?",
+                        ["placeholder"] = "мой сет", ["limit"] = MaxNameLen,
+                        ["cmdInput"] = "octaloadoutsui savename",
+                        ["cmdYes"] = "octaloadoutsui savedo",
+                        ["cmdNo"] = "octaloadoutsui cancel", ["accent"] = "gold"
+                    });
+                    ui?.Call("Show", p, pc);
+                    return;
+                }
                 case "savename":
                     // FullString = "savename <введённый текст>" — берём всё после первого слова
                     var fs = arg.FullString.ToString() ?? "";
@@ -1466,11 +1845,13 @@ namespace Oxide.Plugins
                     return;
                 case "savedo":
                 {
+                    var uidS = (ulong)p.userID;
                     string nm;
-                    _pendingName.TryGetValue((ulong)p.userID, out nm);
+                    _pendingName.TryGetValue(uidS, out nm);
+                    if (OpRepeat(uidS, "save")) { ui?.Call("Toast", p, UiName, "Повтори чуть позже", "red"); return; }
                     var r = SavePersonal(p, nm);
                     ui?.Call("Toast", p, UiName, r.msg, r.code == "OK" ? "accent" : "red");
-                    _pendingName.Remove((ulong)p.userID);
+                    _pendingName.Remove(uidS);
                     if (r.code == "OK") UiDraw(p, "own:" + (string)r.data["id"]);
                     return;
                 }
@@ -1492,15 +1873,70 @@ namespace Oxide.Plugins
                 }
                 case "del":
                 {
-                    var r = DeletePreset(p, arg.GetString(1));
+                    var did = arg.GetString(1);
+                    if (OpRepeat((ulong)p.userID, "del:" + did)) return;
+                    var r = DeletePreset(p, did);
                     ui?.Call("Toast", p, UiName, r.msg, r.code == "OK" ? "accent" : "red");
                     UiDraw(p, null);
                     return;
                 }
+                case "askrepl":
+                {
+                    var c = new CuiElementContainer();
+                    ui?.Call("Confirm", c, UiName, null, new JObject
+                    {
+                        ["title"] = "Обновить содержимое?", ["text"] = "Текущий инвентарь перезапишет предметы пресета.",
+                        ["yes"] = $"octaloadoutsui repldo {arg.GetString(1)}",
+                        ["no"] = "octaloadoutsui cancel", ["accent"] = "gold"
+                    });
+                    ui?.Call("Show", p, c);
+                    return;
+                }
+                case "repldo":
+                {
+                    var rid2 = arg.GetString(1);
+                    if (OpRepeat((ulong)p.userID, "repl:" + rid2)) return;
+                    var r = ReplacePresetItems(p, rid2);
+                    ui?.Call("Toast", p, UiName, r.msg, r.code == "OK" ? "accent" : "red");
+                    UiDraw(p, "own:" + rid2);
+                    return;
+                }
                 case "rename":
                 {
-                    // переименование через чат: подсказываем команду (ввод через инпут — следующая итерация)
-                    ui?.Call("Toast", p, UiName, $"Чатом: /loadout rename {arg.GetString(1)} <имя>", "accent");
+                    var oid = arg.GetString(1);
+                    var rc = new CuiElementContainer();
+                    ui?.Call("Prompt", rc, UiName, null, new JObject
+                    {
+                        ["title"] = "ПЕРЕИМЕНОВАТЬ", ["text"] = "Новое имя пресета",
+                        ["limit"] = MaxNameLen,
+                        ["cmdInput"] = $"octaloadoutsui renname {oid}",
+                        ["cmdYes"] = $"octaloadoutsui rensave {oid}",
+                        ["cmdNo"] = "octaloadoutsui cancel", ["accent"] = "gold"
+                    });
+                    ui?.Call("Show", p, rc);
+                    return;
+                }
+                case "renname":
+                {
+                    var fs2 = arg.FullString.ToString() ?? "";
+                    var sp2 = fs2.IndexOf(' ');
+                    var rest = sp2 >= 0 ? fs2.Substring(sp2 + 1) : "";
+                    var sp3 = rest.IndexOf(' ');
+                    _pendingName[(ulong)p.userID] = sp3 >= 0 ? rest.Substring(sp3 + 1).Trim() : "";
+                    _pendingRename[(ulong)p.userID] = arg.GetString(1);
+                    return;
+                }
+                case "rensave":
+                {
+                    var uid2 = (ulong)p.userID;
+                    string nm2, rid;
+                    _pendingName.TryGetValue(uid2, out nm2);
+                    _pendingRename.TryGetValue(uid2, out rid);
+                    _pendingName.Remove(uid2);
+                    _pendingRename.Remove(uid2);
+                    var r = RenamePreset(p, rid, nm2); // проверка уровня — внутри операции
+                    ui?.Call("Toast", p, UiName, r.msg, r.code == "OK" ? "accent" : "red");
+                    if (r.code == "OK") UiDraw(p, "own:" + rid);
                     return;
                 }
             }

@@ -38,7 +38,7 @@ namespace Oxide.Plugins
     // Редактор с браузером тем — чат /octaui.
     // ============================================================================
 
-    [Info("OctaUI", "Octavian", "1.2.0")]
+    [Info("OctaUI", "Octavian", "1.3.0")]
     [Description("Общий UI-фреймворк Octavian: тема, примитивы CUI, композиты, layout-пресеты, ImageLibrary")]
     public class OctaUI : RustPlugin
     {
@@ -1486,6 +1486,134 @@ namespace Oxide.Plugins
                 c.Add(new CuiPanel { Image = { Color = (string)acc["bright"] }, RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.03" } }, card);
             }
             return card;
+        }
+
+        // ItemGrid — сетка иконок предметов: тёмные ячейки + ItemIcon по items[]
+        // props: rect, cols (7), gap (0.01), pad (0.12 — внутренний отступ иконки),
+        //        max (0 = всё), color (цвет ячейки), items: JArray[{item|shortname, skin, amount}]
+        [HookMethod("ItemGrid")]
+        private object API_ItemGrid(CuiElementContainer c, string parent, string name, JObject p)
+        {
+            _ct = ThemeFor(p);
+            var items = p?["items"] as JArray;
+            var count = items?.Count ?? 0;
+            var max = I(p, "max", 0);
+            if (max > 0 && count > max) count = max;
+            if (count <= 0) return name;
+            var cols = Math.Max(1, I(p, "cols", 7));
+            var cellColor = ResolveColor(S(p, "color"), "0.08 0.08 0.07 0.9");
+            var pad = F(p, "pad", 0.10f);
+            var fmt = CultureInfo.InvariantCulture;
+            for (var i = 0; i < count; i++)
+            {
+                var it = items[i] as JObject ?? new JObject();
+                var rect = API_GridRect(new JObject
+                {
+                    ["rect"] = S(p, "rect", "0 0 1 1"), ["cols"] = cols,
+                    ["gap"] = F(p, "gap", 0.010f), ["index"] = i
+                }) as string;
+                var cell = c.Add(new CuiPanel
+                {
+                    Image = { Color = cellColor },
+                    RectTransform = { AnchorMin = rect.Split(' ')[0] + " " + rect.Split(' ')[1],
+                                      AnchorMax = rect.Split(' ')[2] + " " + rect.Split(' ')[3] }
+                }, parent, (name ?? "") + "_" + i);
+                var itemRef = S(it, "item", S(it, "shortname"));
+                if (string.IsNullOrEmpty(itemRef)) continue;
+                var pr = string.Format(fmt, "{0:0.###} {0:0.###} {1:0.###} {1:0.###}", pad, 1f - pad);
+                var prt = pr.Split(' ');
+                API_ItemIcon(c, cell, null, new JObject
+                {
+                    ["rect"] = prt[0] + " " + prt[1] + " " + prt[2] + " " + prt[3],
+                    ["item"] = itemRef,
+                    ["skin"] = F(it, "skin", 0f),
+                    ["amount"] = I(it, "amount", 0)
+                });
+            }
+            return name;
+        }
+
+        // Prompt — модалка с текстовым вводом поверх затемнения (как Confirm, но с Input).
+        // CUI-инпут отдаёт текст своим cmd при Enter; кнопка «ОК» отдельная —
+        // потребитель должен сначала стащить текст через cmdInput, потом действовать в cmdYes.
+        // props: title, text, value (стартовое), placeholder, limit, cmdInput, cmdYes, cmdNo,
+        //        yes, no, accent
+        [HookMethod("Prompt")]
+        private object API_Prompt(CuiElementContainer c, string parentUi, string name, JObject p)
+        {
+            _ct = ThemeFor(p);
+            var dim = c.Add(new CuiPanel
+            {
+                Image = { Color = "0 0 0 0.75" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, parentUi, name ?? (parentUi + "_PRM"));
+            var acc = AccentSet(S(p, "accent", S(p, "color")));
+            var col = ResolveColor(S(p, "color"), (string)acc["dim"]);
+            var box = c.Add(new CuiPanel
+            {
+                Image = { Color = Th.Bg },
+                RectTransform = { AnchorMin = "0.30 0.38", AnchorMax = "0.70 0.64" }
+            }, dim, dim + "_box");
+            c.Add(new CuiPanel
+            {
+                Image = { Color = col },
+                RectTransform = { AnchorMin = "0 0.92", AnchorMax = "1 1" }
+            }, box);
+            c.Add(new CuiLabel
+            {
+                Text = { Text = S(p, "title", "Ввод"), FontSize = I(p, "size", 13),
+                         Align = TextAnchor.MiddleCenter, Color = Th.White, Font = Th.Font },
+                RectTransform = { AnchorMin = "0.05 0.68", AnchorMax = "0.95 0.90" }
+            }, box);
+            var txt = S(p, "text");
+            if (!string.IsNullOrEmpty(txt))
+                c.Add(new CuiLabel
+                {
+                    Text = { Text = txt, FontSize = 10, Align = TextAnchor.MiddleCenter,
+                             Color = Th.Muted, Font = Th.Font },
+                    RectTransform = { AnchorMin = "0.05 0.52", AnchorMax = "0.95 0.70" }
+                }, box);
+            var fieldName = dim + "_in";
+            c.Add(new CuiElement
+            {
+                Parent = box,
+                Name = fieldName,
+                Components =
+                {
+                    new CuiImageComponent { Color = Th.Hover },
+                    new CuiRectTransformComponent { AnchorMin = "0.08 0.30", AnchorMax = "0.92 0.50" }
+                }
+            });
+            c.Add(new CuiElement
+            {
+                Parent = fieldName,
+                Components =
+                {
+                    new CuiInputFieldComponent
+                    {
+                        Text = S(p, "value", S(p, "placeholder", "")),
+                        CharsLimit = I(p, "limit", 64),
+                        Command = S(p, "cmdInput"), FontSize = 12,
+                        Align = TextAnchor.MiddleCenter, Color = Th.White,
+                        NeedsKeyboard = true
+                    },
+                    new CuiNeedsCursorComponent(),
+                    new CuiRectTransformComponent { AnchorMin = "0.02 0.05", AnchorMax = "0.98 0.95" }
+                }
+            });
+            c.Add(new CuiButton
+            {
+                Button = { Command = S(p, "cmdNo"), Color = Th.Hover },
+                Text = { Text = S(p, "no", "ОТМЕНА"), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = Th.Text },
+                RectTransform = { AnchorMin = "0.08 0.08", AnchorMax = "0.46 0.24" }
+            }, box);
+            c.Add(new CuiButton
+            {
+                Button = { Command = S(p, "cmdYes"), Color = col },
+                Text = { Text = S(p, "yes", "ГОТОВО"), FontSize = 11, Align = TextAnchor.MiddleCenter, Color = Th.White },
+                RectTransform = { AnchorMin = "0.54 0.08", AnchorMax = "0.92 0.24" }
+            }, box);
+            return dim;
         }
 
         #endregion

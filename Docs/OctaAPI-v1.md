@@ -353,44 +353,72 @@ Hub перечитывает снапшоты у всех с открытым р
 
 ```
 Octa_GetManifest()               → {module, version, api, methods[]}
-Loadouts_GetCatalog(player)      → data: {server:[{key,name,priority,enabled,
-                                   selectable,autoSpawn,itemsCount,allowSaves,
-                                   maxSaves,accessible,reason,active}],
+Loadouts_GetCatalog(player)      → data: {server:[{key,name,accessible,
+                                   reason,active} + для доступных/админа:
+                                   priority,enabled,selectable,autoSpawn,
+                                   itemsCount,allowSaves,maxSaves],
                                    own:[{id,name,level,itemsCount,saved,
                                    accessible,reason,active}],
                                    active, mode}
+  // приватный пресет (VisibleWhenUnavailable=false) недоступному игроку
+  // в каталоге отсутствует; недоступный видимый — только name/reason
 Loadouts_GetPlayerState(player)  → data: {active, ownCount, ownLimit,
                                    saveLevel, mode}
 Loadouts_GetPreset(player, ref)  → data: {name, items:[{shortname, amount,
                                    container, pos, skin, ammoType, ammoCount,
                                    mods[]}], limits?}
-  // ref = "srv:<key>" | "own:<id>"; серверный снапшот безопасен (копия,
-  // не изменяемый объект), личный — только свой
+  // ref = "srv:<key>" | "own:<id>"; limits — только админу, items — только
+  // при доступе; личный пресет — только свой
 Loadouts_PreviewSave(player)     → data: {level, kept:[item], skipped:
                                    [{shortname,amount,reason}]}
   // что войдёт и что отфильтруется — до записи (обязательный обзор)
 Loadouts_Save(player,name,reqId) → data: {id,name,level,kept,skipped[]}
-  // requestId дедуплицирует 300с; лимиты уровня проверяются на сервере
+  // идемпотентность по ключу uid|op|requestId (300с); лимиты — на сервере
 Loadouts_Select(player, ref)     → ok | NO_PERMISSION/NOT_FOUND
   // ref | "none" — сброс; недоступный пресет выбрать нельзя
 Loadouts_Delete(player,id,reqId) → ok | NOT_FOUND; только свой пресет
+  // удаление своего недоступного пресета разрешено — уборка своих данных
+Loadouts_Rename(player,id,name,reqId) → ok | NO_PERMISSION — только при
+                                   действующем уровне пресета
+Loadouts_Replace(player,id,reqId)→ data {kept,skipped} — перезапись
+                                   содержимого своего пресета текущим
+                                   инвентарём; только при действующем уровне
 ```
 
+События:
+- `OnOctaLoadoutApplied(player, source, given, skippedCount)` — после
+  применения на респавне; source = "srv:<key>" | "own:<name>" | "auto:<key>".
+
 Особенности:
-- Режимы возрождения (`Режим возрождения`): `add` (дефолт, в свободные
-  слоты, переполнение → дроп под ноги), `replace` (явный opt-in на
-  `inventory.Strip()`), `disabled`. `Strip()` без режима не вызывается.
-- Одна выдача на респавн: `OnPlayerRespawned` + гард 4с на uid + NextTick.
-- Личный пресет при потере доступа помечается недоступным, не удаляется.
-- Лимиты: `-1` без лимита, `0` запрещено, ключ отсутствует → общий/категорийный.
-- Миграция `LoadoutController`: `data/LoadoutController/PlayerLoadouts/*.json`
-  → личный пресет «Мигрированный», отчёт `data/OctaLoadouts/migration-report.log`,
-  идемпотентно по маркеру `MigratedFrom`, legacy-файлы не трогаются.
+- Режимы возрождения: `add` (дефолт, в свободные слоты), `replace`
+  (явный opt-in на `inventory.Strip()` — предметы предсобираются и
+  валидируются ДО очистки; это не транзакция, отката размещённого нет),
+  `disabled`. `Strip()` без режима не вызывается.
+- Политика переполнения (`Политика переполнения`): `skip_with_message`
+  (дефолт — предмет удаляется, игрок получает список), `drop_near_player`,
+  `cancel_loadout` (прерывает выдачу; уже размещённое остаётся).
+- Выдача на цикл респавна: `OnPlayerRespawn` снимает метку,
+  `OnPlayerRespawned` ставит — дубли хука одного цикла no-op, новый
+  цикл всегда получает выдачу (кулдаунов по времени нет).
+- Политика личных пресетов: просмотр недоступного — да; удаление своего
+  — да (уборка); rename/replace — только при действующем уровне;
+  чужой id недоступен.
+- Лимиты считают ШТУКИ (`item.amount`): `-1` без лимита, `0` запрещено,
+  ключ отсутствует → общий/категорийный лимит. Есть per-shortname,
+  per-category (`ItemCategory`), per-container (`maxmain|belt|wear`), total.
+- Магазины: `StoreLoadedAmmo` (глобальный master) И `StoreAmmo` (уровень) —
+  оба должны быть включены; при выдаче количество клампится по `builtInSize`.
+- Миграция `LoadoutController`: `PlayerLoadoutOption{ActiveLoadout,
+  Loadouts[]{SavedPerm,SaveName,Items[]}}` → каждый loadout — личный пресет,
+  активный → `own:<id>`, `SavedPerm` → пресет по permission-матчу. Статусы
+  в `migration-state.json` (migrated|empty|error) — пустые/битые файлы не
+  переобрабатываются; отчёт до метки; legacy-файлы не трогаются; серверные
+  LoadoutOptions — ручной перенос (фиксируется в отчёте).
 - Админ-операции: `octaloadouts.admin/.admin.presets/.admin.limits`;
-  импорт из админ-инвентаря — `octaloadouts.import <key> [confirm]` с превью
-  и записью в `data/OctaLoadouts/audit.log`.
-- UI: самостоятельное окно через OctaUI (`/loadout`); без OctaUI —
-  чат-команды. Данные игрока не зависят от UI-провайдеров.
+  `octaloadouts.import <key> [confirm]` (превью+аудит),
+  `octaloadouts.setlimit <key> <field> <value>` (limits-перм+аудит).
+- UI: окно через OctaUI (`/loadout`, ItemGrid/Prompt/Confirm/Toast);
+  без OctaUI — чат-команды с теми же операциями и подтверждениями.
 
 ### OctaHub
 
