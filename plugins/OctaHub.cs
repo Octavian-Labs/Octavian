@@ -19,7 +19,7 @@ namespace Oxide.Plugins
     // OctVIP (статус), OctaTP (дома), OctaFeed (настройки ленты), OctaWC (вайп).
     // Обратная совместимость: octahub_open <tab> <page>, кастомные чат-команды,
     // PageData.json, пермишены octawelcome.tabN (инфо-страницы).
-    [Info("OctaHub", "Octavian", "2.0.0")]
+    [Info("OctaHub", "Octavian", "2.1.0")]
     [Description("Игровой портал Octavian: разделы, живые данные провайдеров, OctaUI")]
     public class OctaHub : RustPlugin
     {
@@ -597,31 +597,74 @@ namespace Oxide.Plugins
                     SavePrefs();
                     break;
                 case "feedmsg":
-                    OctaFeed?.Call("API_SetSetting", player.userID, "hideMessages", !FeedGet(player, "hideMessages"));
+                    FeedSet(player, "hideMessages", !FeedGet(player, "hideMessages"));
                     break;
                 case "feedname":
-                    OctaFeed?.Call("API_SetSetting", player.userID, "hideMyName", !FeedGet(player, "hideMyName"));
+                    FeedSet(player, "hideMyName", !FeedGet(player, "hideMyName"));
                     break;
                 case "relnotify":
                     if (OctaRel != null)
-                    {
-                        bool relCur = false;
-                        try { relCur = Convert.ToBoolean(OctaRel.Call("GetNotify", (ulong)player.userID)); } catch { }
-                        OctaRel.Call("SetNotify", (ulong)player.userID, !relCur);
-                    }
+                        RelNotifySet(player, !RelNotifyGet(player));
                     break;
             }
             UiRefresh(player, UiCnt);
         }
 
+        // ── Провайдер-шимы: v1-конверт {ok,code,data} с фолбэком на legacy ──
+        // (Docs/OctaAPI-v1.md). res==null означает «метод не найден» (старый
+        // провайдер) → зовём старый API; res!=null с ok=false — честный ответ.
+
         private bool FeedGet(BasePlayer player, string key)
         {
             try
             {
-                var o = OctaFeed?.Call("API_GetSettings", player.userID) as JObject;
-                return o?[key]?.Value<bool>() ?? false;
+                var res = OctaFeed?.Call("Feed_GetSettings", (ulong)player.userID) as JObject;
+                var o = res?["data"] as JObject;
+                if (o != null) return o[key]?.Value<bool>() ?? false;
+                if (res == null)
+                {
+                    var old = OctaFeed?.Call("API_GetSettings", (ulong)player.userID) as JObject;
+                    return old?[key]?.Value<bool>() ?? false;
+                }
             }
-            catch { return false; }
+            catch { }
+            return false;
+        }
+
+        private void FeedSet(BasePlayer player, string key, bool value)
+        {
+            try
+            {
+                var res = OctaFeed?.Call("Feed_SetSetting", (ulong)player.userID, key, value) as JObject;
+                if (res != null) return;
+            }
+            catch { }
+            try { OctaFeed?.Call("API_SetSetting", (ulong)player.userID, key, value); } catch { }
+        }
+
+        private bool RelNotifyGet(BasePlayer player)
+        {
+            try
+            {
+                var res = OctaRel?.Call("Rel_GetNotify", (ulong)player.userID) as JObject;
+                var v = res?["data"]?["value"];
+                if (v != null) return v.Value<bool>();
+                if (res == null)
+                    return Convert.ToBoolean(OctaRel.Call("GetNotify", (ulong)player.userID));
+            }
+            catch { }
+            return false;
+        }
+
+        private void RelNotifySet(BasePlayer player, bool value)
+        {
+            try
+            {
+                var res = OctaRel?.Call("Rel_SetNotify", (ulong)player.userID, value) as JObject;
+                if (res != null) return;
+            }
+            catch { }
+            try { OctaRel?.Call("SetNotify", (ulong)player.userID, value); } catch { }
         }
 
         // Фильтр категории наборов
@@ -695,14 +738,30 @@ namespace Oxide.Plugins
             if (args.Length >= 4 && args[0] == "ping")
             {
                 if (!ulong.TryParse(args[3], out target)) return;
-                var err = OctaRel.Call("ScanEnemy", player, target, args[1]) as string;
+                string err = null;
+                try
+                {
+                    var res = OctaRel.Call("Rel_ScanEnemy", player, target, args[1]) as JObject;
+                    if (res != null)
+                        err = res["ok"]?.Value<bool>() == true ? null
+                              : (res["msg"]?.ToString() ?? "Ошибка пинга.");
+                    else
+                        err = OctaRel.Call("ScanEnemy", player, target, args[1]) as string;
+                }
+                catch { err = "сервис недоступен"; }
                 if (!string.IsNullOrEmpty(err))
                     player.ChatMessage($"<color=#cd412b>◆ ПИНГ:</color> {err}");
                 return;
             }
             if (args.Length < 3 || args[0] != "del") return;
             if (!ulong.TryParse(args[2], out target)) return;
-            OctaRel.Call("RemoveRelation", (ulong)player.userID, args[1], target);
+            try
+            {
+                var res = OctaRel.Call("Rel_Remove", (ulong)player.userID, args[1], target) as JObject;
+                if (res == null)
+                    OctaRel.Call("RemoveRelation", (ulong)player.userID, args[1], target);
+            }
+            catch { }
             UiRefresh(player, UiCnt);
         }
 
@@ -819,7 +878,12 @@ namespace Oxide.Plugins
             try
             {
                 if (OctaWC != null)
+                {
+                    var res = OctaWC.Call("WC_GetInfo") as JObject;
+                    var fmt = res?["data"]?["formatted"]?.ToString();
+                    if (fmt != null) return fmt;
                     return OctaWC.Call("GetCountdownFormated_API") as string ?? "—";
+                }
                 if (WipeCountdown != null)
                     return Convert.ToString(WipeCountdown.CallHook("GetCountdownFormated_API"));
             }
@@ -1723,16 +1787,33 @@ namespace Oxide.Plugins
             {
                 if (OctVIP != null)
                 {
-                    int lvl = Convert.ToInt32(OctVIP.Call("GetVipLevel", (ulong)player.userID));
+                    // v1: статус одним вызовом; фолбэк — четыре legacy-геттера
+                    int lvl = 0; string vname = null, vcol = null; long exp = 0;
+                    var res = OctVIP.Call("Vip_GetPlayerStatus", (ulong)player.userID) as JObject;
+                    var d = res?["data"] as JObject;
+                    if (d != null)
+                    {
+                        lvl = d["level"]?.Value<int>() ?? 0;
+                        vname = d["name"]?.ToString();
+                        vcol = d["color"]?.ToString();
+                        exp = d["expiresAt"]?.Value<long>() ?? 0;
+                    }
+                    else
+                    {
+                        lvl = Convert.ToInt32(OctVIP.Call("GetVipLevel", (ulong)player.userID));
+                        if (lvl > 0)
+                        {
+                            vname = OctVIP.Call("GetVipLevelName", (ulong)player.userID) as string;
+                            vcol = OctVIP.Call("GetVipColor", (ulong)player.userID) as string;
+                            exp = Convert.ToInt64(OctVIP.Call("GetVipExpiry", (ulong)player.userID));
+                        }
+                    }
                     if (lvl > 0)
                     {
-                        string vname = OctVIP.Call("GetVipLevelName", (ulong)player.userID) as string ?? $"VIP {lvl}";
-                        string vcol = OctVIP.Call("GetVipColor", (ulong)player.userID) as string ?? "#E8B84B";
-                        long exp = Convert.ToInt64(OctVIP.Call("GetVipExpiry", (ulong)player.userID));
                         string expTxt = exp > 0
                             ? $" · до {DateTimeOffset.FromUnixTimeSeconds(exp).UtcDateTime:dd.MM.yyyy}"
                             : " · бессрочно";
-                        vipLine = $"<color={vcol}><b>{vname}</b></color><color=@muted>{expTxt}</color>";
+                        vipLine = $"<color={vcol ?? "#E8B84B"}><b>{vname ?? $"VIP {lvl}"}</b></color><color=@muted>{expTxt}</color>";
                     }
                 }
             }
@@ -1774,8 +1855,23 @@ namespace Oxide.Plugins
             }
             else
             {
-                Dictionary<string, Vector3> homes = null;
-                try { homes = OctaTP.Call("API_GetHomes", player) as Dictionary<string, Vector3>; } catch { }
+                // v1: TP_GetHomes отдаёт JSON-конверт; фолбэк — legacy Dictionary
+                List<KeyValuePair<string, Vector3>> homes = null;
+                try
+                {
+                    var res = OctaTP.Call("TP_GetHomes", player) as JObject;
+                    var arr = res?["data"]?["homes"] as JArray;
+                    if (arr != null)
+                        homes = arr.OfType<JObject>().Select(h => new KeyValuePair<string, Vector3>(
+                            h["name"]?.ToString() ?? "?",
+                            new Vector3(
+                                h["pos"]?[0]?.Value<float>() ?? 0,
+                                h["pos"]?[1]?.Value<float>() ?? 0,
+                                h["pos"]?[2]?.Value<float>() ?? 0))).ToList();
+                    else if (res == null)
+                        homes = (OctaTP.Call("API_GetHomes", player) as Dictionary<string, Vector3>)?.ToList();
+                }
+                catch { }
                 if (homes == null || homes.Count == 0)
                 {
                     CUIClass.CreateText(ref ui, "oh_pr_he", "oh_pr_r", "muted",
@@ -1814,12 +1910,22 @@ namespace Oxide.Plugins
             else
             {
                 JObject rel = null;
-                try { rel = OctaRel.Call("GetRelations", (ulong)player.userID) as JObject; } catch { }
+                try
+                {
+                    var res = OctaRel.Call("Rel_GetRelations", (ulong)player.userID) as JObject;
+                    rel = res?["data"] as JObject;
+                    if (rel == null && res == null)
+                        rel = OctaRel.Call("GetRelations", (ulong)player.userID) as JObject;
+                }
+                catch { }
                 // параметры пинга — цены и доступность валют из OctaRel
                 _pingRp = _pingCoins = _pingSec = 0; _pingRpOn = _pingCoinsOn = _pingTest = false;
                 try
                 {
-                    var pi = OctaRel.Call("GetPingInfo") as JObject;
+                    var pres = OctaRel.Call("Rel_GetPingInfo") as JObject;
+                    var pi = pres?["data"] as JObject;
+                    if (pi == null && pres == null)
+                        pi = OctaRel.Call("GetPingInfo") as JObject;
                     if (pi != null)
                     {
                         _pingRp = pi["rp"]?.Value<int>() ?? 0;
@@ -2092,9 +2198,7 @@ namespace Oxide.Plugins
 
             // уведомления OctaRel — живые, через API
             bool relOn = OctaRel != null;
-            bool relNotify = false;
-            if (relOn)
-                try { relNotify = Convert.ToBoolean(OctaRel.Call("GetNotify", (ulong)player.userID)); } catch { }
+            bool relNotify = relOn && RelNotifyGet(player);
             DrawSettingRow(ref ui, i++, "УВЕДОМЛЕНИЯ О ДРУЗЬЯХ И ВРАГАХ",
                 relOn ? "чат: вход/выход из списков + радар врага рядом" : "модуль OctaRel не загружен",
                 relOn && relNotify, "octahub_set relnotify", relOn);

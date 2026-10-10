@@ -10,6 +10,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Configuration;
 using Oxide.Core.Plugins;
@@ -26,7 +27,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    [Info("OctVIP", "Octavian", "1.3.3")]
+    [Info("OctVIP", "Octavian", "1.4.0")]
     [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
@@ -719,6 +720,26 @@ namespace Oxide.Plugins
             if (!string.IsNullOrEmpty(duration) && !TryParseDuration(duration, out dur)) return false;
             SetLevel(userId, level, dur, "api");
             return true;
+        }
+
+        // Octa API v1 (Docs/OctaAPI-v1.md): статус игрока одним вызовом в
+        // конверте — заменяет цепочку GetVipLevel+GetVipLevelName+GetVipColor+
+        // GetVipExpiry на стороне потребителя
+        [HookMethod("Vip_GetPlayerStatus")]
+        public JObject Vip_GetPlayerStatus(ulong userId)
+        {
+            int lvl = ResolveLevel(userId);
+            return new JObject
+            {
+                ["ok"] = true, ["code"] = "OK",
+                ["data"] = new JObject
+                {
+                    ["level"] = lvl,
+                    ["name"] = Levels[lvl].Name,
+                    ["color"] = Levels[lvl].Color,
+                    ["expiresAt"] = API_GetExpiry(userId),
+                }
+            };
         }
 
         // ── Chaos-панель управления ─────────────────────────────────────────

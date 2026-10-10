@@ -251,22 +251,40 @@ Vip_GetBenefitValue(uid,id)→ data.value | NOT_FOUND
 Числовые бонусы: `GetBenefitValue` отдаёт max из активных назначений,
 не сумму (кроме явно помеченных `stackable`).
 
-### OctaRel
+### OctaRel (реализовано, v1.1.0)
 
 ```
-Rel_GetRelations(uid)            → {friends[], enemies[]} (сейчас GetRelations)
-Rel_GetPingInfo()                → {rp, coins, sec, rpOn, coinsOn, testOn}
-Rel_ScanEnemy(payer, uid, cur)   → ok / code
-Rel_SetNotify(uid, v)            → ok
-Rel_Add / Rel_Remove(uid,type,target) → ok / code
+Rel_GetRelations(uid)            → data: {friends[], enemies[], notify}
+Rel_GetPingInfo()                → data: {rp, coins, sec, rpOn, coinsOn, testOn}
+Rel_GetNotify(uid) / Rel_SetNotify(uid, v) → data: {value}
+Rel_Add / Rel_Remove(uid,type,target) → ok | INVALID_ARGUMENT /
+                                   CONFLICT / LIMIT_REACHED / NOT_FOUND
+Rel_ScanEnemy(payer, uid, cur)   → ok {ping:true} | NO_PERMISSION /
+                                   UNAVAILABLE / CONFLICT /
+                                   INSUFFICIENT_FUNDS / PROVIDER_UNAVAILABLE
 ```
 
-### OctaFeed / OctaWC / OctaTP
+Внутри — единые обработчики (code,msg): legacy `ScanEnemy`/`AddRelation`
+отдают текст ошибки, конвертные `Rel_*` — коды из таблицы §2.
+Строже legacy: неизвестный `type` → `INVALID_ARGUMENT` (было «в друзья»).
+
+### OctaFeed / OctaWC / OctaTP (реализовано, фаза 3)
 
 ```
-Feed_GetSettings(uid) / Feed_SetSetting(uid,key,v)
-WC_GetInfo()     → {seconds, formatted} (GetCountdownFormated_API → legacy)
-TP_GetHomes(player) → {homes:[{name, pos:[x,y,z], uses?}]}
+Feed_GetSettings(uid)            → data: {hideMessages, hideMyName}
+Feed_SetSetting(uid,key,v)       → data: {value} | INVALID_ARGUMENT
+  // key ∈ hideMessages | hideMyName
+
+WC_GetInfo()                     → data: {nextUnix, secondsLeft, mode,
+                                   saveCreatedUnix, formatted}
+  // legacy: GetWipeInfo, GetCountdownFormated_API
+
+TP_GetHomes(player)              → data: {homes:[{name, pos:[x,y,z]}]}
+  // legacy: API_GetHomes (Dictionary<string,Vector3> — не JSON)
+
+Vip_GetPlayerStatus(uid)         → data: {level, name, color, expiresAt}
+  // legacy: GetVipLevel/GetVipLevelName/GetVipColor/GetVipExpiry —
+  // один вызов вместо четырёх; benefit-слой — фаза 4
 ```
 
 ### OctaHub

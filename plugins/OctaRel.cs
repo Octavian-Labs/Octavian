@@ -26,7 +26,7 @@ namespace Oxide.Plugins
     //   RemoveRelation(uid, "friend"|"enemy", targetUid) -> bool
     //   GetNotify(uid) / SetNotify(uid, bool)
     // Чат-команды: /friend add|del|list ник, /enemy add|del|list ник, /relnotify
-    [Info("OctaRel", "Octavian", "1.0.0")]
+    [Info("OctaRel", "Octavian", "1.1.0")]
     [Description("Списки друзей и врагов: уведомления о входе/выходе и радар врага")]
     public class OctaRel : RustPlugin
     {
@@ -220,34 +220,51 @@ namespace Oxide.Plugins
         }
 
         // currency: "rp" | "coins" | "auto". Возвращает null при успехе или текст ошибки.
+        // LEGACY: возвращает строку ошибки; v1-версия — Rel_ScanEnemy (конверт с кодом).
         [HookMethod("ScanEnemy")]
         public string API_ScanEnemy(BasePlayer payer, ulong target, string currency)
+            => ScanInternal(payer, target, currency).Item2;
+
+        // единый обработчик пинга: (code,msg), code=="OK" при успехе —
+        // и legacy-строка, и конверт v1 собираются из одного источника
+        private Tuple<string, string> ScanInternal(BasePlayer payer, ulong target, string currency)
         {
-            if (Cfg == null || payer == null) return "сервис недоступен";
+            if (Cfg == null || payer == null) return T("PROVIDER_UNAVAILABLE", "сервис недоступен");
             RelData d;
             if (!Cfg.PingTestMode &&
                 (!_data.TryGetValue(payer.userID, out d) || !d.Enemies.Contains(target)))
-                return "Это не твой враг — сначала /enemy add ник";
+                return T("NO_PERMISSION", "Это не твой враг — сначала /enemy add ник");
             var t = BasePlayer.FindByID(target) ??
                     (Cfg.SleepersCountAsOnline ? BasePlayer.FindSleeping(target) : null);
-            if (t == null || (!Cfg.SleepersCountAsOnline && t.IsSleeping())) return "Цель не в сети.";
-            if (t.IsDead()) return "Цель уже мертва.";
-            if (_pings.ContainsKey(payer.userID)) return "Пинг уже активен — дождись конца.";
+            if (t == null || (!Cfg.SleepersCountAsOnline && t.IsSleeping()))
+                return T("UNAVAILABLE", "Цель не в сети.");
+            if (t.IsDead()) return T("UNAVAILABLE", "Цель уже мертва.");
+            if (_pings.ContainsKey(payer.userID)) return T("CONFLICT", "Пинг уже активен — дождись конца.");
 
             // тест-режим: любая цель + бесплатно — для проверки без валютных плагинов
             if (Cfg.PingTestMode && (currency == "auto" || currency == "test"))
-                return StartPing(payer, t, "0 (тест)");
+                return T("OK", StartPing(payer, t, "0 (тест)"));
 
             string err = null;
             if ((currency == "rp" || currency == "auto") && Cfg.PingCostRp > 0 &&
                 TakeRp(payer, Cfg.PingCostRp, out err))
-                return StartPing(payer, t, $"{Cfg.PingCostRp} RP");
-            if (currency == "rp") return err ?? "RP-оплата выключена в конфиге.";
+                return T("OK", StartPing(payer, t, $"{Cfg.PingCostRp} RP"));
+            if (currency == "rp") return T(ClassifyPayErr(err), err ?? "RP-оплата выключена в конфиге.");
             if ((currency == "coins" || currency == "auto") && Cfg.PingCostCoins > 0 &&
                 TakeCoins(payer, Cfg.PingCostCoins, out err))
-                return StartPing(payer, t, $"{Cfg.PingCostCoins} монет");
-            if (currency == "coins") return err ?? "Оплата монетами выключена в конфиге.";
-            return err ?? "Нет способа оплаты — ServerRewards/Economics не найдены.";
+                return T("OK", StartPing(payer, t, $"{Cfg.PingCostCoins} монет"));
+            if (currency == "coins") return T(ClassifyPayErr(err), err ?? "Оплата монетами выключена в конфиге.");
+            return T(err != null ? ClassifyPayErr(err) : "PROVIDER_UNAVAILABLE",
+                     err ?? "Нет способа оплаты — ServerRewards/Economics не найдены.");
+        }
+
+        // текст ошибки оплаты → стабильный код конверта
+        private static string ClassifyPayErr(string err)
+        {
+            if (string.IsNullOrEmpty(err)) return "UNAVAILABLE";
+            if (err.Contains("не установлен") || err.Contains("не найден")) return "PROVIDER_UNAVAILABLE";
+            if (err.Contains("не хватает")) return "INSUFFICIENT_FUNDS";
+            return "UNAVAILABLE";
         }
 
         private string StartPing(BasePlayer payer, BasePlayer target, string paid)
@@ -416,22 +433,29 @@ namespace Oxide.Plugins
         }
 
         // target — steamID. Возвращает null или текст ошибки.
+        // LEGACY-обёртка; v1-версия — Rel_Add (конверт с кодом).
         [HookMethod("AddRelation")]
         public string API_Add(ulong uid, string type, ulong target)
+            => AddInternal(uid, type, target).Item2;
+
+        // единый обработчик добавления: (code,msg) — строже legacy:
+        // неизвестный type теперь INVALID_ARGUMENT, а не «добавь в друзья»
+        private Tuple<string, string> AddInternal(ulong uid, string type, ulong target)
         {
-            if (target == uid) return "Нельзя добавить себя.";
+            if (type != "friend" && type != "enemy") return T("INVALID_ARGUMENT", "type: friend|enemy");
+            if (target == uid) return T("INVALID_ARGUMENT", "Нельзя добавить себя.");
             var d = Rel(uid);
             var list = type == "enemy" ? d.Enemies : d.Friends;
             var limit = type == "enemy" ? Cfg.MaxEnemies : Cfg.MaxFriends;
-            if (list.Contains(target)) return "Уже в списке.";
-            if (list.Count >= limit) return $"Лимит ({limit}) исчерпан.";
+            if (list.Contains(target)) return T("CONFLICT", "Уже в списке.");
+            if (list.Count >= limit) return T("LIMIT_REACHED", $"Лимит ({limit}) исчерпан.");
             // враг не может быть другом и наоборот — чистим пересечение
             var other = type == "enemy" ? d.Friends : d.Enemies;
             other.Remove(target);
             list.Add(target);
             SaveData();
             if (type == "enemy") NotifyDeclaredEnemy(uid, target);
-            return null;
+            return T("OK", null);
         }
 
         // цель узнаёт, что её объявили врагом — с предложением ответить тем же.
@@ -477,6 +501,69 @@ namespace Oxide.Plugins
             Rel(uid).Notify = value;
             SaveData();
             return value;
+        }
+
+        // ═══ Octa API v1 — конверт {ok,code,msg,data} (Docs/OctaAPI-v1.md) ═══
+
+        private static Tuple<string, string> T(string code, string msg) => Tuple.Create(code, msg);
+
+        private static JObject RelOk(JObject data = null)
+        {
+            var o = new JObject { ["ok"] = true, ["code"] = "OK" };
+            if (data != null) o["data"] = data;
+            return o;
+        }
+
+        private static JObject RelFail(string code, string msg)
+        {
+            var o = new JObject { ["ok"] = false, ["code"] = code };
+            if (!string.IsNullOrEmpty(msg)) o["msg"] = msg;
+            return o;
+        }
+
+        [HookMethod("Rel_GetRelations")]
+        public JObject Rel_GetRelations(ulong uid) => RelOk(API_GetRelations(uid));
+
+        [HookMethod("Rel_GetPingInfo")]
+        public JObject Rel_GetPingInfo() => RelOk(API_PingInfo());
+
+        [HookMethod("Rel_GetNotify")]
+        public JObject Rel_GetNotify(ulong uid) =>
+            RelOk(new JObject { ["value"] = API_GetNotify(uid) });
+
+        [HookMethod("Rel_SetNotify")]
+        public JObject Rel_SetNotify(ulong uid, bool value) =>
+            RelOk(new JObject { ["value"] = API_SetNotify(uid, value) });
+
+        [HookMethod("Rel_Add")]
+        public JObject Rel_Add(ulong uid, string type, ulong target)
+        {
+            var r = AddInternal(uid, type, target);
+            return r.Item1 == "OK" ? RelOk() : RelFail(r.Item1, r.Item2);
+        }
+
+        [HookMethod("Rel_Remove")]
+        public JObject Rel_Remove(ulong uid, string type, ulong target)
+        {
+            if (type != "friend" && type != "enemy")
+                return RelFail("INVALID_ARGUMENT", "type: friend|enemy");
+            RelData d;
+            if (!_data.TryGetValue(uid, out d)) return RelFail("NOT_FOUND", "Списков нет.");
+            var list = type == "enemy" ? d.Enemies : d.Friends;
+            if (!list.Remove(target)) return RelFail("NOT_FOUND", "Цель не найдена в списке.");
+            SaveData();
+            return RelOk();
+        }
+
+        // платный пинг личного врага — коды: NO_PERMISSION (не враг),
+        // UNAVAILABLE (не в сети/мёртв), CONFLICT (пинг уже идёт),
+        // INSUFFICIENT_FUNDS, PROVIDER_UNAVAILABLE (нет ServerRewards/Economics)
+        [HookMethod("Rel_ScanEnemy")]
+        public JObject Rel_ScanEnemy(BasePlayer payer, ulong target, string currency)
+        {
+            var r = ScanInternal(payer, target, currency);
+            return r.Item1 == "OK" ? RelOk(new JObject { ["ping"] = true })
+                                   : RelFail(r.Item1, r.Item2);
         }
 
         // ── Чат-команды ──────────────────────────────────────────────────────

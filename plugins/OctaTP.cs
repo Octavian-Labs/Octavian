@@ -3,6 +3,7 @@ using Facepunch;
 using Network;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Configuration;
 using Oxide.Core.Libraries.Covalence;
@@ -25,7 +26,7 @@ namespace Oxide.Plugins
     // v2.0.1: починен телепорт по маркеру на карте (OnMapMarkerAdd в Carbon,
     // корректная высота рельефа/воды, поддержка админов без отдельного пермишна,
     // полноценный Teleport вместо голого player.Teleport, команды /tpm и /tpmarker).
-    [Info("OctaTP", "Octavian", "2.0.1")]
+    [Info("OctaTP", "Octavian", "2.1.0")]
     [Description("Multiple teleportation systems for admin and players — дома, tpr/tpa, города, админ-tp")]
     class OctaTP : RustPlugin
     {
@@ -8598,6 +8599,25 @@ namespace Oxide.Plugins
             }
             homeData.Locations.Clear();
             return result;
+        }
+
+        // Octa API v1 (Docs/OctaAPI-v1.md): дома игрока в конверте —
+        // JSON-friendly форма вместо Dictionary<string,Vector3>
+        [HookMethod("TP_GetHomes")]
+        public JObject TP_GetHomes(BasePlayer player)
+        {
+            var homes = new JArray();
+            foreach (var kv in GetPlayerHomes(player))
+                homes.Add(new JObject
+                {
+                    ["name"] = kv.Key,
+                    ["pos"] = new JArray(kv.Value.x, kv.Value.y, kv.Value.z)
+                });
+            return new JObject
+            {
+                ["ok"] = true, ["code"] = "OK",
+                ["data"] = new JObject { ["homes"] = homes }
+            };
         }
 
         private List<Vector3> API_GetLocations(string command)

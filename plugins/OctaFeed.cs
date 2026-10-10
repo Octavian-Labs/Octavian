@@ -20,7 +20,7 @@ namespace Oxide.Plugins
     // Строки — список с индивидуальным TTL; перерисовка целиком (это дёшево:
     // до N строк по несколько элементов), вместо кольцевого буфера и утаскивания
     // элементов за край экрана.
-    [Info("OctaFeed", "Octavian", "2.1.0")]
+    [Info("OctaFeed", "Octavian", "2.2.0")]
     [Description("Киллфид: кто кого убил, оружие, дистанция. Поддержка боссов OctaBoss")]
     public class OctaFeed : RustPlugin
     {
@@ -1103,6 +1103,30 @@ namespace Oxide.Plugins
             var player = BasePlayer.FindByID(userId);
             if (player != null) DrawFeed(player);
             return value;
+        }
+
+        // ═══ Octa API v1 — конверт {ok,code,msg,data} (Docs/OctaAPI-v1.md) ═══
+
+        private static JObject FeedOk(JObject data = null)
+        {
+            var o = new JObject { ["ok"] = true, ["code"] = "OK" };
+            if (data != null) o["data"] = data;
+            return o;
+        }
+
+        private static JObject FeedFail(string code, string msg)
+            => new JObject { ["ok"] = false, ["code"] = code, ["msg"] = msg };
+
+        [HookMethod("Feed_GetSettings")]
+        public JObject Feed_GetSettings(ulong userId) => FeedOk(API_GetSettings(userId));
+
+        // key ∈ hideMessages | hideMyName; data.value — новое значение флага
+        [HookMethod("Feed_SetSetting")]
+        public JObject Feed_SetSetting(ulong userId, string key, bool value)
+        {
+            if (key != "hideMessages" && key != "hideMyName")
+                return FeedFail("INVALID_ARGUMENT", "key: hideMessages|hideMyName");
+            return FeedOk(new JObject { ["value"] = API_SetSetting(userId, key, value) });
         }
 
         // Совместимость со старым API: внешние плагины могут класть строки в ленту

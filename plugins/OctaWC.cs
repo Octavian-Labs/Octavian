@@ -17,7 +17,7 @@ namespace Oxide.Plugins
     //   GetWipeInfo()            -> JObject {nextUnix, secondsLeft, mode, saveCreatedUnix}
     //   GetCountdownFormated_API -> строка вида "3д 14ч 22м" (совместимость с
     //                             старым WipeCountdown — токен {wipecountdown})
-    [Info("OctaWC", "Octavian", "1.0.0")]
+    [Info("OctaWC", "Octavian", "1.1.0")]
     [Description("Провайдер даты вайпа: интервал от сейва или фиксированная дата")]
     public class OctaWC : RustPlugin
     {
@@ -91,6 +91,14 @@ namespace Oxide.Plugins
                 ["formatted"] = next > 0 ? FormatCountdown(next - now) : "—",
             };
         }
+
+        // Octa API v1: GetWipeInfo в конверте {ok,code,data}
+        // (Docs/OctaAPI-v1.md). GetWipeInfo/GetCountdownFormated_API — legacy.
+        [HookMethod("WC_GetInfo")]
+        public JObject WC_GetInfo() => new JObject
+        {
+            ["ok"] = true, ["code"] = "OK", ["data"] = API_GetWipeInfo()
+        };
 
         // Совместимость со старым WipeCountdown — старые шаблоны {wipecountdown}
         // продолжают работать без изменений.
