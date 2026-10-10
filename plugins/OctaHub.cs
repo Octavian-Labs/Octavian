@@ -180,7 +180,7 @@ namespace Oxide.Plugins
 
         // параметры платного пинга врага — из OctaRel.GetPingInfo
         private int _pingRp, _pingCoins, _pingSec;
-        private bool _pingRpOn, _pingCoinsOn;
+        private bool _pingRpOn, _pingCoinsOn, _pingTest;
 
         #endregion
 
@@ -1763,7 +1763,7 @@ namespace Oxide.Plugins
                 JObject rel = null;
                 try { rel = OctaRel.Call("GetRelations", (ulong)player.userID) as JObject; } catch { }
                 // параметры пинга — цены и доступность валют из OctaRel
-                _pingRp = _pingCoins = _pingSec = 0; _pingRpOn = _pingCoinsOn = false;
+                _pingRp = _pingCoins = _pingSec = 0; _pingRpOn = _pingCoinsOn = _pingTest = false;
                 try
                 {
                     var pi = OctaRel.Call("GetPingInfo") as JObject;
@@ -1774,6 +1774,7 @@ namespace Oxide.Plugins
                         _pingSec = pi["sec"]?.Value<int>() ?? 10;
                         _pingRpOn = pi["rpOn"]?.Value<bool>() == true;
                         _pingCoinsOn = pi["coinsOn"]?.Value<bool>() == true;
+                        _pingTest = pi["testOn"]?.Value<bool>() == true;
                     }
                 }
                 catch { }
@@ -1819,7 +1820,7 @@ namespace Oxide.Plugins
             string aMin = $"{x1.ToString("0.##", CultureInfo.InvariantCulture)} {y1.ToString("0.###", CultureInfo.InvariantCulture)}";
             string aMax = $"{x2.ToString("0.##", CultureInfo.InvariantCulture)} {y2.ToString("0.###", CultureInfo.InvariantCulture)}";
             string n = $"oh_rel_{i}";
-            bool ping = !isFriend && online && (_pingRpOn || _pingCoinsOn);
+            bool ping = !isFriend && online && (_pingRpOn || _pingCoinsOn || _pingTest);
 
             CUIClass.CreatePanel(ref ui, n, "oh_pr_rel", "bg", aMin, aMax, false, 0f, Mat);
             CUIClass.CreateText(ref ui, n + "_t", n, "text",
@@ -1829,6 +1830,12 @@ namespace Oxide.Plugins
             // кнопки-ценники платного ESP-пинга — только живым онлайн-врагам
             if (ping)
             {
+                // тест-режим без валют — золотая кнопка ESP вместо ценника
+                if (_pingTest && !_pingRpOn && !_pingCoinsOn)
+                    CUIClass.CreateButton(ref ui, n + "_pt", n, "accent.glass",
+                        "<color=@accent>ESP</color>", 9,
+                        "0.45 0.10", "0.72 0.90", $"octahub_rel ping test {id}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
                 if (_pingRpOn)
                     CUIClass.CreateButton(ref ui, n + "_pr", n, "accent.glass",
                         $"<color=#83b8c7>{_pingRp}RP</color>", 9,

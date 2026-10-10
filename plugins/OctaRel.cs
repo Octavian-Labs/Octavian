@@ -212,6 +212,7 @@ namespace Oxide.Plugins
                 ["rp"] = Cfg.PingCostRp, ["coins"] = Cfg.PingCostCoins, ["sec"] = Cfg.PingSeconds,
                 ["rpOn"] = Cfg.PingCostRp > 0 && HasPlugin("ServerRewards"),
                 ["coinsOn"] = Cfg.PingCostCoins > 0 && HasPlugin("Economics"),
+                ["testOn"] = Cfg.PingTestMode,
             };
         }
 
@@ -229,6 +230,10 @@ namespace Oxide.Plugins
             if (t == null || (!Cfg.SleepersCountAsOnline && t.IsSleeping())) return "Цель не в сети.";
             if (t.IsDead()) return "Цель уже мертва.";
             if (_pings.ContainsKey(payer.userID)) return "Пинг уже активен — дождись конца.";
+
+            // тест-режим: любая цель + бесплатно — для проверки без валютных плагинов
+            if (Cfg.PingTestMode && (currency == "auto" || currency == "test"))
+                return StartPing(payer, t, "0 (тест)");
 
             string err = null;
             if ((currency == "rp" || currency == "auto") && Cfg.PingCostRp > 0 &&
