@@ -1368,28 +1368,33 @@ namespace Oxide.Plugins
             CUIClass.CreateText(ref ui, "oh_pr_arr", "oh_pr_b", bSpec, "»", 22,
                 "0.92 0.1", "0.99 0.9", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
 
-            // ── тизеры ─────────────────────────────────────────────────────
-            var pr = config.homePromos.Where(p => p != null && !string.IsNullOrEmpty(p.title)).Take(4).ToList();
+            // ── тизеры: сетка 2 ряда × до 4 колонок, компактная высота ───────
+            var pr = config.homePromos.Where(p => p != null && !string.IsNullOrEmpty(p.title)).Take(8).ToList();
             int n = pr.Count;
             if (n == 0) return;
-            const float x0 = 0.035f, x1 = 0.965f, gap = 0.015f;
-            float w = (x1 - x0 - gap * (n - 1)) / n;
+            int cols = Math.Min(4, n), rows = (n + cols - 1) / cols;
+            const float x0 = 0.035f, x1 = 0.965f, yTop = 0.615f, yBot = 0.385f, gap = 0.015f;
+            float w = (x1 - x0 - gap * (cols - 1)) / cols;
+            float h = (yTop - yBot - gap * (rows - 1)) / rows;
             for (int i = 0; i < n; i++)
             {
                 var p = pr[i];
-                float ax = x0 + i * (w + gap);
+                int row = i / cols, col = i % cols;
+                float ax = x0 + col * (w + gap);
+                float ay1 = yTop - row * (h + gap);        // верх карточки
+                float ay0 = ay1 - h;                        // низ карточки
                 string sec = SectionIds.Contains(p.section) ? p.section : "info";
                 string t = $"oh_pr_{i}";
                 CUIClass.CreateButton(ref ui, t, UiCnt, "panel", "", 10,
-                    $"{ax:0.###} 0.385", $"{ax + w:0.###} 0.615",
+                    $"{ax:0.###} {ay0:0.###}", $"{ax + w:0.###} {ay1:0.###}",
                     $"octahub_sec {sec}", "", "white", 0f);
                 CUIClass.CreatePanel(ref ui, t + "_bar", t, p.spec, "0 0", "0.015 1", false, 0f, Mat);
                 if (!string.IsNullOrEmpty(p.icon))
-                    CUIClass.CreateItemIcon(ref ui, t + "_ic", t, p.icon, 0UL, 0, "0.06 0.58", "0.20 0.92", 0.15f);
+                    CUIClass.CreateItemIcon(ref ui, t + "_ic", t, p.icon, 0UL, 0, "0.04 0.18", "0.15 0.82", 0.15f);
                 CUIClass.CreateText(ref ui, t + "_t", t, p.spec, $"<b>{p.title}</b>", 12,
-                    "0.25 0.62", "0.95 0.93", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                    "0.18 0.55", "0.97 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
                 CUIClass.CreateText(ref ui, t + "_s", t, "muted", p.sub ?? "", 10,
-                    "0.06 0.12", "0.95 0.55", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    "0.18 0.05", "0.97 0.50", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
             }
         }
 
@@ -3376,7 +3381,7 @@ namespace Oxide.Plugins
 
             // Витрина главной: баннер + тизеры-зазывалки в разделы.
             // Пустой список homePromos = витрина выключена, hero-текст на всю высоту.
-            [JsonProperty("Home promos (тизеры главной, макс 4)")]
+            [JsonProperty("Home promos (тизеры главной, до 8 — сетка 2×4)")]
             public List<PromoCfg> homePromos { get; set; } = new List<PromoCfg>
             {
                 new PromoCfg { title = "ЗАБЕРИ НАБОР",   sub = "бесплатно — просто открой и забери",      section = "kits",    icon = "supply.signal",  spec = "green" },
