@@ -1235,7 +1235,7 @@ namespace Oxide.Plugins
                         ["key"] = st.Spec.Key,
                         ["name"] = st.Spec.DisplayName,
                         ["phase"] = newPhase,
-                        ["hp"] = (int)st.Entity.Health(),
+                        ["hp"] = Mathf.CeilToInt(st.Entity.Health()),
                         ["hpMax"] = (int)st.Entity.MaxHealth()
                     });
                 }
@@ -1404,7 +1404,8 @@ namespace Oxide.Plugins
             if (alive)
             {
                 o["instanceId"] = InstanceId(st);
-                o["hp"] = (int)st.Entity.Health();
+                // ceil: живой на долях HP не должен отображаться нулём
+                o["hp"] = Mathf.CeilToInt(st.Entity.Health());
                 o["hpMax"] = (int)st.Entity.MaxHealth();
                 o["phase"] = st.Phase;
                 o["spawnedUnix"] = (long)new DateTimeOffset(st.SpawnedAt, TimeSpan.Zero).ToUnixTimeSeconds();
@@ -1871,6 +1872,17 @@ namespace Oxide.Plugins
                 else w.Nudges = wd.MaxNudges; // тупик — не дёргаем больше
             }
 
+            // 4) босс выкинул цель и ушёл пастись: FSM дропает недосягаемую
+            // цель (камень), а сторож на возврат стоял только против flee.
+            // С живым таргетом любое «мирное» состояние — возврат в бой.
+            if (ent == st.Entity && st.AiCombatState != null)
+            {
+                var fsm2 = ent.GetComponent<Rust.Ai.Gen2.FSMComponent>();
+                var cur2 = fsm2?.CurrentState;
+                if (cur2 != null && cur2 != st.AiCombatState && IsPassiveState(cur2))
+                    try { fsm2.SetState(st.AiCombatState); } catch { }
+            }
+
             // 3) скотина: входы в боевую ветку FSM (warn→chargeRun→headbutt)
             // висят на protective/canReach-переходах — цель на бочке ветку не
             // открывает, бык остаётся пастбищным. Пинаем в боевые состояния
@@ -1941,6 +1953,21 @@ namespace Oxide.Plugins
 
         private static bool IsFleeState(Rust.Ai.Gen2.FSMStateBase s) =>
             s is Rust.Ai.Gen2.State_Flee && s.GetType().Name != "State_GoBackToWater";
+
+        // «мирные» состояния, из которых босс с живой целью должен
+        // выходить в бой: бегство/еда + пастбищный roam/idle/sleep/patrol.
+        // По имени типа — безопасно для любых FSM-графов.
+        private static bool IsPassiveState(Rust.Ai.Gen2.FSMStateBase s)
+        {
+            if (s == null) return false;
+            if (IsFleeState(s) || IsFoodState(s)) return true;
+            var n = s.GetType().Name;
+            return n.IndexOf("Roam", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   n.IndexOf("Idle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   n.IndexOf("Patrol", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   n.IndexOf("Sleep", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   n.IndexOf("Graze", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
 
         // пищевая ветка: босс — ивент, а не фермер. Туши/корм он не ест —
         // иначе с отсутствующей целью в сенсорах валяется у жратвы,
@@ -4530,7 +4557,7 @@ namespace Oxide.Plugins
         {
             var name = $"<color=#E8B84B>{st.Spec.DisplayName}</color>";
             if (st.Alive)
-                return $"{name}: ЖИВ HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0} @ {GridOf(st.Entity.transform.position)}{(st.Raging ? " ЯРОСТЬ" : "")}";
+                return $"{name}: ЖИВ HP {Mathf.CeilToInt(st.Entity.Health())}/{st.Entity.MaxHealth():0} @ {GridOf(st.Entity.transform.position)}{(st.Raging ? " ЯРОСТЬ" : "")}";
             var left = st.NextSpawnAt - DateTime.UtcNow;
             return $"{name}: нет, спавн через {(int)left.TotalMinutes}м";
         }
@@ -4550,7 +4577,7 @@ namespace Oxide.Plugins
                 if (!st.Alive) continue;
                 var dmg = st.DamageBy.OrderByDescending(k => k.Value).FirstOrDefault();
                 var top = dmg.Key > 0 ? (CleanName(FindPlayer(dmg.Key)?.displayName ?? "?")) + $" ({dmg.Value:0} dmg)" : "—";
-                SendReply(player, $"{Tag} <color=#E8B84B>{st.Spec.DisplayName}</color>: HP {st.Entity.Health():0}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
+                SendReply(player, $"{Tag} <color=#E8B84B>{st.Spec.DisplayName}</color>: HP {Mathf.CeilToInt(st.Entity.Health())}/{st.Entity.MaxHealth():0}, квадрат {GridOf(st.Entity.transform.position)}, топ-дамагер: {top}");
             }
             if (!_bosses.Values.Any(s => s.Alive))
                 SendReply(player, $"{Tag} Боссов на карте нет. /bosstimer — время до спавна.");
