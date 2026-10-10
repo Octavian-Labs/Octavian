@@ -1236,22 +1236,28 @@ namespace Oxide.Plugins
 
             if (st.Page == 1)
             {
-                // ── виджеты: вайп / событие / наборы ─────────────────────────
-                string[] wa =
-                {
-                    "0.015 0.845-0.335 0.985", "0.345 0.845-0.665 0.985", "0.675 0.845-0.995 0.985"
-                };
-                DrawHomeWidget(ref ui, player, wa[0].Split('-'), "ДО ВАЙПА", WipeText(), "octahub_infotab 4 1 home");
-                DrawHomeWidget(ref ui, player, wa[1].Split('-'), "СОБЫТИЕ", EventWidgetText(), "octahub_sec events");
-                DrawHomeWidget(ref ui, player, wa[2].Split('-'), "НАБОРОВ ДОСТУПНО", KitsWidgetText(player), "octahub_sec kits");
-
-                // ── приветствие + персональная статистика ────────────────────
+                // ── приветствие + онлайн ────────────────────────────────────
                 CUIClass.CreateText(ref ui, "oh_cnt_hello", UiCnt, "text",
-                    $"<b>Добро пожаловать, <color=@accent>{player.displayName}</color>!</b>", 14,
-                    "0.02 0.77", "0.985 0.835", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                    $"<b>Добро пожаловать, <color=@accent>{player.displayName}</color>!</b>", 16,
+                    "0.02 0.90", "0.70 0.985", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, "oh_cnt_online", UiCnt, "muted",
+                    $"онлайн: <color=@accent>{BasePlayer.activePlayerList.Count}</color>", 11,
+                    "0.70 0.90", "0.985 0.985", TextAnchor.MiddleRight, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+
+                // ── стильные карточки: вайп / событие / наборы ──────────────
+                var ev = EventCardText();
+                var (kitsOk, kitsAll) = KitsCounts(player);
+                DrawHomeCard(ref ui, "0.015 0.50-0.325 0.885".Split('-'), "accent", "explosive.timed",
+                    "ДО ВАЙПА", WipeText(), "подробнее", "octahub_infotab 4 1 home");
+                DrawHomeCard(ref ui, "0.345 0.50-0.655 0.885".Split('-'), ev.Spec, "rocket.launcher",
+                    "СОБЫТИЕ", ev.Value, ev.Sub, "octahub_sec events");
+                DrawHomeCard(ref ui, "0.675 0.50-0.985 0.885".Split('-'), "green", "supply.signal",
+                    "НАБОРЫ", kitsOk.ToString(), $"из {kitsAll} доступно — открыть", "octahub_sec kits");
+
+                // ── персональная статистика одной строкой ───────────────────
                 CUIClass.CreateText(ref ui, "oh_cnt_stats", UiCnt, "muted",
                     HomeStatsText(player), 11,
-                    "0.02 0.735", "0.985 0.775", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    "0.02 0.43", "0.985 0.485", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
             }
 
             // ── текст: первая страница — hero из конфига, 2+ — PageData ─────
@@ -1270,20 +1276,20 @@ namespace Oxide.Plugins
             }
 
             if (headTitle != null)
-                CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 22,
-                    "0.035 0.655", "0.965 0.725", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 18,
+                    "0.035 0.35", "0.965 0.425", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             if (headSub != null)
                 CUIClass.CreateText(ref ui, "oh_cnt_sub", UiCnt, "muted", StripSize(R(player, headSub)), 12,
-                    "0.035 0.615", "0.965 0.655", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.605", "0.965 0.61", false, 0f, Mat);
+                    "0.035 0.315", "0.965 0.35", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.305", "0.965 0.31", false, 0f, Mat);
 
             CUIClass.CreateText(ref ui, "oh_cnt_text", UiCnt, tab.mainFontColor, R(player, string.Join("\n", body)),
-                tab.mainFontSize, "0.035 0.10", "0.965 0.60", tab.mainAlign,
+                tab.mainFontSize, "0.035 0.06", "0.965 0.30", tab.mainAlign,
                 tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
 
             if (foot.Count > 0)
                 CUIClass.CreateText(ref ui, "oh_cnt_foot", UiCnt, "muted", R(player, string.Join("\n", foot)), 11,
-                    "0.035 0.02", "0.875 0.09", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    "0.035 0.01", "0.875 0.055", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
             DrawPageArrows(ref ui, 1, st.Page);
         }
@@ -1306,25 +1312,33 @@ namespace Oxide.Plugins
             return s;
         }
 
-        private void DrawHomeWidget(ref CuiElementContainer ui, BasePlayer player, string[] a,
-            string title, string value, string cmd)
+        // Стильная карточка главной: стекло + акцентная полоса + иконка предмета
+        // + подпись + крупное значение + подстрока. Вся карточка — кнопка.
+        // spec — токен цвета OctaUI ("accent" | "red" | "green" | "blue").
+        private void DrawHomeCard(ref CuiElementContainer ui, string[] a, string spec,
+            string itemIcon, string label, string value, string sub, string cmd)
         {
-            int i = title.GetHashCode() & 0xffff;
-            string n = $"oh_w_{i}";
-            CUIClass.CreateButton(ref ui, n, UiCnt, "row", "", 10, a[0], a[1], cmd, "", "white", 0f,
+            int i = label.GetHashCode() & 0xffff;
+            string n = $"oh_c_{i}";
+            CUIClass.CreateButton(ref ui, n, UiCnt, "panel", "", 10, a[0], a[1], cmd, "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
-            CUIClass.CreatePanel(ref ui, n + "_g", n, "accent.dark", "0 0.94", "1 1", false, 0f, Mat);
-            CUIClass.CreateText(ref ui, n + "_t", n, "muted", title, 10, "0.05 0.60", "0.95 0.90",
+            CUIClass.CreatePanel(ref ui, n + "_bar", n, spec, "0 0.955", "1 1", false, 0f, Mat);
+            CUIClass.CreateItemIcon(ref ui, n + "_ic", n, itemIcon, 0UL, 0, "0.05 0.66", "0.20 0.92", 0.15f);
+            CUIClass.CreateText(ref ui, n + "_t", n, "muted", label, 11, "0.24 0.74", "0.96 0.92",
                 TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreateText(ref ui, n + "_v", n, "accent", $"<b>{value}</b>", 15, "0.05 0.10", "0.95 0.60",
+            CUIClass.CreateText(ref ui, n + "_v", n, spec, $"<b>{value}</b>", 26, "0.06 0.28", "0.96 0.70",
                 TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateText(ref ui, n + "_s", n, "muted", sub, 10, "0.06 0.06", "0.96 0.24",
+                TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
         }
 
-        private string EventWidgetText()
+        // Данные карточки события: цвет по состоянию (красный = активно),
+        // крупно — имя, мелко — статус/таймер.
+        private (string Spec, string Value, string Sub) EventCardText()
         {
             // живое мировое событие важнее расписания боссов
             var act = _worldCats.FirstOrDefault(c => c.Count > 0);
-            if (act != null) return $"{act.Title} · АКТИВНО";
+            if (act != null) return ("red", act.Title, "АКТИВНО СЕЙЧАС");
             try
             {
                 var arr = BossStates();
@@ -1339,16 +1353,16 @@ namespace Oxide.Plugins
                         long ns = o["nextSpawnUnix"]?.Value<long>() ?? 0;
                         if (ns > 0 && ns < nextAt) { nextAt = ns; next = o; }
                     }
-                    if (live != null) return $"ЖИВ: {live["name"]}";
-                    if (next != null) return $"{next["name"]} · {FmtLeft(nextAt - now)}";
-                    return "все повержены";
+                    if (live != null) return ("red", Convert.ToString(live["name"]), "ЖИВ — на карте");
+                    if (next != null) return ("accent", Convert.ToString(next["name"]), $"через {FmtLeft(nextAt - now)}");
+                    return ("blue", "все повержены", "");
                 }
             }
             catch { }
-            return OctaBoss == null ? "—" : "нет данных";
+            return ("blue", "нет данных", OctaBoss == null ? "OctaBoss не найден" : "");
         }
 
-        private string KitsWidgetText(BasePlayer player)
+        private (int ok, int total) KitsCounts(BasePlayer player)
         {
             try
             {
@@ -1359,9 +1373,9 @@ namespace Oxide.Plugins
                     // не на кулдауне = доступен к получению (availability из каталога)
                     if ((k["avail"] as JObject)?["code"]?.ToString() != "COOLDOWN") ok++;
                 }
-                return $"{ok} из {kits.Count}";
+                return (ok, kits.Count);
             }
-            catch { return "—"; }
+            catch { return (0, 0); }
         }
 
         // Стрелки пагинации инфо-страниц — общие для Главной и Инфо.
