@@ -458,3 +458,13 @@ JSON `{Identifier, Message, Type:3}`; читать ответ — `carbon/logs/C
 Надёжно: `StringPool.Get(info.HitBone)` → имя кости, сравнивать с "head"
 (сама игра так сравнивает "spine"/"spine2" в BasePlayer.OnAttacked).
 Значения кости считать ДО NextTick — pooled HitInfo потом перезаписывается.
+
+## 21. Newtonsoft: списки в конфиге раздуваются при каждой загрузке
+
+`Config.ReadObject<T>()` НЕ заменяет инициализированный список — он
+ДОБАВЛЯЕТ элементы из JSON в список из конструктора. Поле вида
+`public List<X> promos { get; set; } = new List<X>{a,b,c}` после загрузки
+файла с теми же 3 элементами даст 6, потом 9 и т.д.
+Лечение: дедупликация после ReadObject (GroupBy/Distinct) в LoadConfig
+или инициализировать списки только в CreateConfig, а не в свойствах.
+Укусились: OctaHub homePromos/homeSlogans/eventProviders.

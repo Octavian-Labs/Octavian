@@ -3311,6 +3311,14 @@ namespace Oxide.Plugins
             config = Config.ReadObject<Configuration>();
             if (config.sections == null) config.sections = new Configuration.SectionSettings();
             if (config.services == null) config.services = new Configuration.ServicesSettings();
+            // Newtonsoft ДОБАВЛЯЕТ элементы из файла в уже инициализированные списки —
+            // без дедупликации списки раздуваются при каждой загрузке (PITFALLS).
+            if (config.homePromos != null)
+                config.homePromos = config.homePromos.GroupBy(p => p?.title).Select(g => g.First()).ToList();
+            if (config.homeSlogans != null)
+                config.homeSlogans = config.homeSlogans.Distinct().ToList();
+            if (config.generalSettings?.eventProviders != null)
+                config.generalSettings.eventProviders = config.generalSettings.eventProviders.Distinct().ToList();
             SaveConfig();
         }
 
