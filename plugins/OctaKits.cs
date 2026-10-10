@@ -1583,6 +1583,22 @@ namespace Oxide.Plugins
             if (player == null || string.IsNullOrEmpty(requiredPermission))
                 return true;
 
+            // Бенефиты OctVIP (Octa API v1, фаза 4): "octaben.<id>" → Vip_HasBenefit.
+            // OctVIP недоступен → false: отсутствие провайдера не превращаем в доступ.
+            if (requiredPermission.StartsWith("octaben.", StringComparison.OrdinalIgnoreCase))
+            {
+                var bid = requiredPermission.Substring("octaben.".Length);
+                if (OctVIP == null || string.IsNullOrEmpty(bid)) return false;
+                try
+                {
+                    var res = OctVIP.Call("Vip_HasBenefit", (ulong)player.userID, bid) as JObject;
+                    if (res == null) // старый OctVIP без контракта — perm-фолбэк
+                        return permission.UserHasPermission(player.UserIDString, requiredPermission);
+                    return res["data"]?["has"]?.Value<bool>() == true;
+                }
+                catch { return false; }
+            }
+
             if (requiredPermission.StartsWith("octavip.", StringComparison.OrdinalIgnoreCase))
             {
                 int level = VipLevelFromPerm(requiredPermission);

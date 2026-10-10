@@ -113,8 +113,12 @@ ServerRewards) оборачиваются внутри модуля-владел
 | `HasVipLevel(uid, lvl)` | bool | модули |
 | `GetVipExpiry(uid)` | long | Hub |
 | `API_SetLevel(uid, lvl, duration)` | bool | админка |
+| `Vip_GetPlayerStatus(uid)` | конверт `{level,name,color,expiresAt,benefits[]}` | Hub |
+| `Vip_GetCatalog()` | конверт `{tiers[]}` | витрины |
+| `Vip_HasBenefit(uid, id)` | конверт `{has}` | OctaKits (`octaben.*`) |
+| `Vip_GetBenefitValue(uid, id)` | конверт `{value}` / `NOT_FOUND` | модули |
 
-Модель чисто level-based; benefit-слой — фаза 4.
+Назначения — level-модель; поверх неё реализован benefit-слой (фаза 4).
 
 ### OctaFeed (владелец: киллфид, настройки ленты)
 
@@ -236,20 +240,34 @@ OnOctaBossEnded     {instanceId, key, name, reason, rewardsGranted,
 OctaHub — через `Boss_GetActiveInstances` + `Boss_GetCatalog` (лор),
 с фолбэками на legacy для старых версий OctaBoss.
 
-### OctVIP (фаза 4; до неё — level-модель в конверте)
+### OctVIP (реализовано, фаза 4, v1.5.0)
 
 ```
-Vip_GetCatalog()          → {tiers:[{id,name,rank,color,icon,benefits[]}]}
-Vip_GetPlayerStatus(uid)  → {tier, name, color, expiresAt, benefits[]}
-Vip_HasBenefit(uid, id)   → bool в data.has
-Vip_GetBenefitValue(uid,id)→ data.value | NOT_FOUND
+Vip_GetCatalog()          → data:{tiers:[{level,name,color,icon,
+                            benefits:[{id,name,desc,value,stackable}]}]}
+Vip_GetPlayerStatus(uid)  → data:{level,name,color,expiresAt,benefits[id...]}
+Vip_HasBenefit(uid, id)   → data:{has:bool}
+Vip_GetBenefitValue(uid,id)→ data:{value} | INVALID_ARGUMENT / NOT_FOUND
 ```
 
-Промежуточный шаг: конфиг `level → benefits[]` — `Vip_HasBenefit`
-работает до редизайна назначений (grantId/source/сроки).
+Бенефиты — декларативный слой поверх уровней: конфиг `Benefits`
+(id → name/desc/value/stackable) + `LevelBenefits` (уровень 1-6 → список id,
+**кумулятивно**: gold получает id всех уровней ≤3). Назначения/сроки VIP
+по-прежнему level-моделью — `Vip_HasBenefit` работает до редизайна
+назначений (grantId/source/сроки).
 
-Числовые бонусы: `GetBenefitValue` отдаёт max из активных назначений,
-не сумму (кроме явно помеченных `stackable`).
+Дефолтный маппинг: `vip`, `tag.icon`, `kit.vip`, `queue.priority`,
+`welcome.clan` с Bronze; `welcome.clanonline` с Silver; `welcome.bases`,
+`join.announce` с Gold. Внутренние пороги `*MinLevel` приветствия переведены
+на `BenefitOrFallback`: id упомянут в LevelBenefits → маппинг авторитетен,
+нет → старый числовой порог.
+
+Числовые бонусы: `Vip_GetBenefitValue` отдаёт `value` из дефиниции;
+`NOT_FOUND` — id не в каталоге или недоступен на уровне. Поле `stackable`
+зарезервировано под мультиназначения; сейчас все бенефиты флаговые.
+
+Потребительский протокол: `octaben.<id>` в `RequiredPermission` набора
+OctaKits → `Vip_HasBenefit` (OctVIP отсутствует → deny, не grant).
 
 ### OctaRel (реализовано, v1.1.0)
 
@@ -282,9 +300,10 @@ WC_GetInfo()                     → data: {nextUnix, secondsLeft, mode,
 TP_GetHomes(player)              → data: {homes:[{name, pos:[x,y,z]}]}
   // legacy: API_GetHomes (Dictionary<string,Vector3> — не JSON)
 
-Vip_GetPlayerStatus(uid)         → data: {level, name, color, expiresAt}
+Vip_GetPlayerStatus(uid)         → data: {level, name, color, expiresAt,
+                                   benefits[]}
   // legacy: GetVipLevel/GetVipLevelName/GetVipColor/GetVipExpiry —
-  // один вызов вместо четырёх; benefit-слой — фаза 4
+  // один вызов вместо четырёх; benefit-слой — реализован (см. выше)
 ```
 
 ### OctaHub
@@ -325,5 +344,5 @@ Vip_GetPlayerStatus(uid)         → data: {level, name, color, expiresAt}
 | 1 | OctaKits: новые `Kits_*` + конверт; Hub вкладка Наборы → новые API | кит берётся из Hub и из /kit одинаково; requestId не дублирует выдачу |
 | 2 | OctaBoss: `Boss_*` + хуки; OctaFeed → `Boss_ResolveEntity`; Hub → snapshot | киллфид отличает босса от свиты; reload не ломает карточки |
 | 3 | Конверт для OctaRel/OctaFeed/OctaWC/OctVIP-геттеров + TP_GetHomes (JSON) | Hub работает целиком на конвертах |
-| 4 | OctVIP: level→benefits, `Vip_HasBenefit` | Kits проверяет benefit, а не level |
+| 4 | ✅ OctVIP: level→benefits, `Vip_HasBenefit` + `octaben.<id>` в Kits | Kits проверяет benefit, а не level |
 | 5 | Реестр провайдеров событий в Hub (`Events_GetSnapshot` + `OnOctaEvent*`) | второй провайдер (airstrike/ваниль) подключается без правок Hub |

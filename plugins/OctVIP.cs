@@ -27,7 +27,7 @@ using Style = Oxide.Ext.Chaos.UIFramework.Style;
 
 namespace Oxide.Plugins
 {
-    [Info("OctVIP", "Octavian", "1.4.0")]
+    [Info("OctVIP", "Octavian", "1.5.0")]
     [Description("Система VIP-уровней: 7 уровней, временная выдача, Chaos-панель, приветствие с инфой, API для плагинов")]
     public class OctVIP : ChaosPlugin
     {
@@ -69,6 +69,14 @@ namespace Oxide.Plugins
         };
 
         // ключи наборов иконок в конфиге по индексу уровня
+        protected class BenefitDef
+        {
+            [JsonProperty("Название")] public string Name = "";
+            [JsonProperty("Описание")] public string Desc = "";
+            [JsonProperty("Значение (0 = флаг)")] public float Value = 0f;
+            [JsonProperty("Суммировать при нескольких назначениях")] public bool Stackable = false;
+        }
+
         private static readonly string[] IconKeys = { "Base", "Bronze", "Silver", "Gold", "Brilliant", "Moderator", "Admin" };
 
         private List<string> IconSet(int level) =>
@@ -100,6 +108,40 @@ namespace Oxide.Plugins
             return string.IsNullOrEmpty(ic) || IsEmoji(ic)
                 ? $"<color={Levels[level].Color}>{Levels[level].Name}</color>"
                 : $"<color={Levels[level].Color}>{ic} {Levels[level].Name}</color>";
+        }
+
+        // ── Бенефиты ──────────────────────────────────────────────────────
+
+        // id бенефитов уровня — кумулятивно: gold включает silver и bronze
+        private HashSet<string> BenefitIdsFor(int level)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var lb = Configuration?.LevelBenefits;
+            if (lb == null) return set;
+            for (int l = 1; l <= level && l <= 6; l++)
+                if (lb.TryGetValue(l, out var ids) && ids != null)
+                    foreach (var id in ids)
+                        if (!string.IsNullOrEmpty(id)) set.Add(id);
+            return set;
+        }
+
+        private BenefitDef FindBenefit(string id)
+        {
+            if (Configuration?.Benefits == null || string.IsNullOrEmpty(id)) return null;
+            foreach (var kv in Configuration.Benefits)
+                if (string.Equals(kv.Key, id, StringComparison.OrdinalIgnoreCase)) return kv.Value;
+            return null;
+        }
+
+        // бенефит-проверка с фолбэком на MinLevel-порог: если id присутствует
+        // в LevelBenefits хоть для одного уровня — маппинг авторитетен;
+        // если админ убрал id отовсюду — работает старый числовой порог
+        private bool BenefitOrFallback(int level, string benefitId, int minLevelFallback)
+        {
+            var lb = Configuration?.LevelBenefits;
+            bool mapped = lb != null && lb.Values.Any(ids => ids != null &&
+                ids.Any(i => string.Equals(i, benefitId, StringComparison.OrdinalIgnoreCase)));
+            return mapped ? BenefitIdsFor(level).Contains(benefitId) : level >= minLevelFallback;
         }
 
         // ── Конфиг ──────────────────────────────────────────────────────────
@@ -176,6 +218,37 @@ namespace Oxide.Plugins
 
             [JsonProperty("Панель: вкладка «Игроки» (управление, octavip.manage)")]
             public bool TabPlayers = true;
+
+            // ── Бенефиты (Octa API v1, фаза 4) ────────────────────────────
+            // Декларативный слой поверх уровней: модуль спрашивает
+            // Vip_HasBenefit(uid, "kit.vip"), а не «уровень >= N».
+            // Назначение кумулятивно: уровень N получает id всех уровней ≤ N.
+            // Если id упомянут в LevelBenefits хоть для одного уровня — он
+            // авторитетен для соответствующих *MinLevel-порогов ниже
+            // (порог остаётся фолбэком на случай удаления id из маппинга).
+            [JsonProperty("Каталог бенефитов (id → описание; value 0 = флаг)")]
+            public Dictionary<string, BenefitDef> Benefits = new()
+            {
+                ["vip"]                = new BenefitDef { Name = "Статус VIP",          Desc = "тег уровня и приветствие" },
+                ["tag.icon"]           = new BenefitDef { Name = "Иконка статуса",      Desc = "значок уровня перед ником" },
+                ["kit.vip"]            = new BenefitDef { Name = "VIP-наборы",          Desc = "наборы уровня в /kit" },
+                ["queue.priority"]     = new BenefitDef { Name = "Приоритет очереди",   Desc = "выше место при заходе" },
+                ["welcome.clan"]       = new BenefitDef { Name = "Клан при входе",      Desc = "тег клана в приветствии" },
+                ["welcome.clanonline"] = new BenefitDef { Name = "Онлайн клана",        Desc = "сколько соратников в сети" },
+                ["welcome.bases"]      = new BenefitDef { Name = "Счёт баз",            Desc = "число твоих шкафов" },
+                ["join.announce"]      = new BenefitDef { Name = "Анонс входа",         Desc = "заход виден всему серверу" },
+            };
+
+            [JsonProperty("Бенефиты по уровням (уровень 1-6 → список id; кумулятивно)")]
+            public Dictionary<int, List<string>> LevelBenefits = new()
+            {
+                [1] = new List<string> { "vip", "tag.icon", "kit.vip", "queue.priority", "welcome.clan" },
+                [2] = new List<string> { "welcome.clanonline" },
+                [3] = new List<string> { "welcome.bases", "join.announce" },
+                [4] = new List<string>(),
+                [5] = new List<string>(),
+                [6] = new List<string>(),
+            };
 
             // Наборы иконок чата. Два типа значений:
             //  - ":vip_gold_0:" — серверный эмодзи (PNG/JPG в serveremoji рядом с
@@ -482,10 +555,10 @@ namespace Oxide.Plugins
             }
 
             var lvl = ResolveLevel(player.userID);
-            if (lvl < Configuration.WelcomeMinLevel) return;
+            if (!BenefitOrFallback(lvl, "vip", Configuration.WelcomeMinLevel)) return;
 
             // анонс в общий чат для высоких уровней
-            if (lvl >= Configuration.BroadcastJoinMinLevel)
+            if (BenefitOrFallback(lvl, "join.announce", Configuration.BroadcastJoinMinLevel))
                 Broadcast($"{LevelTag(lvl)} {player.displayName} зашёл на сервер!");
 
             var parts = new List<string>();
@@ -493,14 +566,14 @@ namespace Oxide.Plugins
                 parts.Add($"осталось: {Val(FormatDuration(e.ExpiresAt))}");
 
             // клан
-            if (lvl >= Configuration.ShowClanMinLevel && Clans != null)
+            if (BenefitOrFallback(lvl, "welcome.clan", Configuration.ShowClanMinLevel) && Clans != null)
             {
                 try
                 {
                     var tag = Clans.Call("GetClanOf", player.userID) as string;
                     if (!string.IsNullOrEmpty(tag))
                     {
-                        if (lvl >= Configuration.ShowClanOnlineMinLevel)
+                        if (BenefitOrFallback(lvl, "welcome.clanonline", Configuration.ShowClanOnlineMinLevel))
                         {
                             var members = Clans.Call("GetClanMembers", player.userID) as List<string>;
                             if (members != null)
@@ -518,7 +591,7 @@ namespace Oxide.Plugins
             }
 
             // шкафы, в которых авторизован
-            if (lvl >= Configuration.ShowBasesMinLevel)
+            if (BenefitOrFallback(lvl, "welcome.bases", Configuration.ShowBasesMinLevel))
             {
                 var tc = 0;
                 foreach (var ent in BaseNetworkable.serverEntities)
@@ -738,8 +811,72 @@ namespace Oxide.Plugins
                     ["name"] = Levels[lvl].Name,
                     ["color"] = Levels[lvl].Color,
                     ["expiresAt"] = API_GetExpiry(userId),
+                    ["benefits"] = new JArray(BenefitIdsFor(lvl))
                 }
             };
+        }
+
+        // каталог уровней с бенефитами — для витрин (OctaHub и др.)
+        [HookMethod("Vip_GetCatalog")]
+        public JObject Vip_GetCatalog()
+        {
+            var tiers = new JArray();
+            for (int l = 0; l < Levels.Length; l++)
+            {
+                var ben = new JArray();
+                foreach (var id in BenefitIdsFor(l))
+                {
+                    var def = FindBenefit(id);
+                    ben.Add(new JObject
+                    {
+                        ["id"] = id,
+                        ["name"] = def?.Name ?? id,
+                        ["desc"] = def?.Desc ?? "",
+                        ["value"] = def?.Value ?? 0f,
+                        ["stackable"] = def?.Stackable ?? false
+                    });
+                }
+                var set = IconSet(l);
+                tiers.Add(new JObject
+                {
+                    ["level"] = l,
+                    ["name"] = Levels[l].Name,
+                    ["color"] = Levels[l].Color,
+                    ["icon"] = set.Count > 0 ? set[0] : "",
+                    ["benefits"] = ben
+                });
+            }
+            return new JObject
+            {
+                ["ok"] = true, ["code"] = "OK",
+                ["data"] = new JObject { ["tiers"] = tiers }
+            };
+        }
+
+        // проверка бенефита — основная точка входа для потребителей
+        [HookMethod("Vip_HasBenefit")]
+        public JObject Vip_HasBenefit(ulong userId, string benefitId) => new JObject
+        {
+            ["ok"] = true, ["code"] = "OK",
+            ["data"] = new JObject
+            {
+                ["has"] = !string.IsNullOrEmpty(benefitId) &&
+                          BenefitIdsFor(ResolveLevel(userId)).Contains(benefitId)
+            }
+        };
+
+        // числовое значение бенефита; NOT_FOUND — id нет в каталоге или недоступен
+        [HookMethod("Vip_GetBenefitValue")]
+        public JObject Vip_GetBenefitValue(ulong userId, string benefitId)
+        {
+            if (string.IsNullOrEmpty(benefitId))
+                return new JObject { ["ok"] = false, ["code"] = "INVALID_ARGUMENT", ["msg"] = "Пустой id бенефита" };
+            var def = FindBenefit(benefitId);
+            if (def == null)
+                return new JObject { ["ok"] = false, ["code"] = "NOT_FOUND", ["msg"] = $"Бенефит '{benefitId}' не описан в каталоге" };
+            if (!BenefitIdsFor(ResolveLevel(userId)).Contains(benefitId))
+                return new JObject { ["ok"] = false, ["code"] = "NOT_FOUND", ["msg"] = $"Бенефит '{benefitId}' недоступен на текущем уровне" };
+            return new JObject { ["ok"] = true, ["code"] = "OK", ["data"] = new JObject { ["value"] = def.Value } };
         }
 
         // ── Chaos-панель управления ─────────────────────────────────────────
