@@ -184,38 +184,57 @@ Kits_Redeem(player, kitId, requestId)
 `TryClaimKit` (legacy) проксирует тот же обработчик — единый путь
 выдачи сохраняется для /kit, собственного меню и Hub.
 
-### OctaBoss
+### OctaBoss (реализовано, v1.8.0)
 
 ```
-Boss_GetCatalog()            → виды боссов (BossSpec-публичные поля)
-  data: { bosses: [ {key, name, image, desc, enabled, biome,
-                     rewardsDesc} ] }
+Boss_GetCatalog()            → виды боссов (для витрины и лор-страниц)
+  data: { bosses: [ {key, name, enabled, image, accent, health,
+                     intervalMinutes, warnMinutes, escortCount,
+                     nativeBiome, nativeBiomes, monuments, needsWater,
+                     rewardCurrency, rewardParticipation} ] }
 
 Boss_GetActiveInstances()    → живые бои + расписание
-  data: { instances: [ {instanceId, key, name, status,
-                        startedAt, expiresAt, publicLocation,
-                        image} ],
-          schedule:  [ {key, nextSpawnUnix} ] }
-  // HP/фаза/точные координаты — только в admin-варианте:
-Boss_GetInstance(id, admin)  → +hp, hpMax, phase, pos, escortAlive
+  data: { now,
+          bosses:    [ BossRow* ],   // слитный вид: одна строка на вид
+          instances: [ BossRow* ],   // только живые (status=active)
+          schedule:  [ BossRow* ] }  // запланированные + выключенные
+  *BossRow: {key, name, enabled, status: active|scheduled|disabled,
+             alive, nextSpawnUnix, warnMinutes, image, accent,
+             instanceId, spawnedUnix, hp, hpMax, phase, escortsAlive,
+             grid}  // grid — только если маркер публичный;
+             // hp/phase осознанно публичны: прогресс-бар босса —
+             // геймплейная фича витрины (как у патрульного вертолёта)
 
-Boss_ResolveEntity(entity)   → идентификация для киллфида/панели
-  data: { instanceId, key, role: boss|escort, name } | NOT_FOUND
+Boss_GetInstance(id, admin)  → BossRow по key или instanceId;
+  // admin = BasePlayer с octaboss.admin или true (доверенный плагин):
+  // +pos:[x,y,z], raging, damageBy{uid: dmg}
+  // без admin — только публичный BossRow | NOT_FOUND
+
+Boss_ResolveEntity(entity)   → идентификация для киллфида/панелей
+  data: {role: boss|escort, key, name, instanceId, alive, retained,
+         bossName?}  // retained=true — имя из посмертного реестра
+                     // (~2с босс / ~60с свита после смерти)
+  | NOT_FOUND
 ```
 
 Хуки (CallHook по подписчикам, аргументы — JObject):
 
 ```
-OnOctaBossStarted   {instanceId, key, name, restored: bool}
-OnOctaBossPhase     {instanceId, phase}
+OnOctaBossStarted   {instanceId, key, name, restored: bool,
+                     spawnedUnix, escorts, grid?}
+OnOctaBossPhase     {instanceId, key, name, phase, hp, hpMax}
 OnOctaBossEnded     {instanceId, key, name, reason, rewardsGranted,
-                     winner, rewardOpId}
-  reason ∈ playerKill | timeout | adminKill | technicalDeath | despawn
+                     winner, winnerId, rewardOpId}
+  reason ∈ playerKill | technicalDeath | adminKill | timeout | despawn
+  instanceId = "<key>:<spawnedUnix>" — после reload выдаётся новый
   restored=true — бой восстановлен после reload, не «только начался»
-  rewardOpId — идемпотентность наград при повторной доставке
+  rewardOpId = instanceId — идемпотентность наград при повторной доставке
 ```
 
-`GetBossStates` остаётся как deprecated-алиас `Boss_GetActiveInstances`.
+`GetBossStates`/`GetBossName`/`IsBoss` — deprecated-алиасы, форма данных
+та же (строки BossRow). OctaFeed ходит через `Boss_ResolveEntity`,
+OctaHub — через `Boss_GetActiveInstances` + `Boss_GetCatalog` (лор),
+с фолбэками на legacy для старых версий OctaBoss.
 
 ### OctVIP (фаза 4; до неё — level-модель в конверте)
 

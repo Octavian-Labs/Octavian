@@ -519,7 +519,7 @@ namespace Oxide.Plugins
             if (victim is PatrolHelicopter) return Cfg.CoreConfig.Helicopter;
             if (victim is BradleyAPC) return Cfg.CoreConfig.Bradley;
             // боссы и свита OctaBoss — всегда
-            try { if (!string.IsNullOrEmpty(OctaBoss?.Call("GetBossName", victim) as string)) return true; } catch { }
+            try { if (!string.IsNullOrEmpty(BossNameOf(victim))) return true; } catch { }
             // обычные животные — по флагу [3.1]
             if (victim is BaseAnimalNPC || victim is LivestockAnimal) return Cfg.CoreConfig.Animal;
             return false;
@@ -567,6 +567,21 @@ namespace Oxide.Plugins
             return Vector3.Distance(victim.transform.position, initiator.transform.position).ToString("F1") + "m";
         }
 
+        // Идентификация сущности OctaBoss: v1-контракт Boss_ResolveEntity
+        // (различает босса и свиту, работает и посмертно — retained-реестр).
+        // Фолбэк — legacy GetBossName для старого OctaBoss без контракта.
+        private string BossNameOf(BaseCombatEntity ent)
+        {
+            try
+            {
+                var res = OctaBoss?.Call("Boss_ResolveEntity", ent) as JObject;
+                if (res != null)
+                    return res["ok"]?.Value<bool>() == true ? res["data"]?["name"]?.ToString() : null;
+            }
+            catch { }
+            try { return OctaBoss?.Call("GetBossName", ent) as string; } catch { return null; }
+        }
+
         private string NameOf(BaseCombatEntity entity)
         {
             if (entity == null) return "";
@@ -584,7 +599,7 @@ namespace Oxide.Plugins
             // боссы OctaBoss и именованные животные — с золотой звездой
             try
             {
-                string bossName = OctaBoss?.Call("GetBossName", entity) as string;
+                string bossName = BossNameOf(entity);
                 if (!string.IsNullOrEmpty(bossName))
                     return $"<size={Cfg.UIConfig.NameProperty.Size}><color=#FFD700>★ {bossName}</color></size>";
             }

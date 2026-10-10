@@ -27,7 +27,7 @@ namespace Oxide.Plugins
     //    переходы в flee перенаправляем на экземпляре босса (TameFlee);
     //  - PopulateObject при сохранении админки дублировал списки лута —
     //    заменено на замену экземпляра + авто-дедупликация при загрузке.
-    [Info("OctaBoss", "Octavian", "1.7.1")]
+    [Info("OctaBoss", "Octavian", "1.8.0")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -475,7 +475,13 @@ namespace Oxide.Plugins
         }
 
         protected override void LoadDefaultConfig() => _cfg = DefaultBosses();
-        protected override void SaveConfig() => Config.WriteObject(_cfg = _cfg ?? DefaultBosses(), true);
+        // _bossRev растёт при каждой записи каталога — потребители конверта
+        // могут кэшировать Boss_GetCatalog по rev
+        protected override void SaveConfig()
+        {
+            _bossRev++;
+            Config.WriteObject(_cfg = _cfg ?? DefaultBosses(), true);
+        }
 
         #endregion
 
@@ -668,6 +674,7 @@ namespace Oxide.Plugins
                 TameBossFlee(st);
                 SpawnMarker(st, ent.transform.position);
                 Puts($"OctaBoss[{spec.Key}]: босс пережил reload — стейт подхвачен (свита: {st.Escorts.Count})");
+                EmitBossStarted(st, restored: true);
             }
         }
 
@@ -932,6 +939,7 @@ namespace Oxide.Plugins
             var grid = GridOf(pos);
             Announce(Fmt(st.Spec.SpawnAnnounce, st.Spec, grid));
             NotifyDiscord($"{st.Spec.DisplayName} появился в квадрате {grid} ({pos.x:0},{pos.z:0})");
+            EmitBossStarted(st, restored: false);
         }
 
         private static readonly JsonSerializerSettings JsonClonerSettings = new JsonSerializerSettings
@@ -1018,8 +1026,13 @@ namespace Oxide.Plugins
         }
 
         // тихий деспавн без лута/наград (старая копия при респавне, таймаут жизни)
-        private void DespawnBoss(BossState st)
+        private void DespawnBoss(BossState st, string reason = "despawn")
         {
+            // идентификатор инстанса захватываем до обнуления Entity — хук
+            // OnOctaBossEnded уходит ПОСЛЕ фактического деспавна
+            var wasAlive = st.Alive;
+            var iid = wasAlive ? InstanceId(st) : null;
+            var nm = st.Spec?.DisplayName ?? st.Live?.Key ?? "?";
             ClearMarker(st);
             if (st.Entity != null) _bossNames.Remove(st.Entity);
             foreach (var e in st.Escorts)
@@ -1029,6 +1042,16 @@ namespace Oxide.Plugins
             st.Entity = null;
             st.Ai = null;
             st.Livestock = null;
+            if (wasAlive)
+                EmitBossHook("OnOctaBossEnded", new JObject
+                {
+                    ["instanceId"] = iid,
+                    ["key"] = st.Spec.Key,
+                    ["name"] = nm,
+                    ["reason"] = reason,
+                    ["rewardsGranted"] = false,
+                    ["rewardOpId"] = iid
+                });
         }
 
         private void KillEscorts(BossState st)
@@ -1151,7 +1174,7 @@ namespace Oxide.Plugins
                 if ((DateTime.UtcNow - st.SpawnedAt).TotalMinutes > st.Spec.MaxLifeMinutes)
                 {
                     Announce(Fmt(st.Spec.DespawnAnnounce, st.Spec, null));
-                    DespawnBoss(st);
+                    DespawnBoss(st, "timeout");
                     ScheduleNext(st);
                     continue;
                 }
@@ -1173,6 +1196,15 @@ namespace Oxide.Plugins
                         EscortPanic(st); // часть свиты разбегается, часть входит в ярость
                     }
                     ApplyPhaseSpeed(st);
+                    EmitBossHook("OnOctaBossPhase", new JObject
+                    {
+                        ["instanceId"] = InstanceId(st),
+                        ["key"] = st.Spec.Key,
+                        ["name"] = st.Spec.DisplayName,
+                        ["phase"] = newPhase,
+                        ["hp"] = (int)st.Entity.Health(),
+                        ["hpMax"] = (int)st.Entity.MaxHealth()
+                    });
                 }
 
                 // таблица угрозы: decay ×0.92 каждые 5 сек — свежая активность
@@ -1310,49 +1342,235 @@ namespace Oxide.Plugins
         [HookMethod("IsBoss")]
         public bool IsBoss(BaseCombatEntity ent) => ent != null && StateOf(ent) != null;
 
-        // Снимок всех видов боссов для внешних панелей (OctaHub «События»).
-        // Возвращает JArray объектов: key, name, image, accent, enabled, alive,
-        // nextSpawnUnix, grid (только если маркер публичный — не палим скрытого босса),
-        // hp/hpMax/phase (только живого). Отключённые виды тоже отдаём — Hub
-        // покажет «выключен», а не пропустит карточку.
+        // одна строка снапшота на ВИД босса: каталог + runtime в одном объекте.
+        // status: active | scheduled | disabled. Общий билдер для legacy
+        // GetBossStates и контрактного Boss_GetActiveInstances — поля совпадают.
+        // Локация только при публичном маркере — скрытый босс не светится.
+        private JObject BossRow(BossSpec spec, BossState st)
+        {
+            bool alive = st != null && st.Alive;
+            var o = new JObject
+            {
+                ["key"] = spec.Key,
+                ["name"] = spec.DisplayName,
+                ["enabled"] = spec.Enabled,
+                ["status"] = !spec.Enabled ? "disabled" : alive ? "active" : "scheduled",
+                ["alive"] = alive,
+                ["nextSpawnUnix"] = !alive && st != null && st.NextSpawnAt.Year > 2000
+                    ? (long)new DateTimeOffset(st.NextSpawnAt, TimeSpan.Zero).ToUnixTimeSeconds()
+                    : 0L,
+                ["warnMinutes"] = (int)spec.Spawn.WarnBeforeMinutes,
+                ["image"] = BossImagePng(spec) ?? "",
+                ["accent"] = AccentOf(spec),
+            };
+            if (alive)
+            {
+                o["instanceId"] = InstanceId(st);
+                o["hp"] = (int)st.Entity.Health();
+                o["hpMax"] = (int)st.Entity.MaxHealth();
+                o["phase"] = st.Phase;
+                o["spawnedUnix"] = (long)new DateTimeOffset(st.SpawnedAt, TimeSpan.Zero).ToUnixTimeSeconds();
+                o["escortsAlive"] = st.Escorts.Count(e => e != null && !e.IsDestroyed && e.IsAlive());
+                if (spec.Spawn.ShowMarker)
+                    o["grid"] = GridOf(st.Entity.transform.position);
+            }
+            return o;
+        }
+
+        // LEGACY: снимок всех видов для внешних панелей (OctaHub «События»).
+        // Deprecated — заменён на Boss_GetActiveInstances; форма строк та же.
         [HookMethod("GetBossStates")]
         public JArray GetBossStates()
         {
             var arr = new JArray();
             if (_cfg?.Bosses == null) return arr;
-            long nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             foreach (var spec in _cfg.Bosses)
             {
                 if (spec == null || string.IsNullOrEmpty(spec.Key)) continue;
                 BossState st = null;
                 _bosses.TryGetValue(spec.Key, out st);
-                bool alive = st != null && st.Alive;
-                var o = new JObject
-                {
-                    ["key"] = spec.Key,
-                    ["name"] = spec.DisplayName,
-                    ["enabled"] = spec.Enabled,
-                    ["alive"] = alive,
-                    ["nextSpawnUnix"] = !alive && st != null && st.NextSpawnAt.Year > 2000
-                        ? (long)new DateTimeOffset(st.NextSpawnAt, TimeSpan.Zero).ToUnixTimeSeconds()
-                        : 0L,
-                    ["warnMinutes"] = (int)spec.Spawn.WarnBeforeMinutes,
-                    ["image"] = BossImagePng(spec) ?? "",
-                    ["accent"] = AccentOf(spec),
-                };
-                if (alive)
-                {
-                    o["hp"] = (int)st.Entity.Health();
-                    o["hpMax"] = (int)st.Entity.MaxHealth();
-                    o["phase"] = st.Phase;
-                    o["spawnedUnix"] = (long)new DateTimeOffset(st.SpawnedAt, TimeSpan.Zero).ToUnixTimeSeconds();
-                    // локация только при публичном маркере — скрытый босс не светится
-                    if (spec.Spawn.ShowMarker)
-                        o["grid"] = GridOf(st.Entity.transform.position);
-                }
-                arr.Add(o);
+                arr.Add(BossRow(spec, st));
             }
             return arr;
+        }
+
+        // ═══ Octa API v1 — конверт {ok,code,msg,data,rev} (Docs/OctaAPI-v1.md) ═══
+
+        private int _bossRev; // ++ при каждом SaveConfig — кэш-ключ для каталога
+
+        private JObject OctaOk(JObject data = null)
+        {
+            var o = new JObject { ["ok"] = true, ["code"] = "OK", ["rev"] = _bossRev };
+            if (data != null) o["data"] = data;
+            return o;
+        }
+
+        private JObject OctaFail(string code, string msg, JObject data = null)
+        {
+            var o = new JObject { ["ok"] = false, ["code"] = code, ["rev"] = _bossRev };
+            if (!string.IsNullOrEmpty(msg)) o["msg"] = msg;
+            if (data != null) o["data"] = data;
+            return o;
+        }
+
+        // instanceId = "<key>:<spawnedUnix>" — уникален на каждый спавн.
+        // После reload SpawnedAt пересоздаётся → новый instanceId: честно,
+        // восстановленный бой — новый инстанс с точки зрения подписчиков.
+        private static string InstanceId(BossState st)
+        {
+            long su = st.SpawnedAt.Year > 2000
+                ? (long)new DateTimeOffset(st.SpawnedAt, TimeSpan.Zero).ToUnixTimeSeconds() : 0;
+            return $"{st.Spec.Key}:{su}";
+        }
+
+        // широковещательные хуки жизненного цикла (Docs/OctaAPI-v1.md §OctaBoss)
+        private void EmitBossHook(string hook, JObject payload)
+        {
+            try { Interface.CallHook(hook, payload); } catch { }
+        }
+
+        private void EmitBossStarted(BossState st, bool restored)
+        {
+            var p = new JObject
+            {
+                ["instanceId"] = InstanceId(st),
+                ["key"] = st.Spec.Key,
+                ["name"] = st.Spec.DisplayName,
+                ["restored"] = restored,
+                ["spawnedUnix"] = (long)new DateTimeOffset(st.SpawnedAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+                ["escorts"] = st.Escorts.Count(e => e != null && !e.IsDestroyed)
+            };
+            // квадрат — только при публичном маркере (та же политика, что в снапшоте)
+            if (st.Spec.Spawn.ShowMarker && st.Alive)
+                p["grid"] = GridOf(st.Entity.transform.position);
+            EmitBossHook("OnOctaBossStarted", p);
+        }
+
+        // каталог видов: публичные поля + всё, что нужно витрине для
+        // лор-страницы (свита, биомы, монументы, награды) — Hub больше
+        // не читает OctaBoss.json напрямую
+        [HookMethod("Boss_GetCatalog")]
+        public JObject Boss_GetCatalog()
+        {
+            var arr = new JArray();
+            if (_cfg?.Bosses != null)
+                foreach (var spec in _cfg.Bosses)
+                {
+                    if (spec == null || string.IsNullOrEmpty(spec.Key)) continue;
+                    arr.Add(new JObject
+                    {
+                        ["key"] = spec.Key,
+                        ["name"] = spec.DisplayName,
+                        ["enabled"] = spec.Enabled,
+                        ["image"] = BossImagePng(spec) ?? "",
+                        ["accent"] = AccentOf(spec),
+                        ["health"] = (int)spec.Health,
+                        ["intervalMinutes"] = spec.Spawn.IntervalMinutes,
+                        ["warnMinutes"] = (int)spec.Spawn.WarnBeforeMinutes,
+                        ["escortCount"] = spec.Escort.Count,
+                        ["nativeBiome"] = spec.Spawn.NativeBiome,
+                        ["nativeBiomes"] = spec.Spawn.NativeBiome ? spec.Spawn.NativeBiomes : "любой",
+                        ["monuments"] = spec.Spawn.MonumentNames ?? "",
+                        ["needsWater"] = spec.Spawn.NeedsWater,
+                        ["rewardCurrency"] = spec.Rewards.Currency,
+                        ["rewardParticipation"] = spec.Rewards.CurrencyParticipation,
+                    });
+                }
+            return OctaOk(new JObject { ["bosses"] = arr });
+        }
+
+        // живые бои + расписание. data.bosses — слитный вид (строка на вид,
+        // как legacy GetBossStates); instances — только живые; schedule —
+        // запланированные и выключенные виды
+        [HookMethod("Boss_GetActiveInstances")]
+        public JObject Boss_GetActiveInstances()
+        {
+            var all = GetBossStates();
+            var inst = new JArray(); var sched = new JArray();
+            foreach (var o in all.OfType<JObject>())
+                if (o["alive"]?.Value<bool>() == true) inst.Add(o); else sched.Add(o);
+            return OctaOk(new JObject
+            {
+                ["now"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ["bosses"] = all,
+                ["instances"] = inst,
+                ["schedule"] = sched
+            });
+        }
+
+        // детали одного вида/инстанса: BossRow + для админа (octaboss.admin
+        // или доверенный вызов admin=true) — точная позиция и таблица урона
+        [HookMethod("Boss_GetInstance")]
+        public JObject Boss_GetInstance(string id, object admin)
+        {
+            if (string.IsNullOrEmpty(id))
+                return OctaFail("INVALID_ARGUMENT", "Пустой ключ вида");
+            var key = id.Split(':')[0]; // принимаем и key, и instanceId
+            var spec = _cfg?.Bosses?.FirstOrDefault(b =>
+                string.Equals(b?.Key, key, StringComparison.OrdinalIgnoreCase));
+            if (spec == null) return OctaFail("NOT_FOUND", $"Вид '{key}' не найден");
+            BossState st = null;
+            _bosses.TryGetValue(spec.Key, out st);
+            var o = BossRow(spec, st);
+            bool isAdmin = (admin is bool ab && ab) ||
+                (admin is BasePlayer ap &&
+                 permission.UserHasPermission(ap.UserIDString, "octaboss.admin"));
+            if (isAdmin && st != null && st.Alive)
+            {
+                var p = st.Entity.transform.position;
+                o["pos"] = new JArray(p.x, p.y, p.z);
+                o["raging"] = st.Raging;
+                var dmg = new JObject();
+                foreach (var kv in st.DamageBy) dmg[kv.Key.ToString()] = (int)kv.Value;
+                o["damageBy"] = dmg;
+            }
+            return OctaOk(o);
+        }
+
+        // идентификация сущности для киллфида/панелей: boss | escort | NOT_FOUND.
+        // retained=true — имя восстановлено из посмертного реестра (_bossNames):
+        // киллфид резолвит сущность уже после смерти, когда Alive==false и
+        // свита вычищена из списков.
+        [HookMethod("Boss_ResolveEntity")]
+        public JObject Boss_ResolveEntity(BaseCombatEntity ent)
+        {
+            if (ent == null) return OctaFail("INVALID_ARGUMENT", "Сущность не задана");
+            var st = StateOf(ent);
+            if (st != null)
+                return OctaOk(new JObject
+                {
+                    ["role"] = "boss",
+                    ["key"] = st.Spec.Key,
+                    ["name"] = st.Spec.DisplayName,
+                    ["instanceId"] = InstanceId(st),
+                    ["alive"] = st.Alive,
+                    ["retained"] = !st.Alive
+                });
+            var esc = EscortOf(ent);
+            if (esc != null)
+                return OctaOk(new JObject
+                {
+                    ["role"] = "escort",
+                    ["key"] = esc.Spec.Key,
+                    ["bossName"] = esc.Spec.DisplayName,
+                    ["name"] = $"Свита ({esc.Spec.DisplayName})",
+                    ["instanceId"] = InstanceId(esc),
+                    ["alive"] = esc.Alive
+                });
+            // посмертный реестр: имена живут ~2 сек после смерти босса и
+            // ~60 сек для отставшей свиты. Роль различаем по формату записи.
+            if (_bossNames.TryGetValue(ent, out string nm))
+            {
+                var d = new JObject
+                {
+                    ["name"] = nm,
+                    ["role"] = nm.StartsWith("Свита (") ? "escort" : "boss",
+                    ["retained"] = true,
+                    ["alive"] = false
+                };
+                return OctaOk(d);
+            }
+            return OctaFail("NOT_FOUND", "Не босс и не свита");
         }
 
         // скорость по фазе: ApplySpeed умножает ТЕКУЩИЕ значения агента —
@@ -1919,6 +2137,20 @@ namespace Oxide.Plugins
                 Announce(Fmt(st.Spec.QuietDeathAnnounce, st.Spec, null));
                 NotifyDiscord($"{st.Spec.DisplayName} погиб без боя.");
             }
+
+            var endReason = adminKill ? "adminKill"
+                : (killer != null || recentCombat) ? "playerKill" : "technicalDeath";
+            EmitBossHook("OnOctaBossEnded", new JObject
+            {
+                ["instanceId"] = InstanceId(st),
+                ["key"] = st.Spec.Key,
+                ["name"] = st.Spec.DisplayName,
+                ["reason"] = endReason,
+                ["rewardsGranted"] = hadCombat,
+                ["winner"] = killerName,
+                ["winnerId"] = killer != null ? killer.UserIDString : null,
+                ["rewardOpId"] = InstanceId(st)
+            });
 
             st.Entity = null;
             st.Ai = null;

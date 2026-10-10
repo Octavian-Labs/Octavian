@@ -1263,7 +1263,7 @@ namespace Oxide.Plugins
             if (act != null) return $"{act.Title} · АКТИВНО";
             try
             {
-                var arr = OctaBoss?.Call("GetBossStates") as JArray;
+                var arr = BossStates();
                 if (arr != null && arr.Count > 0)
                 {
                     long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -1413,8 +1413,7 @@ namespace Oxide.Plugins
         private string BossAggStatus(out bool active, out string img)
         {
             active = false; img = "";
-            JArray states = null;
-            try { states = OctaBoss?.Call("GetBossStates") as JArray; } catch { }
+            JArray states = BossStates();
             if (states == null || states.Count == 0)
                 return OctaBoss == null ? "<color=@muted>OctaBoss не загружен</color>"
                                         : "<color=@muted>нет видов боссов</color>";
@@ -1453,8 +1452,7 @@ namespace Oxide.Plugins
                 "0.86 0.15", "0.99 0.85", "octahub_evt back", "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
-            JArray states = null;
-            try { states = OctaBoss?.Call("GetBossStates") as JArray; } catch { }
+            JArray states = BossStates();
             var list = states?.OfType<JObject>()
                 .OrderByDescending(o => o["alive"]?.Value<bool>() == true)
                 .ThenBy(o => o["nextSpawnUnix"]?.Value<long>() ?? long.MaxValue)
@@ -1582,16 +1580,11 @@ namespace Oxide.Plugins
                 return;
             }
 
-            JObject live = null;
-            try
-            {
-                var arr = OctaBoss?.Call("GetBossStates") as JArray;
-                live = arr?.OfType<JObject>().FirstOrDefault(o => o["key"]?.ToString() == key);
-            }
-            catch { }
+            JObject live = BossStates()?.OfType<JObject>()
+                .FirstOrDefault(o => o["key"]?.ToString() == key);
 
-            // лор-страница из конфига OctaBoss (та же генерация, что давала PageData)
-            JObject spec = FindBossSpec(key);
+            // лор-страница из каталога OctaBoss (та же генерация, что давала PageData)
+            JObject spec = BossSpecInfo(key);
             var lines = spec != null ? BossPageLines(spec) : new List<string> { key.ToUpper() };
 
             // вверху — живой статус одной строкой
@@ -1636,7 +1629,68 @@ namespace Oxide.Plugins
                 tx2 + " 0.03", "0.97 0.88", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
         }
 
-        // Ищем вид босса в OctaBoss.json — для лор-описания детальной карточки
+        // Снапшот боссов: v1-конверт Boss_GetActiveInstances (data.bosses —
+        // слитный вид на вид босса), фолбэк — legacy GetBossStates для старого
+        // OctaBoss без контракта.
+        private JArray BossStates()
+        {
+            try
+            {
+                var res = OctaBoss?.Call("Boss_GetActiveInstances") as JObject;
+                var arr = res?["data"]?["bosses"] as JArray;
+                if (arr != null) return arr;
+            }
+            catch { }
+            try { return OctaBoss?.Call("GetBossStates") as JArray; } catch { return null; }
+        }
+
+        // Данные вида босса — через контракт v1 (Boss_GetCatalog); фолбэк —
+        // чтение OctaBoss.json + нормализация для старого OctaBoss без контракта.
+        private JObject BossSpecInfo(string key)
+        {
+            try
+            {
+                var res = OctaBoss?.Call("Boss_GetCatalog") as JObject;
+                if (res?["ok"]?.Value<bool>() == true)
+                {
+                    var hit = (res["data"]?["bosses"] as JArray)?.OfType<JObject>()
+                        .FirstOrDefault(k => string.Equals(k["key"]?.ToString(), key,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (hit != null) return hit;
+                }
+            }
+            catch { }
+            var legacy = FindBossSpec(key);
+            return legacy == null ? null : NormalizeLegacyBossSpec(legacy);
+        }
+
+        // старый конфиг OctaBoss.json (русские JsonProperty) → единые ключи
+        // каталога v1 — BossPageLines работает с одним набором полей
+        private JObject NormalizeLegacyBossSpec(JObject b)
+        {
+            var esc = b["Свита"] as JObject;
+            var sp = b["Спавн"] as JObject;
+            var rw = b["Награды"] as JObject;
+            var nativeBiome = JBool(sp, "Спавн только в родном биоме");
+            return new JObject
+            {
+                ["key"] = JStr(b, "Ключ (латиницей, для команд)", "?"),
+                ["name"] = JStr(b, "Имя босса", "?"),
+                ["enabled"] = JBool(b, "Включён", true),
+                ["escortCount"] = esc?["Количество"]?.ToObject<int?>() ?? 0,
+                ["monuments"] = JStr(sp, "Монументы-якоря (через запятую, частичное совпадение; пусто = любая точка)"),
+                ["nativeBiome"] = nativeBiome,
+                ["nativeBiomes"] = nativeBiome
+                    ? JStr(sp, "Родные биомы (arid,temperate,tundra,arctic,jungle через запятую)")
+                    : "любой",
+                ["needsWater"] = JBool(sp, "Требовать воду рядом (водные звери; крокодил иначе умирает сойдя с навмеша)"),
+                ["rewardCurrency"] = rw?["Валюта за убийство (ServerRewards/Economics)"]?.ToObject<int?>() ?? 0,
+                ["rewardParticipation"] = rw?["Валюта участникам (нанёс >= порога урона)"]?.ToObject<int?>() ?? 0
+            };
+        }
+
+        // LEGACY-фолбэк: ищем вид босса в OctaBoss.json — используется только
+        // когда OctaBoss не отдаёт Boss_GetCatalog (старая версия)
         private JObject FindBossSpec(string key)
         {
             try
@@ -2669,28 +2723,24 @@ namespace Oxide.Plugins
 
         private List<string> BossPageLines(JObject b)
         {
-            var key = JStr(b, "Ключ (латиницей, для команд)", "?");
-            var name = JStr(b, "Имя босса", key.ToUpper());
-            var enabled = JBool(b, "Включён", true);
+            var key = JStr(b, "key", "?");
+            var name = JStr(b, "name", key.ToUpper());
+            var enabled = JBool(b, "enabled", true);
 
-            var esc = b["Свита"] as JObject;
-            var escCount = esc?["Количество"]?.ToObject<int?>() ?? 0;
+            var escCount = b["escortCount"]?.ToObject<int?>() ?? 0;
             var escLine = escCount > 0
                 ? $"<size=15><color=#83b8c7>ОН НЕ ОДИН:</color> с ним свора из {escCount} зверей — билет продаётся только пакетом.</size>"
                 : "<size=15><color=#83b8c7>ОН ОДИН:</color> приходит без свиты. Одного достаточно.</size>";
 
-            var sp = b["Спавн"] as JObject;
-            var mons = JStr(sp, "Монументы-якоря (через запятую, частичное совпадение; пусто = любая точка)");
-            var biomes = JBool(sp, "Спавн только в родном биоме")
-                ? JStr(sp, "Родные биомы (arid,temperate,tundra,arctic,jungle через запятую)") : "любой";
-            var water = JBool(sp, "Требовать воду рядом (водные звери; крокодил иначе умирает сойдя с навмеша)");
+            var mons = JStr(b, "monuments");
+            var biomes = JBool(b, "nativeBiome") ? JStr(b, "nativeBiomes", "любой") : "любой";
+            var water = JBool(b, "needsWater");
             var where = BiomeRu(biomes)
                 + (mons.Length > 0 ? $", кружит около {mons}" : "")
                 + (water ? ", у воды" : "");
 
-            var rw = b["Награды"] as JObject;
-            var cur = rw?["Валюта за убийство (ServerRewards/Economics)"]?.ToObject<int?>() ?? 0;
-            var part = rw?["Валюта участникам (нанёс >= порога урона)"]?.ToObject<int?>() ?? 0;
+            var cur = b["rewardCurrency"]?.ToObject<int?>() ?? 0;
+            var part = b["rewardParticipation"]?.ToObject<int?>() ?? 0;
 
             var status = enabled
                 ? "<color=#83b8c7>ГУЛЯЕТ ПО ОСТРОВУ</color>"
