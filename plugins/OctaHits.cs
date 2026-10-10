@@ -88,10 +88,19 @@ namespace Oxide.Plugins
         private readonly Dictionary<ulong, int>  _winCount = new Dictionary<ulong, int>();
         private ulong _seq;
 
+        // имена элементов в полёте — CUI уничтожается строго по имени,
+        // дубли имён становятся сиротами, которых не снять (см. PITFALLS по UI)
+        private readonly HashSet<string> _live = new HashSet<string>();
+
         private void Unload()
         {
             foreach (var pl in BasePlayer.activePlayerList)
-                if (pl != null) CuiHelper.DestroyUi(pl, UiBase);
+            {
+                if (pl == null) continue;
+                foreach (var n in _live) CuiHelper.DestroyUi(pl, n);
+                CuiHelper.DestroyUi(pl, UiBase);
+            }
+            _live.Clear();
         }
 
         private bool Throttled(ulong uid)
@@ -179,22 +188,36 @@ namespace Oxide.Plugins
             var size = head ? _cfg.HeadshotSize : _cfg.FontSize;
             var text = dmg.ToString(_cfg.Decimals > 0 ? "F" + _cfg.Decimals : "F0");
 
-            var name = $"{UiBase}_{_seq++ % 64}";
+            // уникальный префикс на каждый хит — иначе сироты (дубли имён не заменяются)
+            var baseName = $"{UiBase}_{_seq++}";
             var steps = 3; // 0 → подъём → подъём → смерть
             for (var i = 0; i < steps; i++)
             {
                 var k = i;
-                timer.Once(_cfg.Lifetime * i / steps, () => DrawStep(p, name, sx, sy, text, color, size, k, steps));
+                timer.Once(_cfg.Lifetime * i / steps, () => DrawStep(p, baseName, sx, sy, text, color, size, k, steps));
             }
-            timer.Once(_cfg.Lifetime + 0.35f, () => { if (p != null && p.IsConnected) CuiHelper.DestroyUi(p, name); });
+            var last = baseName + "_" + (steps - 1);
+            timer.Once(_cfg.Lifetime + 0.35f, () =>
+            {
+                if (p != null && p.IsConnected) CuiHelper.DestroyUi(p, last);
+                _live.Remove(last);
+            });
         }
 
-        // Каждый шаг — переотрисовка того же имени: клиент заменяет элемент,
-        // итог — плавный дрейф вверх без удержания объектов
-        private void DrawStep(BasePlayer p, string name, float sx, float sy,
+        // Каждый шаг — НОВОЕ имя элемента: старое явно уничтожаем, новое добавляем.
+        // Итог — плавный дрейф вверх без сирот и залипания
+        private void DrawStep(BasePlayer p, string baseName, float sx, float sy,
                               string text, string color, int size, int step, int steps)
         {
             if (p == null || !p.IsConnected) return;
+            if (step > 0)
+            {
+                var prev = baseName + "_" + (step - 1);
+                CuiHelper.DestroyUi(p, prev);
+                _live.Remove(prev);
+            }
+            var name = baseName + "_" + step;
+            _live.Add(name);
             var y = Mathf.Clamp01(sy + _cfg.Rise * step / (steps - 1));
             // тающая альфа к последним кадрам — мягко уходит, не мельтешит
             var alpha = step == steps - 1 ? 0.45f : step == steps - 2 ? 0.8f : 1f;
