@@ -54,6 +54,8 @@ namespace Oxide.Plugins
             public int PingSeconds = 10;
             [JsonProperty("Пинг: обновлений метки в секунду")]
             public int PingHz = 10;
+            [JsonProperty("Пинг: FOV игроков (как graphics.fov в игре)")]
+            public int PingFov = 75;
             [JsonProperty("Пинг: сообщить цели после завершения")]
             public bool PingNotifyTarget = false;
             [JsonProperty("Тест: спящие считаются в сети (радар и пинг)")]
@@ -69,6 +71,7 @@ namespace Oxide.Plugins
             public List<ulong> Friends = new List<ulong>();
             public List<ulong> Enemies = new List<ulong>();
             public bool Notify = true;
+            public int Fov; // 0 — использовать PingFov из конфига
         }
 
         private Dictionary<ulong, RelData> _data = new Dictionary<ulong, RelData>();
@@ -293,20 +296,29 @@ namespace Oxide.Plugins
             }
         }
 
-        // проекция позиции врага в экранные координаты (серверный ESP:
-        // угол по каждой оси относительно взгляда / половина FOV, аспект 16:9)
+        private int GetFov(BasePlayer p)
+        {
+            var f = Rel(p.userID).Fov;
+            return f >= 40 && f <= 140 ? f : Cfg.PingFov;
+        }
+
+        // проекция позиции врага в экранные координаты (перспективная:
+        // dir/dir.z нормируется на тангенс половины угла обзора — как в камере)
         private void DrawPing(BasePlayer payer, BasePlayer target)
         {
             var eye = payer.eyes.position;
+            // метка над головой: eyes.position следит за приседанием, фолбэк — капсула
+            var head = target.eyes != null ? target.eyes.position
+                                           : target.transform.position + Vector3.up * 1.5f;
             var dir = Quaternion.Inverse(payer.eyes.rotation) *
-                      (target.transform.position + Vector3.up * 1.9f - eye);
+                      (head + Vector3.up * 0.35f - eye);
             CuiHelper.DestroyUi(payer, PingUi + payer.userID);
             if (dir.z < 0.5f) return; // цель за спиной — метку не рисуем
 
-            const float hf = 37f * Mathf.Deg2Rad;
-            const float vf = hf * 9f / 16f;
-            float nx = Mathf.Clamp(Mathf.Atan2(dir.x, dir.z) / hf, -0.95f, 0.95f);
-            float ny = Mathf.Clamp(Mathf.Atan2(dir.y, dir.z) / vf, -0.9f, 0.9f);
+            float tanV = Mathf.Tan(GetFov(payer) * 0.5f * Mathf.Deg2Rad);
+            float tanH = tanV * (16f / 9f);
+            float nx = Mathf.Clamp((dir.x / dir.z) / tanH, -0.95f, 0.95f);
+            float ny = Mathf.Clamp((dir.y / dir.z) / tanV, -0.9f, 0.9f);
             float ax = 0.5f + nx * 0.5f, ay = 0.5f + ny * 0.5f;
             int dist = (int)(target.transform.position - eye).magnitude;
 
@@ -569,9 +581,10 @@ namespace Oxide.Plugins
             new AdmFld("pingcoins",  "Пинг: цена монет",     0, 100000, 100, c => c.PingCostCoins,        (c, v) => c.PingCostCoins = (int)v),
             new AdmFld("pingsec",    "Пинг: длительность (с)",3, 120,   1,   c => c.PingSeconds,          (c, v) => c.PingSeconds = (int)v),
             new AdmFld("pinghz",     "Пинг: Гц",             2, 30,     1,   c => c.PingHz,               (c, v) => c.PingHz = (int)v),
+            new AdmFld("pingfov",    "Пинг: FOV (верт.)",    40, 140,   1,   c => c.PingFov,              (c, v) => c.PingFov = (int)v),
         };
         private static readonly string[] AdmLeft  = { "maxfriends", "maxenemies", "radius", "checksec", "cooldown" };
-        private static readonly string[] AdmRight = { "pingrp", "pingcoins", "pingsec", "pinghz" };
+        private static readonly string[] AdmRight = { "pingrp", "pingcoins", "pingsec", "pinghz", "pingfov" };
 
         private void Num(ref CuiElementContainer c, Plugin ui, string parent,
                                 AdmFld f, float x, float y, float w)
@@ -812,6 +825,20 @@ namespace Oxide.Plugins
         }
 
         private void SaveCfg() => Config.WriteObject(Cfg, true);
+
+        [ChatCommand("relfov")]
+        private void CmdFov(BasePlayer p, string c, string[] a)
+        {
+            int f;
+            if (a == null || a.Length == 0 || !int.TryParse(a[0], out f) || f < 40 || f > 140)
+            {
+                p.ChatMessage($"◆ FOV метки: <color=#E8B84B>{GetFov(p)}</color> · задать свой: <color=#83b8c7>/relfov 90</color> " +
+                              $"(как graphics.fov в настройках игры)");
+                return;
+            }
+            Rel(p.userID).Fov = f;
+            p.ChatMessage($"◆ FOV метки установлен: <color=#8dd06f>{f}</color>. Метка пинга теперь под твой обзор.");
+        }
 
         [ChatCommand("relnotify")]
         private void CmdNotify(BasePlayer p, string c, string[] a)
