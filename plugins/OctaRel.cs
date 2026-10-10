@@ -186,7 +186,9 @@ namespace Oxide.Plugins
                 if (!_data.TryGetValue(p.userID, out d) || !d.Notify || d.Enemies.Count == 0) continue;
                 foreach (var eid in d.Enemies)
                 {
-                    var enemy = BasePlayer.FindByID(eid);
+                    // FindByID видит только activePlayerList — спящих ищем отдельно
+                    var enemy = BasePlayer.FindByID(eid) ??
+                                (Cfg.SleepersCountAsOnline ? BasePlayer.FindSleeping(eid) : null);
                     if (enemy == null || (!Cfg.SleepersCountAsOnline && enemy.IsSleeping())) continue;
                     if ((enemy.transform.position - p.transform.position).sqrMagnitude > r2) continue;
 
@@ -222,7 +224,8 @@ namespace Oxide.Plugins
             if (!Cfg.PingTestMode &&
                 (!_data.TryGetValue(payer.userID, out d) || !d.Enemies.Contains(target)))
                 return "Это не твой враг — сначала /enemy add ник";
-            var t = BasePlayer.FindByID(target);
+            var t = BasePlayer.FindByID(target) ??
+                    (Cfg.SleepersCountAsOnline ? BasePlayer.FindSleeping(target) : null);
             if (t == null || (!Cfg.SleepersCountAsOnline && t.IsSleeping())) return "Цель не в сети.";
             if (t.IsDead()) return "Цель уже мертва.";
             if (_pings.ContainsKey(payer.userID)) return "Пинг уже активен — дождись конца.";
@@ -678,16 +681,32 @@ namespace Oxide.Plugins
             CuiHelper.AddUi(p, c);
         }
 
+        // префабы-фолбэки: peacekeeper мирный, остальные агрессивны — только если первых нет
+        private static readonly string[] DummyPrefabs =
+        {
+            "assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistpeacekeeper.prefab",
+            "assets/rust.ai/agents/npcplayer/humannpc/scarecrow/scarecrow.prefab",
+            "assets/rust.ai/agents/npcplayer/humannpc/scientist/scientist.prefab",
+        };
+
         private void SpawnDummy(BasePlayer admin)
         {
             var pos = admin.transform.position + admin.transform.forward * 4f + Vector3.up * 0.5f;
-            var npc = GameManager.server.CreateEntity(
-                "assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistpeacekeeper.prefab",
-                pos, Quaternion.identity) as BasePlayer;
-            if (npc == null) { Toast(admin, "✕ Префаб не найден", "0.30 0.10 0.08 0.9"); return; }
-            npc.Spawn();
-            npc.displayName = "ТЕСТ-ЦЕЛЬ";
-            _testDummy = npc;
+            foreach (var pf in DummyPrefabs)
+            {
+                try
+                {
+                    var npc = GameManager.server.CreateEntity(pf, pos, Quaternion.identity) as BasePlayer;
+                    if (npc == null) continue;
+                    npc.displayName = "ТЕСТ-ЦЕЛЬ";
+                    npc.enableSaving = false;
+                    npc.Spawn();
+                    _testDummy = npc;
+                    return;
+                }
+                catch (Exception ex) { PrintWarning($"OctaRel dummy[{pf}]: {ex.Message}"); }
+            }
+            Toast(admin, "✕ Ни один NPC-префаб не заспавнился — см. консоль", "0.30 0.10 0.08 0.9");
         }
 
         [ConsoleCommand("octarel_admin")]
@@ -770,7 +789,8 @@ namespace Oxide.Plugins
                     if (_testDummy != null && !_testDummy.IsDestroyed && !_testDummy.IsDead())
                         _testDummy.Kill();
                     SpawnDummy(p);
-                    Toast(p, "✓ Тест-цель заспавнена", "accent");
+                    if (_testDummy != null && !_testDummy.IsDestroyed)
+                        Toast(p, "✓ Тест-цель заспавнена", "accent");
                     break;
                 case "kill":
                     if (_testDummy != null && !_testDummy.IsDestroyed) { _testDummy.Kill(); _testDummy = null; }
