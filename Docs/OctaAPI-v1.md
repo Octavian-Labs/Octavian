@@ -61,6 +61,7 @@ ServerRewards) оборачиваются внутри модуля-владел
 | `NO_PERMISSION` | нет права/vip-benefit |
 | `COOLDOWN` | кулдаун активен (`data.cooldownLeft` — сек) |
 | `LIMIT_REACHED` | исчерпаны использования (`data.usesLeft`) |
+| `NO_SPACE` | не хватает места в инвентаре |
 | `INSUFFICIENT_FUNDS` | не хватает валюты (`data.balance`, `data.price`) |
 | `PROVIDER_UNAVAILABLE` | нужный плагин не загружен |
 | `CONFLICT` | операция уже выполняется/выполнена (requestId) |
@@ -149,12 +150,18 @@ ServerRewards) оборачиваются внутри модуля-владел
 
 ```
 Kits_GetCatalog(player)
-  data: { kits: [ {id, name, desc, image, price, currency,
-                   cooldown, maxUses, hidden} ] }
+  data: { kits: [ {id, name, desc, image, cost, currency, currencyLabel,
+                   cooldown, maxUses, perm, hidden,
+                   avail: {can, code, cooldownLeft?, usesLeft?, balance?}} ],
+          currency, currencyLabel }
+  // avail — снапшот-подсказка для отрисовки кнопки; финальное решение
+  // всегда принимает Kits_Redeem в момент выполнения
 
 Kits_GetKit(player, kitId)
-  data: { id, name, desc, image, price, currency, cooldown, maxUses,
-          items: [ {shortname, amount, skin, container, ammo?} ] }
+  data: { id, name, desc, image, cost, currency, currencyLabel, cooldown,
+          maxUses, perm, requiredAuth, copyPaste,
+          main/belt/wear: [ {Shortname, SkinID, Amount, ...} ],
+          avail: {...} }
 
 Kits_GetAvailability(player, kitId)
   data: { canClaim, reason(code), cooldownLeft, usesLeft,
@@ -169,9 +176,13 @@ Kits_Redeem(player, kitId, requestId)
 
 `requestId` — строка-идемпотентность: повтор того же requestId
 возвращает результат первой операции, не выдаёт второй набор.
+Плюс анти-даблклик: повторное получение одного набора тем же игроком
+чаще раза в секунду отклоняется с `CONFLICT`.
 Оплата и выдача не атомарны между плагинами — при сбое выдачи после
-списания фиксируется `PENDING_GRANT` в данных игрока и доставляется
-при следующей попытке (политика восстановления, не «транзакция»).
+списания выполняется возврат средств (RefundPlayer) и ответ
+`UNAVAILABLE`; «транзакции» между плагинами не имитируются.
+`TryClaimKit` (legacy) проксирует тот же обработчик — единый путь
+выдачи сохраняется для /kit, собственного меню и Hub.
 
 ### OctaBoss
 

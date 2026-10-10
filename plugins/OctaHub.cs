@@ -1292,9 +1292,8 @@ namespace Oxide.Plugins
                 int ok = 0;
                 foreach (var k in kits)
                 {
-                    double cd = 0;
-                    try { cd = Convert.ToDouble(OctaKits.Call("GetPlayerKitCooldown", (ulong)player.userID, k)); } catch { }
-                    if (cd <= 0) ok++;
+                    // не на кулдауне = доступен к получению (availability из каталога)
+                    if ((k["avail"] as JObject)?["code"]?.ToString() != "COOLDOWN") ok++;
                 }
                 return $"{ok} из {kits.Count}";
             }
@@ -2130,35 +2129,33 @@ namespace Oxide.Plugins
             ("paid", "ПЛАТНЫЕ"), ("vip", "VIP")
         };
 
-        // Список наборов для игрока: фильтр скрытых/auth + категория + избранное сверху
-        private List<string> KitsTab_List(BasePlayer player, string cat)
+        // Список наборов для игрока — Octa API v1: один вызов Kits_GetCatalog
+        // отдаёт видимые наборы с availability-снапшотом (фильтр hidden/auth —
+        // на стороне владельца, Hub только сортирует по категории/избранному)
+        private List<JObject> KitsTab_List(BasePlayer player, string cat)
         {
-            var list = new List<string>();
+            var list = new List<JObject>();
             if (OctaKits == null) return list;
 
-            string[] all = null;
-            try { all = OctaKits.Call("GetAllKits") as string[]; } catch { }
-            if (all == null) return list;
+            JObject resp = null;
+            try { resp = OctaKits.Call("Kits_GetCatalog", player) as JObject; } catch { }
+            var arr = resp?["data"]?["kits"] as JArray;
+            if (arr == null) return list;
 
             List<string> fav;
             bool hasFav = _fav.TryGetValue(player.userID, out fav) && fav.Count > 0;
-            bool isAdmin = player.IsAdmin;
 
-            foreach (string name in all)
+            foreach (var t in arr)
             {
-                JObject kit = null;
-                try { kit = OctaKits.Call("GetKitObject", name) as JObject; } catch { }
+                var kit = t as JObject;
                 if (kit == null) continue;
-
-                if (!isAdmin && kit.SelectToken("IsHidden")?.Value<bool>() == true) continue;
-                int reqAuth = kit.SelectToken("RequiredAuth")?.Value<int>() ?? 0;
-                if (player.net.connection.authLevel < reqAuth) continue;
+                string name = kit["name"]?.ToString() ?? "";
 
                 if (!string.IsNullOrEmpty(cat))
                 {
                     bool isFav = hasFav && fav.Contains(name);
-                    int cost = kit.SelectToken("Cost")?.Value<int>() ?? 0;
-                    string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
+                    int cost = kit["cost"]?.Value<int>() ?? 0;
+                    string perm = kit["perm"]?.ToString() ?? "";
                     bool isVip = perm.IndexOf("vip", StringComparison.OrdinalIgnoreCase) >= 0;
                     switch (cat)
                     {
@@ -2168,12 +2165,12 @@ namespace Oxide.Plugins
                         case "vip": if (!isVip) continue; break;
                     }
                 }
-                list.Add(name);
+                list.Add(kit);
             }
 
             // избранные — в начало списка
             if (hasFav && cat != "fav")
-                list = list.OrderByDescending(k => fav.Contains(k)).ToList();
+                list = list.OrderByDescending(k => fav.Contains(k["name"]?.ToString())).ToList();
             return list;
         }
 
@@ -2186,38 +2183,26 @@ namespace Oxide.Plugins
             return $"{ts.Seconds} СЕК";
         }
 
-        // Текст и цвет кнопки набора: "ТЕКСТ%ЦВЕТ"
-        private string KitsTab_BtnState(BasePlayer player, string kitname)
+        // Текст и цвет кнопки набора из availability-снапшота (Octa API v1): "ТЕКСТ%ЦВЕТ"
+        private string KitsTab_BtnState(JObject kit)
         {
-            JObject kit = null;
-            try { kit = OctaKits?.Call("GetKitObject", kitname) as JObject; } catch { }
-            if (kit == null) return $"НЕДОСТУПЕН%{KGlassLt}";
+            var av = kit?["avail"] as JObject;
+            if (av == null) return $"НЕДОСТУПЕН%{KGlassLt}";
 
-            double cdLeft = 0;
-            try { cdLeft = Convert.ToDouble(OctaKits.Call("GetPlayerKitCooldown", (ulong)player.userID, kitname)); } catch { }
-            if (cdLeft > 0) return $"⏱ {KitFmtTime(cdLeft)}%{KRed}";
-
-            string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
-            if (!string.IsNullOrEmpty(perm))
+            switch (av["code"]?.ToString())
             {
-                bool hasAccess = false;
-                try { hasAccess = Convert.ToBoolean(OctaKits.Call("HasKitPermission", player, perm)); } catch { }
-                if (!hasAccess) return $"НУЖЕН ДОСТУП%{KGlassLt}";
+                case "COOLDOWN":
+                    return $"⏱ {KitFmtTime(av["cooldownLeft"]?.Value<double>() ?? 0)}%{KRed}";
+                case "NO_PERMISSION":       return $"НУЖЕН ДОСТУП%{KGlassLt}";
+                case "LIMIT_REACHED":       return $"ЛИМИТ ИСЧЕРПАН%{KGlassLt}";
+                case "NO_SPACE":            return $"НЕТ МЕСТА%{KGlassLt}";
+                case "PROVIDER_UNAVAILABLE":
+                case "UNAVAILABLE":         return $"НЕДОСТУПЕН%{KGlassLt}";
             }
 
-            int maxUses = kit.SelectToken("MaximumUses")?.Value<int>() ?? 0;
-            if (maxUses > 0)
-            {
-                int used = 0;
-                try { used = Convert.ToInt32(OctaKits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
-                if (maxUses - used < 1) return $"ЛИМИТ ИСЧЕРПАН%{KGlassLt}";
-            }
-
-            int cost = kit.SelectToken("Cost")?.Value<int>() ?? 0;
+            int cost = kit["cost"]?.Value<int>() ?? 0;
             if (cost <= 0) return $"ЗАБРАТЬ%{KGreen}";
-
-            string curLabel = "$";
-            try { curLabel = OctaKits.Call("GetCurrencyLabel") as string ?? "$"; } catch { }
+            string curLabel = kit["currencyLabel"]?.ToString() ?? "$";
             return $"ЗАБРАТЬ • {cost} {curLabel}%{KGreen}";
         }
 
@@ -2268,24 +2253,22 @@ namespace Oxide.Plugins
             for (int i = 0; i < 9; i++)
             {
                 if (start + i >= kits.Count) break;
-                string kitname = kits[start + i];
+                JObject kit = kits[start + i];
+                string kitname = kit["name"]?.ToString() ?? "";
                 string[] a = _kitCardAnchors[i].Split('-');
                 if (a.Length < 2) continue;
 
-                string descr = "";
-                try { descr = OctaKits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
+                string descr = kit["desc"]?.ToString() ?? "";
                 if (descr.Length > 60) descr = descr.Substring(0, 60) + "...";
 
-                string image = "";
-                try { image = OctaKits.Call("GetKitImage", kitname) as string ?? ""; } catch { }
+                string image = kit["image"]?.ToString() ?? "";
 
-                int cooldownSec = 0, maxUses = 0, used = 0;
-                try { cooldownSec = Convert.ToInt32(OctaKits.Call("GetKitCooldown", kitname)); } catch { }
-                try { maxUses = Convert.ToInt32(OctaKits.Call("GetKitMaxUses", kitname)); } catch { }
-                try { used = Convert.ToInt32(OctaKits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
+                int cooldownSec = kit["cooldown"]?.Value<int>() ?? 0;
+                int maxUses = kit["maxUses"]?.Value<int>() ?? 0;
+                int usesLeft = kit["avail"]?["usesLeft"]?.Value<int>() ?? maxUses;
 
                 string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
-                string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
+                string usesText = maxUses > 0 ? Math.Max(0, usesLeft).ToString() : "БЕЗ ЛИМИТА";
 
                 CUIClass.CreatePanel(ref ui, $"owkit_card_{i}", UiCnt, KGlassBg, a[0], a[1], false, 0f, Mat);
                 CUIClass.CreatePanel(ref ui, $"owkit_gold_{i}", $"owkit_card_{i}", KGold, "0 0.955", "1 1", false, 0f, Mat);
@@ -2317,7 +2300,7 @@ namespace Oxide.Plugins
                 CUIClass.CreateButton(ref ui, $"owkit_view_{i}", $"owkit_card_{i}", KGlassHov, "<color=@accent>ОБЗОР</color>", 10, "0.035 0.05", "0.31 0.22",
                     $"octahub_kit_view {kitname.Replace(" ", "%")} {st.KitPage}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
-                string[] btn = KitsTab_BtnState(player, kitname).Split('%');
+                string[] btn = KitsTab_BtnState(kit).Split('%');
                 CUIClass.CreateButton(ref ui, $"owkit_claim_{i}", $"owkit_card_{i}", btn[1], $"<b>{btn[0]}</b>", 10, "0.33 0.05", "0.985 0.22",
                     $"octahub_kit_claim {kitname.Replace(" ", "%")} {st.KitPage} 0", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
             }
@@ -2364,13 +2347,14 @@ namespace Oxide.Plugins
         {
             var ui = new CuiElementContainer();
 
+            // Octa API v1: один вызов отдаёт поля, предметы и availability
             JObject kit = null;
-            try { kit = OctaKits?.Call("GetKitObject", kitname) as JObject; } catch { }
+            try { kit = (OctaKits?.Call("Kits_GetKit", player, kitname) as JObject)?["data"] as JObject; } catch { }
             if (kit == null) { UiRefresh(player, UiCnt, UiBot); return; }
 
-            var belt = kit.SelectToken("BeltItems");
-            var main = kit.SelectToken("MainItems");
-            var wear = kit.SelectToken("WearItems");
+            var belt = kit.SelectToken("belt");
+            var main = kit.SelectToken("main");
+            var wear = kit.SelectToken("wear");
 
             CUIClass.CreatePanel(ref ui, "owkit_view_inv", UiCnt, KGlassBg, "0.37 0.04", "0.99 0.96", false, 0f, Mat);
             CUIClass.CreatePanel(ref ui, "owkit_inv_gold", "owkit_view_inv", KGold, "0 0.985", "1 1", false, 0f, Mat);
@@ -2402,23 +2386,16 @@ namespace Oxide.Plugins
                 "0.90 0.90", "0.98 0.98", $"octahub_kit_fav {kitname.Replace(" ", "%")}", "", KTWhite, 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
-            int cooldownSec = 0, maxUses = 0, used = 0;
-            try { cooldownSec = Convert.ToInt32(OctaKits.Call("GetKitCooldown", kitname)); } catch { }
-            try { maxUses = Convert.ToInt32(OctaKits.Call("GetKitMaxUses", kitname)); } catch { }
-            try { used = Convert.ToInt32(OctaKits.Call("GetPlayerKitUses", (ulong)player.userID, kitname)); } catch { }
+            int cooldownSec = kit["cooldown"]?.Value<int>() ?? 0;
+            int maxUses = kit["maxUses"]?.Value<int>() ?? 0;
+            int usesLeft = kit["avail"]?["usesLeft"]?.Value<int>() ?? maxUses;
 
             string cdText = cooldownSec > 0 ? KitFmtTime(cooldownSec) : "НЕТ";
-            string usesText = maxUses > 0 ? Math.Max(0, maxUses - used).ToString() : "БЕЗ ЛИМИТА";
-            int cost = kit.SelectToken("Cost")?.Value<int>() ?? 0;
-            string curLbl = "$";
-            try { curLbl = OctaKits.Call("GetCurrencyLabel") as string ?? "$"; } catch { }
+            string usesText = maxUses > 0 ? Math.Max(0, usesLeft).ToString() : "БЕЗ ЛИМИТА";
+            int cost = kit["cost"]?.Value<int>() ?? 0;
+            string curLbl = kit["currencyLabel"]?.ToString() ?? "$";
             string costText = cost > 0 ? $"{cost} {curLbl}" : "БЕСПЛАТНО";
-            string perm = kit.SelectToken("RequiredPermission")?.ToString() ?? "";
-            bool hasPerm = string.IsNullOrEmpty(perm);
-            if (!hasPerm)
-            {
-                try { hasPerm = Convert.ToBoolean(OctaKits.Call("HasKitPermission", player, perm)); } catch { }
-            }
+            bool hasPerm = (kit["avail"] as JObject)?["code"]?.ToString() != "NO_PERMISSION";
             string permStatus = hasPerm
                 ? "<color=@green>Разрешён</color>" : "<color=@red>Требуется привилегия</color>";
 
@@ -2429,15 +2406,14 @@ namespace Oxide.Plugins
             CUIClass.CreateText(ref ui, "owkit_v_info", "owkit_view_info", KTWhite, info, 12, "0.06 0.65", "0.94 0.88", TextAnchor.UpperLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
             CUIClass.CreatePanel(ref ui, "owkit_v_div2", "owkit_view_info", KGoldDark, "0.06 0.635", "0.94 0.638", false, 0f, Mat);
 
-            string descr = "";
-            try { descr = OctaKits.Call("GetKitDescription", kitname) as string ?? ""; } catch { }
+            string descr = kit["desc"]?.ToString() ?? "";
             if (string.IsNullOrEmpty(descr)) descr = "Описание набора не указано.";
             CUIClass.CreateText(ref ui, "owkit_v_descr", "owkit_view_info", "muted", descr, 11, "0.06 0.20", "0.94 0.62", TextAnchor.UpperLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
             CUIClass.CreateButton(ref ui, "owkit_v_back", "owkit_view_info", KGlassRow, "<color=@accent>← НАЗАД</color>", 11, "0.06 0.06", "0.45 0.16",
                 $"octahub_kit_page {page}", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
-            string[] btn = KitsTab_BtnState(player, kitname).Split('%');
+            string[] btn = KitsTab_BtnState(kit).Split('%');
             CUIClass.CreateButton(ref ui, "owkit_v_claim", "owkit_view_info", btn[1], $"<b>{btn[0]}</b>", 11, "0.49 0.06", "0.94 0.16",
                 $"octahub_kit_claim {kitname.Replace(" ", "%")} {page} 1", "", KTWhite, 0f, TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
 
@@ -2502,13 +2478,23 @@ namespace Oxide.Plugins
             int.TryParse(args[1], out page);
             bool inView = args[2] == "1";
 
-            object ok = null;
-            try { ok = OctaKits.Call("TryClaimKit", player, kitname, false); } catch { }
-            if (ok is bool && (bool)ok)
+            // Octa API v1: единый обработчик + requestId (идемпотентность при даблклике)
+            JObject res = null;
+            try
             {
-                if (inView) KitsTab_ViewKit(player, kitname, page);
-                else UiRefresh(player, UiCnt, UiBot);
+                res = OctaKits.Call("Kits_Redeem", player, kitname,
+                                    Guid.NewGuid().ToString("N")) as JObject;
             }
+            catch { }
+            if (res != null && res["ok"]?.Value<bool>() != true)
+            {
+                var msg = res["msg"]?.ToString();
+                if (!string.IsNullOrEmpty(msg))
+                    player.ChatMessage($"<color=#cd412b>◆ НАБОР:</color> {msg}");
+            }
+            // обновляем в любом случае — кулдаун/лимит могли измениться
+            if (inView) KitsTab_ViewKit(player, kitname, page);
+            else UiRefresh(player, UiCnt, UiBot);
         }
 
         #endregion

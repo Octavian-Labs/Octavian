@@ -2085,86 +2085,354 @@ namespace Oxide.Plugins
         [HookMethod("TryClaimKit")]
         public bool TryClaimKit(BasePlayer player, string name, bool usingUI)
         {
-            if (string.IsNullOrEmpty(name))
-            {
-                KitReply(player, KitMsg("Error.EmptyKitName", player));
-                return false;
-            }
-
-            if (!kitData.Find(name, out KitData.Kit kit))
-            {
-                KitReply(player, KitMsg("Error.InvalidKitName", player));
-                return false;
-            }
-
-            object success = CanClaimKit(player, kit) ?? GiveKit(player, kit);
-            if (success is string s)
-            {
-                KitReply(player, s);
-                return false;
-            }
-
-            OnKitReceived(player, kit);
-            return true;
+            // тот же авторитетный обработчик, что и у Kits_Redeem (API v1)
+            var res = RedeemInternal(player, name);
+            if (res["ok"]?.Value<bool>() == true)
+                return true;
+            KitReply(player, res["msg"]?.ToString() ?? KitMsg("Error.CantClaimNow", player));
+            return false;
         }
 
         private object CanClaimKit(BasePlayer player, KitData.Kit kit, bool ignoreAuthCost = false)
         {
-            object success = Interface.Oxide.CallHook("CanRedeemKit", player);
-            if (success != null)
+            var data = new JObject();
+            string code = CheckKitClaim(player, kit, ignoreAuthCost, data, -1);
+            if (code != "OK")
+                return CodeToKitMsg(player, code, data);
+
+            if (!ignoreAuthCost && !AdminSkipsCost(player) && kit.Cost > 0 && !ChargePlayer(player, kit.Cost))
+                return CodeToKitMsg(player, "INSUFFICIENT_FUNDS", data);
+
+            return null;
+        }
+
+        // ═══ Octa API v1 — контрактные методы (конверт {ok,code,msg,data,rev}) ═══
+
+        private int _kitRev; // растёт при каждом сохранении каталога — потребители могут кэшировать
+        // идемпотентность выдачи: requestId → результат; + анти-даблклик по (игрок, кит)
+        private readonly Dictionary<string, Tuple<float, JObject>> _redeemIds = new Dictionary<string, Tuple<float, JObject>>();
+        private readonly Dictionary<string, float> _redeemRecent = new Dictionary<string, float>();
+
+        private JObject OctaOk(JObject data = null)
+        {
+            var o = new JObject { ["ok"] = true, ["code"] = "OK", ["rev"] = _kitRev };
+            if (data != null) o["data"] = data;
+            return o;
+        }
+
+        private JObject OctaFail(string code, string msg, JObject data = null)
+        {
+            var o = new JObject { ["ok"] = false, ["code"] = code, ["rev"] = _kitRev };
+            if (!string.IsNullOrEmpty(msg)) o["msg"] = msg;
+            if (data != null) o["data"] = data;
+            return o;
+        }
+
+        // живой поиск плагина — PluginReference залипает на старой инстанции (PITFALLS §11)
+        private static Plugin LivePlugin(string name)
+        {
+            foreach (var pl in Interface.Oxide.RootPluginManager.GetPlugins())
+                if (pl.Name == name && pl.IsLoaded) return pl;
+            return null;
+        }
+
+        private bool AdminSkipsCost(BasePlayer p)
+            => config?.backend?.adminIgnoreRestrictions == true && IsKitsAdmin(p);
+
+        private bool CostProviderReady()
+        {
+            switch (_costType)
             {
-                if (success is string s)
-                    return s;
-                return KitMsg("Error.CantClaimNow", player);
+                case CostType.ServerRewards: return LivePlugin("ServerRewards") != null;
+                case CostType.Economics:     return LivePlugin("Economics") != null;
+                default:                     return true; // скрап — инвентарь, провайдер не нужен
+            }
+        }
+
+        private int GetPlayerBalance(BasePlayer player)
+        {
+            try
+            {
+                switch (_costType)
+                {
+                    case CostType.Scrap:
+                        return player.inventory.GetAmount(SCRAP_ITEM_ID);
+                    case CostType.ServerRewards:
+                        {
+                            var p = LivePlugin("ServerRewards");
+                            if (p == null) return -1;
+                            return Convert.ToInt32(p.Call("CheckPoints", (ulong)player.userID) ?? 0);
+                        }
+                    case CostType.Economics:
+                        {
+                            var p = LivePlugin("Economics");
+                            if (p == null) return -1;
+                            return (int)Convert.ToDouble(p.Call("Balance", player.UserIDString) ?? 0d);
+                        }
+                }
+            }
+            catch { }
+            return -1;
+        }
+
+        // Возврат средств при сбое выдачи ПОСЛЕ списания (политика восстановления API v1)
+        private void RefundPlayer(BasePlayer player, int amount)
+        {
+            if (amount <= 0) return;
+            try
+            {
+                switch (_costType)
+                {
+                    case CostType.Scrap:
+                        var item = ItemManager.CreateByItemID(SCRAP_ITEM_ID, amount);
+                        if (item != null) player.GiveItem(item);
+                        break;
+                    case CostType.ServerRewards:
+                        LivePlugin("ServerRewards")?.Call("AddPoints", (ulong)player.userID, amount);
+                        break;
+                    case CostType.Economics:
+                        LivePlugin("Economics")?.Call("Deposit", player.UserIDString, (double)amount);
+                        break;
+                }
+            }
+            catch (Exception e) { PrintWarning($"OctaKits: возврат {amount} игроку {player.userID} не удался: {e.Message}"); }
+        }
+
+        // Чистая проверка доступа к набору без побочных эффектов и без списания.
+        // Возвращает код Octa API v1; детали (кулдаун, баланс, лимит) — в data.
+        // balanceOverride >= 0 — заранее считанный баланс (батч каталога).
+        private string CheckKitClaim(BasePlayer player, KitData.Kit kit, bool ignoreAuthCost, JObject data, int balanceOverride)
+        {
+            object veto = Interface.Oxide.CallHook("CanRedeemKit", player);
+            if (veto != null)
+            {
+                if (veto is string vs) data["msg"] = vs;
+                return "UNAVAILABLE";
             }
 
             if (!ignoreAuthCost && kit.RequiredAuth > 0 && player.net.connection.authLevel < kit.RequiredAuth)
-                return KitMsg("Error.CanClaim.Auth", player);
-
-            if (config?.backend?.adminIgnoreRestrictions == true && IsKitsAdmin(player))
             {
-                if (!kit.HasSpaceForItems(player))
-                    return KitMsg("Error.CanClaim.InventorySpace", player);
-
-                return null;
+                data["auth"] = true;
+                return "NO_PERMISSION";
             }
+
+            if (AdminSkipsCost(player))
+                return kit.HasSpaceForItems(player) ? "OK" : "NO_SPACE";
 
             if (!HasKitPermission(player, kit.RequiredPermission))
-                return KitMsg("Error.CanClaim.Permission", player);
+                return "NO_PERMISSION";
 
-            if (config?.backend?.wipeCooldowns != null && config.backend.wipeCooldowns.TryGetValue(kit.Name, out int wipeCooldownTime))
+            if (config?.backend?.wipeCooldowns != null &&
+                config.backend.wipeCooldowns.TryGetValue(kit.Name, out int wipeCd) &&
+                kitData.IsOnWipeCooldown(wipeCd, out wipeCd))
             {
-                if (kitData.IsOnWipeCooldown(wipeCooldownTime, out wipeCooldownTime))
-                    return string.Format(KitMsg("Error.CanClaim.WipeCooldown", player), TimeFormated(wipeCooldownTime));
+                data["wipe"] = true;
+                data["cooldownLeft"] = wipeCd;
+                return "COOLDOWN";
             }
 
-            if (playerData.Find((ulong)player.userID, out PlayerData.PlayerUsageData playerUsageData))
+            if (kit.MaximumUses > 0 || kit.Cooldown > 0)
             {
-                if (kit.Cooldown > 0)
+                PlayerData.PlayerUsageData ud;
+                bool found = playerData.Find((ulong)player.userID, out ud);
+                if (kit.Cooldown > 0 && found)
                 {
-                    double cooldownRemaining = playerUsageData.GetCooldownRemaining(kit.Name);
-                    if (cooldownRemaining > 0)
-                        return string.Format(KitMsg("Error.CanClaim.Cooldown", player), TimeFormated(cooldownRemaining));
+                    double left = ud.GetCooldownRemaining(kit.Name);
+                    if (left > 0)
+                    {
+                        data["cooldownLeft"] = (int)left;
+                        return "COOLDOWN";
+                    }
                 }
-
                 if (kit.MaximumUses > 0)
                 {
-                    int currentUses = playerUsageData.GetKitUses(kit.Name);
-                    if (currentUses >= kit.MaximumUses)
-                        return KitMsg("Error.CanClaim.MaxUses", player);
+                    int uses = found ? ud.GetKitUses(kit.Name) : 0;
+                    data["usesLeft"] = Math.Max(0, kit.MaximumUses - uses);
+                    if (uses >= kit.MaximumUses)
+                        return "LIMIT_REACHED";
                 }
             }
 
             if (!kit.HasSpaceForItems(player))
-                return KitMsg("Error.CanClaim.InventorySpace", player);
+                return "NO_SPACE";
 
             if (!ignoreAuthCost && kit.Cost > 0)
             {
-                if (!ChargePlayer(player, kit.Cost))
-                    return string.Format(KitMsg("Error.CanClaim.InsufficientFunds", player), kit.Cost, KitMsg($"Cost.{_costType}", player));
+                if (!CostProviderReady())
+                    return "PROVIDER_UNAVAILABLE";
+                int bal = balanceOverride >= 0 ? balanceOverride : GetPlayerBalance(player);
+                data["cost"] = kit.Cost;
+                data["currency"] = _costType.ToString();
+                data["balance"] = bal;
+                if (bal >= 0 && bal < kit.Cost)
+                    return "INSUFFICIENT_FUNDS";
             }
 
-            return null;
+            return "OK";
+        }
+
+        // код → локализованное сообщение (те же тексты, что и у /kit)
+        private string CodeToKitMsg(BasePlayer player, string code, JObject data)
+        {
+            switch (code)
+            {
+                case "UNAVAILABLE":
+                    return data?["msg"]?.ToString() ?? KitMsg("Error.CantClaimNow", player);
+                case "NO_PERMISSION":
+                    return KitMsg(data?["auth"]?.Value<bool>() == true ? "Error.CanClaim.Auth" : "Error.CanClaim.Permission", player);
+                case "COOLDOWN":
+                    {
+                        double left = data?["cooldownLeft"]?.Value<double>() ?? 0;
+                        return string.Format(KitMsg(data?["wipe"]?.Value<bool>() == true ? "Error.CanClaim.WipeCooldown" : "Error.CanClaim.Cooldown", player),
+                            TimeFormated(left));
+                    }
+                case "LIMIT_REACHED":
+                    return KitMsg("Error.CanClaim.MaxUses", player);
+                case "NO_SPACE":
+                    return KitMsg("Error.CanClaim.InventorySpace", player);
+                case "INSUFFICIENT_FUNDS":
+                    {
+                        int cost = data?["cost"]?.Value<int>() ?? 0;
+                        return string.Format(KitMsg("Error.CanClaim.InsufficientFunds", player), cost, KitMsg($"Cost.{_costType}", player));
+                    }
+                case "PROVIDER_UNAVAILABLE":
+                    return "Сервис оплаты временно недоступен";
+                default:
+                    return KitMsg("Error.CantClaimNow", player);
+            }
+        }
+
+        private JObject KitEntry(BasePlayer player, KitData.Kit kit, int balance)
+        {
+            var av = new JObject();
+            string code = CheckKitClaim(player, kit, false, av, balance);
+            av["can"] = code == "OK";
+            av["code"] = code;
+            return new JObject
+            {
+                ["id"] = kit.Name, ["name"] = kit.Name, ["desc"] = kit.Description,
+                ["image"] = kit.KitImage, ["cost"] = kit.Cost,
+                ["currency"] = _costType.ToString(), ["currencyLabel"] = CurrencyLabel,
+                ["cooldown"] = kit.Cooldown, ["maxUses"] = kit.MaximumUses,
+                ["perm"] = kit.RequiredPermission, ["hidden"] = kit.IsHidden,
+                ["avail"] = av
+            };
+        }
+
+        [HookMethod("Kits_GetCatalog")]
+        public JObject API_KitsCatalog(BasePlayer player)
+        {
+            var arr = new JArray();
+            if (kitData != null && player != null)
+            {
+                bool isAdmin = IsKitsAdmin(player);
+                int bal = GetPlayerBalance(player); // один запрос на весь каталог
+                foreach (string name in GetAllKits())
+                {
+                    if (!kitData.Find(name, out var kit)) continue;
+                    if (!isAdmin && kit.IsHidden) continue;
+                    if (player.net.connection.authLevel < kit.RequiredAuth) continue;
+                    arr.Add(KitEntry(player, kit, bal));
+                }
+            }
+            return OctaOk(new JObject
+            {
+                ["kits"] = arr,
+                ["currency"] = _costType.ToString(),
+                ["currencyLabel"] = CurrencyLabel
+            });
+        }
+
+        [HookMethod("Kits_GetKit")]
+        public JObject API_KitsGetKit(BasePlayer player, string kitId)
+        {
+            KitData.Kit kit;
+            if (player == null || kitData == null || string.IsNullOrEmpty(kitId) || !kitData.Find(kitId, out kit))
+                return OctaFail("NOT_FOUND", KitMsg("Error.InvalidKitName", player));
+            // скрытый/недоступный по auth набор не должен светиться в публичном API
+            if (!IsKitsAdmin(player) && (kit.IsHidden || player.net.connection.authLevel < kit.RequiredAuth))
+                return OctaFail("NOT_FOUND", KitMsg("Error.InvalidKitName", player));
+
+            var data = KitEntry(player, kit, GetPlayerBalance(player));
+            var full = kit.ToJObject;
+            data["main"] = full["MainItems"];
+            data["belt"] = full["BeltItems"];
+            data["wear"] = full["WearItems"];
+            data["copyPaste"] = !string.IsNullOrEmpty(kit.CopyPasteFile);
+            data["requiredAuth"] = kit.RequiredAuth;
+            return OctaOk(data);
+        }
+
+        [HookMethod("Kits_GetAvailability")]
+        public JObject API_KitsAvailability(BasePlayer player, string kitId)
+        {
+            KitData.Kit kit;
+            if (player == null || kitData == null || string.IsNullOrEmpty(kitId) || !kitData.Find(kitId, out kit))
+                return OctaFail("NOT_FOUND", KitMsg("Error.InvalidKitName", player));
+            var av = new JObject();
+            string code = CheckKitClaim(player, kit, false, av, -1);
+            av["can"] = code == "OK";
+            av["code"] = code;
+            av["cost"] = kit.Cost;
+            av["currency"] = _costType.ToString();
+            av["currencyLabel"] = CurrencyLabel;
+            return OctaOk(av);
+        }
+
+        // Единый авторитетный обработчик выдачи. Все пути (/kit, своё меню, Hub) сходятся сюда.
+        private JObject RedeemInternal(BasePlayer player, string kitId)
+        {
+            if (string.IsNullOrEmpty(kitId))
+                return OctaFail("INVALID_ARGUMENT", KitMsg("Error.EmptyKitName", player));
+            if (player == null || kitData == null || !kitData.Find(kitId, out var kit))
+                return OctaFail("NOT_FOUND", KitMsg("Error.InvalidKitName", player));
+
+            var data = new JObject();
+            string code = CheckKitClaim(player, kit, false, data, -1);
+            if (code != "OK")
+                return OctaFail(code, CodeToKitMsg(player, code, data), data);
+
+            if (!AdminSkipsCost(player) && kit.Cost > 0 && !ChargePlayer(player, kit.Cost))
+                return OctaFail("INSUFFICIENT_FUNDS", CodeToKitMsg(player, "INSUFFICIENT_FUNDS", data), data);
+
+            object give = GiveKit(player, kit);
+            if (give is string err)
+            {
+                RefundPlayer(player, AdminSkipsCost(player) ? 0 : kit.Cost);
+                return OctaFail("UNAVAILABLE", err);
+            }
+
+            OnKitReceived(player, kit);
+            return OctaOk(new JObject { ["kitId"] = kit.Name });
+        }
+
+        [HookMethod("Kits_Redeem")]
+        public JObject API_KitsRedeem(BasePlayer player, string kitId, string requestId)
+        {
+            float now = UnityEngine.Time.realtimeSinceStartup;
+            if (!string.IsNullOrEmpty(requestId) &&
+                _redeemIds.TryGetValue(requestId, out var done) && now - done.Item1 < 300f)
+                return done.Item2; // повтор того же запроса — отдаём первый результат
+
+            string rk = $"{player?.userID}:{kitId}";
+            if (_redeemRecent.TryGetValue(rk, out var rt) && now - rt < 1f)
+                return OctaFail("CONFLICT", "Операция уже выполняется…");
+
+            var res = RedeemInternal(player, kitId);
+            if (res["ok"]?.Value<bool>() == true)
+                _redeemRecent[rk] = now;
+
+            if (!string.IsNullOrEmpty(requestId))
+            {
+                _redeemIds[requestId] = Tuple.Create(now, res);
+                // чистка старых записей
+                if (_redeemIds.Count > 64)
+                {
+                    var old = _redeemIds.Where(kv => now - kv.Value.Item1 > 300f).Select(kv => kv.Key).ToList();
+                    foreach (var k in old) _redeemIds.Remove(k);
+                }
+            }
+            return res;
         }
 
         private object GiveKit(BasePlayer player, KitData.Kit kit)
@@ -2716,7 +2984,7 @@ namespace Oxide.Plugins
         private DynamicConfigFile kitsFile;
         private DynamicConfigFile playersFile;
 
-        private void SaveKitData() => kitsFile?.WriteObject(kitData);
+        private void SaveKitData() { _kitRev++; kitsFile?.WriteObject(kitData); }
         private void SavePlayerData() => playersFile?.WriteObject(playerData);
 
         private void LoadKitData()
