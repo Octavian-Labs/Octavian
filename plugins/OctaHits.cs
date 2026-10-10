@@ -34,9 +34,9 @@ namespace Oxide.Plugins
             [JsonProperty("Максимум цифр в секунду на игрока")]
             public int MaxPerSecond = 8;
 
-            [JsonProperty("Время жизни цифры, сек")]       public float Lifetime = 0.7f;
-            [JsonProperty("Дрейф вверх за жизнь (доля экрана)")]
-            public float Rise = 0.035f;
+            [JsonProperty("Время жизни цифры, сек")]       public float Lifetime = 1.5f;
+            [JsonProperty("Отступ цифры от точки попадания наружу от прицела (доля экрана)")]
+            public float OffsetOut = 0.07f;
             [JsonProperty("Случайный разброс позиции (доля экрана)")]
             public float Jitter = 0.012f;
 
@@ -50,6 +50,8 @@ namespace Oxide.Plugins
             [JsonProperty("Цвет среднего урона")]          public string ColMed = "#d69a4a";
             [JsonProperty("Цвет высокого урона")]          public string ColHigh = "#ff5a2a";
             [JsonProperty("Цвет хедшота")]                 public string ColHead = "#ff2a2a";
+            [JsonProperty("Цвет добивания (золото)")]      public string ColKill = "#E8B84B";
+            [JsonProperty("Размер при добивании")]         public int KillSize = 22;
 
             [JsonProperty("Округление (0 = целые, 1 = десятые)")]
             public int Decimals = 0;
@@ -150,7 +152,13 @@ namespace Oxide.Plugins
             var hitPos = info.HitPositionWorld;
             if (hitPos == Vector3.zero) hitPos = victim.bounds.center;
             if (hitPos == Vector3.zero) hitPos = victim.transform.position;
-            Show(attacker, hitPos, dmg, info.isHeadshot);
+            // летальный исход виден только после применения урона — на следующий тик
+            NextTick(() =>
+            {
+                var vp = victim as BasePlayer;
+                var kill = victim.IsDestroyed || (vp != null && (vp.IsDead() || vp.IsWounded()));
+                Show(attacker, hitPos, dmg, info.isHeadshot, kill);
+            });
         }
 
         // Мировая точка хита → экранные координаты через камеру атакующего.
@@ -173,75 +181,70 @@ namespace Oxide.Plugins
             return true;
         }
 
-        private void Show(BasePlayer p, Vector3 hitPos, float dmg, bool head)
+        private void Show(BasePlayer p, Vector3 hitPos, float dmg, bool head, bool kill)
         {
             float sx, sy;
             if (!WorldToScreen(p, hitPos, out sx, out sy)) { sx = 0.5f; sy = 0.55f; }
+
+            // оттолкнуть от центра прицела наружу — не загораживаем цель:
+            // вектор «от центра к точке хита», нормируем и сдвигаемся дальше
+            var dx = sx - 0.5f; var dy = sy - 0.55f;
+            var len = Mathf.Sqrt(dx * dx + dy * dy);
+            if (len < 0.02f) { dx = 0.7f; dy = 0.7f; len = 1f; } // почти в прицел → вправо-вверх
+            sx += dx / len * _cfg.OffsetOut;
+            sy += dy / len * _cfg.OffsetOut;
+            sx = Mathf.Clamp(sx, 0.05f, 0.95f);
+            sy = Mathf.Clamp(sy, 0.05f, 0.95f);
 
             // разброс — серия выстрелов не клеит цифры в одну точку
             sx += UnityEngine.Random.Range(-_cfg.Jitter, _cfg.Jitter);
             sy += UnityEngine.Random.Range(-_cfg.Jitter, _cfg.Jitter);
 
-            var color = head ? _cfg.ColHead
+            var color = kill ? _cfg.ColKill
+                      : head ? _cfg.ColHead
                       : dmg >= _cfg.HighAt ? _cfg.ColHigh
                       : dmg >= _cfg.MedAt ? _cfg.ColMed : _cfg.ColLow;
-            var size = head ? _cfg.HeadshotSize : _cfg.FontSize;
-            var text = dmg.ToString(_cfg.Decimals > 0 ? "F" + _cfg.Decimals : "F0");
+            var size = kill ? _cfg.KillSize : head ? _cfg.HeadshotSize : _cfg.FontSize;
+            var num = dmg.ToString(_cfg.Decimals > 0 ? "F" + _cfg.Decimals : "F0");
+            var text = kill ? "<b>" + num + "</b>" : num;
 
-            // уникальный префикс на каждый хит — иначе сироты (дубли имён не заменяются)
-            var baseName = $"{UiBase}_{_seq++}";
-            var steps = 3; // 0 → подъём → подъём → смерть
-            for (var i = 0; i < steps; i++)
-            {
-                var k = i;
-                timer.Once(_cfg.Lifetime * i / steps, () => DrawStep(p, baseName, sx, sy, text, color, size, k, steps));
-            }
-            var last = baseName + "_" + (steps - 1);
+            var name = $"{UiBase}_{_seq++}";
+            _live.Add(name);
+            DrawOnce(p, name, sx, sy, text, color, size);
             timer.Once(_cfg.Lifetime + 0.35f, () =>
             {
-                if (p != null && p.IsConnected) CuiHelper.DestroyUi(p, last);
-                _live.Remove(last);
+                if (p != null && p.IsConnected) CuiHelper.DestroyUi(p, name);
+                _live.Remove(name);
             });
         }
 
-        // Каждый шаг — НОВОЕ имя элемента: старое явно уничтожаем, новое добавляем.
-        // Итог — плавный дрейф вверх без сирот и залипания
-        private void DrawStep(BasePlayer p, string baseName, float sx, float sy,
-                              string text, string color, int size, int step, int steps)
+        // Один статичный кадр на всё время жизни — минимум пакетов,
+        // исчезает с FadeOut
+        private void DrawOnce(BasePlayer p, string name, float sx, float sy,
+                              string text, string color, int size)
         {
             if (p == null || !p.IsConnected) return;
-            if (step > 0)
-            {
-                var prev = baseName + "_" + (step - 1);
-                CuiHelper.DestroyUi(p, prev);
-                _live.Remove(prev);
-            }
-            var name = baseName + "_" + step;
-            _live.Add(name);
-            var y = Mathf.Clamp01(sy + _cfg.Rise * step / (steps - 1));
-            // тающая альфа к последним кадрам — мягко уходит, не мельтешит
-            var alpha = step == steps - 1 ? 0.45f : step == steps - 2 ? 0.8f : 1f;
             var c = new CuiElementContainer();
             var el = new CuiElement
             {
                 Name = name,
                 Parent = "Hud",
-                FadeOut = 0.2f
+                FadeOut = 0.3f
             };
             el.Components.Add(new CuiTextComponent
             {
                 Text = text,
                 FontSize = size,
                 Align = TextAnchor.MiddleCenter,
-                Color = HexAlpha(color, alpha),
+                Color = HexAlpha(color, 1f),
                 FadeIn = 0.05f
             });
             var w = 0.05f;
             var h = 0.03f;
             el.Components.Add(new CuiRectTransformComponent
             {
-                AnchorMin = $"{sx - w:0.####} {y - h:0.####}",
-                AnchorMax = $"{sx + w:0.####} {y + h:0.####}"
+                AnchorMin = $"{sx - w:0.####} {sy - h:0.####}",
+                AnchorMax = $"{sx + w:0.####} {sy + h:0.####}"
             });
             c.Add(el);
             CuiHelper.AddUi(p, c);
