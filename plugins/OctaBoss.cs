@@ -27,7 +27,7 @@ namespace Oxide.Plugins
     //    переходы в flee перенаправляем на экземпляре босса (TameFlee);
     //  - PopulateObject при сохранении админки дублировал списки лута —
     //    заменено на замену экземпляра + авто-дедупликация при загрузке.
-    [Info("OctaBoss", "Octavian", "1.9.0")]
+    [Info("OctaBoss", "Octavian", "1.9.1")]
     [Description("Фреймворк животных-боссов: расписание, свита, маркер, лут, награды")]
     public class OctaBoss : RustPlugin
     {
@@ -37,6 +37,7 @@ namespace Oxide.Plugins
 
         // картинки зверей в админ-панели — мягкая зависимость
         [PluginReference] private Plugin ImageLibrary;
+        [PluginReference] private Plugin OctaUI;
 
         // фирменные тайлы боссов (Gemini-спрайт 4x2 → images/bosses/tiles),
         // хостинг — ассет-репозиторий; переопределяются UiImageUrl в конфиге
@@ -2812,6 +2813,16 @@ namespace Oxide.Plugins
         // ---------- отрисовка: корень + части ----------
 
         private static string UiN(string part) => AdminUIName + "_" + part;
+
+        // OctaUI — живой поиск (PluginReference залипает на reload, PITFALLS §11).
+        // Нет библиотеки → все делегаты ниже падают обратно в legacy-отрисовку.
+        private Plugin UiLib()
+        {
+            if (OctaUI != null && OctaUI.IsLoaded) return OctaUI;
+            foreach (var pl in Interface.Oxide.RootPluginManager.GetPlugins())
+                if (pl.Name == "OctaUI" && pl.IsLoaded) return pl;
+            return null;
+        }
         private static readonly string[] UiParts = { "HDR", "LST", "STS", "TAB", "CNT", "BOT", "TST", "CFM" };
 
         private void UiDrawAll(BasePlayer player)
@@ -2968,6 +2979,26 @@ namespace Oxide.Plugins
                 _bosses.TryGetValue(b.Key, out var bs);
                 var alive = bs != null && bs.Alive;
 
+                var lib = UiLib();
+                if (lib != null) // OctaUI.ListCard — карточка с полосой статуса и рамкой выбора
+                {
+                    string stTxt;
+                    if (!b.Enabled) stTxt = "OFF";
+                    else if (alive) stTxt = "<color=#59BF66>ЖИВ</color>";
+                    else if (bs != null) stTxt = $"{Math.Max(0, (int)(bs.NextSpawnAt - DateTime.UtcNow).TotalMinutes)} мин";
+                    else stTxt = "—";
+                    lib.Call("ListCard", c, lst, UiN($"LST_c{i}"), new JObject
+                    {
+                        ["rect"] = string.Format(CultureInfo.InvariantCulture, "0.02 {0} 0.98 {1}", yBot, yTop),
+                        ["cmd"] = $"octabossui boss {b.Key}",
+                        ["title"] = b.Enabled || sel ? ShortName(b) : $"<color=#94876E>{ShortName(b)}</color>",
+                        ["sub"] = stTxt,
+                        ["strip"] = !b.Enabled ? TMuted : alive ? CGreen : Gold,
+                        ["selected"] = sel
+                    });
+                    continue;
+                }
+
                 // карточка
                 var cardColor = sel ? GoldGlass : alive ? GlassHov : GlassBg;
                 c.Add(new CuiButton
@@ -3015,6 +3046,29 @@ namespace Oxide.Plugins
 
         private void UiDrawTabs(CuiElementContainer c, BasePlayer player, AdminUiState st)
         {
+            var lib = UiLib();
+            if (lib != null)
+            {
+                var tabNames = new[]
+                {
+                    "ОБЗОР", "БОЕЦ", "ФАЗЫ", "СВИТА",
+                    "СПАВН", "НАГРАДЫ", "СООБЩЕНИЯ", "ОПАСНАЯ"
+                };
+                var tabs = new JArray();
+                for (var i = 0; i < tabNames.Length; i++)
+                    tabs.Add(new JObject
+                    {
+                        ["label"] = tabNames[i],
+                        ["cmd"] = $"octabossui tab {i}",
+                        ["selected"] = (int)st.Tab == i
+                    });
+                lib.Call("TabStrip", c, AdminUIName, UiN("TAB"), new JObject
+                {
+                    ["rect"] = "0.008 0.072 0.205 0.295",
+                    ["vertical"] = true, ["tabs"] = tabs
+                });
+                return;
+            }
             var tab = c.Add(new CuiPanel
             {
                 Image = { Color = GlassLt },
@@ -3327,6 +3381,21 @@ namespace Oxide.Plugins
         {
             var v = f.Get(d);
             var warn = f.WarnIf != null && f.WarnIf(v);
+            var lib = UiLib();
+            if (lib != null) // OctaUI.Stepper — та же геометрия (PITFALLS: конверт не нужен, это draw-API)
+            {
+                lib.Call("Stepper", c, parent, parent + "_r" + f.Id, new JObject
+                {
+                    ["rect"] = string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} {3}", x, y, x + w, y + 0.088f),
+                    ["label"] = f.Label, ["value"] = v, ["min"] = f.Min, ["max"] = f.Max,
+                    ["fmt"] = f.Fmt, ["edit"] = edit,
+                    ["warn"] = warn, ["warnText"] = f.Warn, ["limit"] = 12,
+                    ["cmdMinus"] = $"octabossui adj {f.Id} {(-f.Step).ToString("0.#####", CultureInfo.InvariantCulture)}",
+                    ["cmdPlus"] = $"octabossui adj {f.Id} {f.Step.ToString("0.#####", CultureInfo.InvariantCulture)}",
+                    ["cmdSet"] = $"octabossui set {f.Id}"
+                });
+                return;
+            }
             var rowBg = warn ? "0.25 0.12 0.03 0.85" : GlassRow;
             c.Add(new CuiPanel
             {
@@ -3418,6 +3487,17 @@ namespace Oxide.Plugins
             UiBool f, BossSpec d, bool edit, float x, float y, float w)
         {
             var on = f.Get(d);
+            var lib = UiLib();
+            if (lib != null)
+            {
+                lib.Call("Toggle", c, parent, parent + "_r" + f.Id, new JObject
+                {
+                    ["rect"] = string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} {3}", x, y, x + w, y + 0.058f),
+                    ["label"] = f.Label, ["on"] = on, ["edit"] = edit,
+                    ["cmd"] = $"octabossui toggle {f.Id}"
+                });
+                return;
+            }
             c.Add(new CuiPanel
             {
                 Image = { Color = GlassRow },
@@ -3446,6 +3526,18 @@ namespace Oxide.Plugins
         private void DrawTextRow(CuiElementContainer c, string parent, BasePlayer player,
             UiTxt f, BossSpec d, bool edit, float x, float y, float w)
         {
+            var lib = UiLib();
+            if (lib != null)
+            {
+                lib.Call("TextRow", c, parent, parent + "_r" + f.Id, new JObject
+                {
+                    ["rect"] = string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} {3}", x, y, x + w, y + 0.082f),
+                    ["label"] = f.Label, ["value"] = f.Get(d) ?? "",
+                    ["edit"] = edit, ["limit"] = f.Chars,
+                    ["cmd"] = $"octabossui set {f.Id}"
+                });
+                return;
+            }
             c.Add(new CuiPanel
             {
                 Image = { Color = GlassRow },
@@ -3774,6 +3866,12 @@ namespace Oxide.Plugins
 
         private void UiToast(BasePlayer player, string text, string color)
         {
+            var lib = UiLib();
+            if (lib != null) // OctaUI.Toast: те же якоря + авто-затухание внутри
+            {
+                lib.Call("Toast", player, AdminUIName, text, color, 2.5f);
+                return;
+            }
             var st = UiStateOf(player);
             st.Toast = text; st.ToastColor = color; st.ToastSeq++;
             var seq = st.ToastSeq;
@@ -3807,6 +3905,17 @@ namespace Oxide.Plugins
                 case "applive": title = "Применить черновик к ЖИВОМУ\nбоссу прямо сейчас?\nСохранённый конфиг не меняется."; yes = "ПРИМЕНИТЬ"; col = Gold; break;
                 case "boss": title = "Несохранённые изменения\nбудут потеряны. Продолжить?"; yes = "ПЕРЕЙТИ"; col = Gold; break;
                 default: title = "Подтвердить действие?"; break;
+            }
+            var lib = UiLib();
+            if (lib != null) // OctaUI.Confirm — геометрия идентична
+            {
+                lib.Call("Confirm", c, AdminUIName, UiN("CFM"), new JObject
+                {
+                    ["title"] = title, ["yes"] = yes, ["no"] = "ОТМЕНА",
+                    ["color"] = col,
+                    ["cmdYes"] = "octabossui confirm", ["cmdNo"] = "octabossui cancel"
+                });
+                return;
             }
             c.Add(new CuiPanel
             {
