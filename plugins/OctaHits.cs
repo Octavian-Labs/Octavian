@@ -43,12 +43,7 @@ namespace Oxide.Plugins
             [JsonProperty("Размер шрифта")]                public int FontSize = 15;
             [JsonProperty("Размер при хедшоте")]           public int HeadshotSize = 20;
 
-            // градация по урону: до Med — светлый, до High — золотой, выше — оранжевый
-            [JsonProperty("Порог среднего урона")]         public float MedAt = 15f;
-            [JsonProperty("Порог высокого урона")]         public float HighAt = 40f;
-            [JsonProperty("Цвет слабого урона")]           public string ColLow = "#ffedd6";
-            [JsonProperty("Цвет среднего урона")]          public string ColMed = "#d69a4a";
-            [JsonProperty("Цвет высокого урона")]          public string ColHigh = "#ff5a2a";
+            [JsonProperty("Цвет обычного попадания")]      public string ColHit = "#ffffff";
             [JsonProperty("Цвет хедшота")]                 public string ColHead = "#ff2a2a";
             [JsonProperty("Цвет добивания (золото)")]      public string ColKill = "#E8B84B";
             [JsonProperty("Размер при добивании")]         public int KillSize = 22;
@@ -200,10 +195,7 @@ namespace Oxide.Plugins
             sx += UnityEngine.Random.Range(-_cfg.Jitter, _cfg.Jitter);
             sy += UnityEngine.Random.Range(-_cfg.Jitter, _cfg.Jitter);
 
-            var color = kill ? _cfg.ColKill
-                      : head ? _cfg.ColHead
-                      : dmg >= _cfg.HighAt ? _cfg.ColHigh
-                      : dmg >= _cfg.MedAt ? _cfg.ColMed : _cfg.ColLow;
+            var color = kill ? _cfg.ColKill : head ? _cfg.ColHead : _cfg.ColHit;
             var size = kill ? _cfg.KillSize : head ? _cfg.HeadshotSize : _cfg.FontSize;
             var num = dmg.ToString(_cfg.Decimals > 0 ? "F" + _cfg.Decimals : "F0");
             var text = kill ? "<b>" + num + "</b>" : num;
