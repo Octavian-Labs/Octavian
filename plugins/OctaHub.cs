@@ -1253,6 +1253,10 @@ namespace Oxide.Plugins
                 CUIClass.CreateText(ref ui, "oh_cnt_stats", UiCnt, "muted",
                     HomeStatsText(player), 11,
                     "0.02 0.745", "0.985 0.785", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+
+                // ── шок-витрина: баннер + тизеры (выключается пустым списком) ─
+                if (config?.homePromos != null && config.homePromos.Count > 0)
+                    DrawHomePromo(ref ui, ev);
             }
 
             // ── текст: первая страница — hero из конфига, 2+ — PageData ─────
@@ -1270,21 +1274,25 @@ namespace Oxide.Plugins
                 else body.Add(l);
             }
 
-            if (headTitle != null)
-                CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 22,
-                    "0.035 0.655", "0.965 0.725", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            if (headSub != null)
-                CUIClass.CreateText(ref ui, "oh_cnt_sub", UiCnt, "muted", StripSize(R(player, headSub)), 12,
-                    "0.035 0.615", "0.965 0.655", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
-            CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.605", "0.965 0.61", false, 0f, Mat);
+            bool promo = st.Page == 1 && config?.homePromos != null && config.homePromos.Count > 0;
+            if (!promo)
+            {
+                if (headTitle != null)
+                    CUIClass.CreateText(ref ui, "oh_cnt_title", UiCnt, "text", StripSize(R(player, headTitle)), 22,
+                        "0.035 0.655", "0.965 0.725", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                if (headSub != null)
+                    CUIClass.CreateText(ref ui, "oh_cnt_sub", UiCnt, "muted", StripSize(R(player, headSub)), 12,
+                        "0.035 0.615", "0.965 0.655", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreatePanel(ref ui, "oh_cnt_rule", UiCnt, "accent.dark", "0.035 0.605", "0.965 0.61", false, 0f, Mat);
+            }
 
             CUIClass.CreateText(ref ui, "oh_cnt_text", UiCnt, tab.mainFontColor, R(player, string.Join("\n", body)),
-                tab.mainFontSize, "0.035 0.10", "0.965 0.60", tab.mainAlign,
+                tab.mainFontSize, "0.035 0.06", promo ? "0.965 0.37" : "0.965 0.60", tab.mainAlign,
                 tab.mainFontStyle, tab.fontOutlineColor, $"{tab.fontOutlineThick} {tab.fontOutlineThick}");
 
             if (foot.Count > 0)
                 CUIClass.CreateText(ref ui, "oh_cnt_foot", UiCnt, "muted", R(player, string.Join("\n", foot)), 11,
-                    "0.035 0.02", "0.875 0.09", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+                    "0.035 0.01", promo ? "0.875 0.055" : "0.875 0.09", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
 
             DrawPageArrows(ref ui, 1, st.Page);
         }
@@ -1325,6 +1333,64 @@ namespace Oxide.Plugins
                                               : $"<b>{value}</b> <size=9>· {sub}</size>";
             CUIClass.CreateText(ref ui, n + "_v", n, spec, val, 16, "0.21 0.08", "0.97 0.58",
                 TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+        }
+
+        // Шок-витрина главной: «горящий» баннер (живое событие > слоган из конфига)
+        // + ряд тизеров-зазывалок в разделы меню.
+        private void DrawHomePromo(ref CuiElementContainer ui, (string Spec, string Value, string Sub) ev)
+        {
+            // ── баннер ─────────────────────────────────────────────────────
+            string bt, bs = "", bSpec = "accent", bCmd = "octahub_sec events";
+            if (ev.Spec == "red")
+            {
+                bt = $"{ev.Value} — ЖИВ ПРЯМО СЕЙЧАС"; bs = "успей первым — жми, откроются события"; bSpec = "red";
+            }
+            else if (ev.Spec == "accent")
+            {
+                bt = $"{ev.Value} — {ev.Sub}"; bs = "успей подготовиться — жми, откроются события";
+            }
+            else
+            {
+                var sl = config?.homeSlogans;
+                bt = (sl != null && sl.Count > 0)
+                    ? sl[UnityEngine.Random.Range(0, sl.Count)]
+                    : "Кликай по разделам слева — тут всё самое интересное";
+                bCmd = "octahub_sec info";
+            }
+            CUIClass.CreateButton(ref ui, "oh_pr_b", UiCnt, "row", "", 10, "0.035 0.625", "0.965 0.735",
+                bCmd, "", "white", 0f);
+            CUIClass.CreatePanel(ref ui, "oh_pr_bar", "oh_pr_b", bSpec, "0 0", "0.010 1", false, 0f, Mat);
+            CUIClass.CreateText(ref ui, "oh_pr_bt", "oh_pr_b", bSpec, $"<b>{bt}</b>", 15,
+                "0.03 0.52", "0.90 0.95", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+            if (!string.IsNullOrEmpty(bs))
+                CUIClass.CreateText(ref ui, "oh_pr_bs", "oh_pr_b", "muted", bs, 10,
+                    "0.03 0.10", "0.90 0.50", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+            CUIClass.CreateText(ref ui, "oh_pr_arr", "oh_pr_b", bSpec, "»", 22,
+                "0.92 0.1", "0.99 0.9", TextAnchor.MiddleCenter, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+
+            // ── тизеры ─────────────────────────────────────────────────────
+            var pr = config.homePromos.Where(p => p != null && !string.IsNullOrEmpty(p.title)).Take(4).ToList();
+            int n = pr.Count;
+            if (n == 0) return;
+            const float x0 = 0.035f, x1 = 0.965f, gap = 0.015f;
+            float w = (x1 - x0 - gap * (n - 1)) / n;
+            for (int i = 0; i < n; i++)
+            {
+                var p = pr[i];
+                float ax = x0 + i * (w + gap);
+                string sec = SectionIds.Contains(p.section) ? p.section : "info";
+                string t = $"oh_pr_{i}";
+                CUIClass.CreateButton(ref ui, t, UiCnt, "panel", "", 10,
+                    $"{ax:0.###} 0.385", $"{ax + w:0.###} 0.615",
+                    $"octahub_sec {sec}", "", "white", 0f);
+                CUIClass.CreatePanel(ref ui, t + "_bar", t, p.spec, "0 0", "0.015 1", false, 0f, Mat);
+                if (!string.IsNullOrEmpty(p.icon))
+                    CUIClass.CreateItemIcon(ref ui, t + "_ic", t, p.icon, 0UL, 0, "0.06 0.58", "0.20 0.92", 0.15f);
+                CUIClass.CreateText(ref ui, t + "_t", t, p.spec, $"<b>{p.title}</b>", 12,
+                    "0.25 0.62", "0.95 0.93", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                CUIClass.CreateText(ref ui, t + "_s", t, "muted", p.sub ?? "", 10,
+                    "0.06 0.12", "0.95 0.55", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
+            }
         }
 
         // Данные карточки события: цвет по состоянию (красный = активно),
@@ -3306,6 +3372,37 @@ namespace Oxide.Plugins
                 public string title { get; set; } = "";
                 [JsonProperty("Icon URL (пусто = без иконки)")]
                 public string icon { get; set; } = "";
+            }
+
+            // Витрина главной: баннер + тизеры-зазывалки в разделы.
+            // Пустой список homePromos = витрина выключена, hero-текст на всю высоту.
+            [JsonProperty("Home promos (тизеры главной, макс 4)")]
+            public List<PromoCfg> homePromos { get; set; } = new List<PromoCfg>
+            {
+                new PromoCfg { title = "ЗАБЕРИ НАБОР",   sub = "бесплатно — просто открой и забери",      section = "kits",    icon = "supply.signal",  spec = "green" },
+                new PromoCfg { title = "БОССЫ И СОБЫТИЯ", sub = "кто жив и когда спавн — не пропусти лут", section = "events",  icon = "rocket.launcher", spec = "red" },
+                new PromoCfg { title = "ТВОЙ ПРОФИЛЬ",  sub = "наигранное время, статистика, статус",   section = "profile", icon = "hoodie",         spec = "accent" },
+                new PromoCfg { title = "ИНФО И ПРАВИЛА", sub = "гайды, команды, правила сервера",        section = "info",    icon = "note",           spec = "blue" },
+            };
+
+            [JsonProperty("Home slogans (слоганы баннера, когда нет живых событий)")]
+            public List<string> homeSlogans { get; set; } = new List<string>
+            {
+                "Главная — только начало: кликай по разделам слева",
+                "Тут живут наборы, боссы, телепорты и твоя статистика",
+                "Скучно? Открой СОБЫТИЯ — там всегда что-то горит",
+            };
+
+            public class PromoCfg
+            {
+                [JsonProperty("Title")]   public string title { get; set; } = "";
+                [JsonProperty("Sub")]     public string sub { get; set; } = "";
+                [JsonProperty("Section (kits/events/profile/services/info/settings)")]
+                                          public string section { get; set; } = "info";
+                [JsonProperty("Icon (item shortname, пусто = без иконки)")]
+                                          public string icon { get; set; } = "";
+                [JsonProperty("Color (accent/red/green/blue)")]
+                                          public string spec { get; set; } = "accent";
             }
 
             [JsonProperty(PropertyName = "Services Rows")]
