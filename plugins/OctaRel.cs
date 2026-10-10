@@ -6,6 +6,7 @@ using Newtonsoft.Json.Linq;
 using Oxide.Core;
 using Oxide.Core.Libraries.Covalence;
 using Oxide.Core.Plugins;
+using Oxide.Game.Rust.Cui;
 using UnityEngine;
 
 namespace Oxide.Plugins
@@ -44,6 +45,16 @@ namespace Oxide.Plugins
             public int ProximityCooldownSec = 300;
             [JsonProperty("Уведомлять о входе/выходе")]
             public bool NotifyJoinLeave = true;
+            [JsonProperty("Пинг врага: цена в RP (ServerRewards, 0 = выкл)")]
+            public int PingCostRp = 50;
+            [JsonProperty("Пинг врага: цена в монетах (Economics, 0 = выкл)")]
+            public int PingCostCoins = 5000;
+            [JsonProperty("Пинг: длительность метки, секунд")]
+            public int PingSeconds = 10;
+            [JsonProperty("Пинг: обновлений метки в секунду")]
+            public int PingHz = 10;
+            [JsonProperty("Пинг: сообщить цели после завершения")]
+            public bool PingNotifyTarget = false;
         }
 
         protected override void LoadDefaultConfig() => Config.WriteObject(new ConfigData(), true);
@@ -62,6 +73,12 @@ namespace Oxide.Plugins
         private const long EnemyNoticeCooldownSec = 600;
         private Timer _radar;
 
+        // платный ESP-пинг: payer uid -> сессия
+        private class PingSession { public ulong Target; public float Until; }
+        private readonly Dictionary<ulong, PingSession> _pings = new Dictionary<ulong, PingSession>();
+        private Timer _pingTimer;
+        private const string PingUi = "orel_ping";
+
         private RelData Rel(ulong uid)
         {
             RelData d;
@@ -78,11 +95,19 @@ namespace Oxide.Plugins
                 _data = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, RelData>>($"{Name}/Relations")
                         ?? new Dictionary<ulong, RelData>();
             _radar = timer.Every(Math.Max(10, Cfg.ProximityCheckSec), RadarTick);
+            _pingTimer = timer.Every(1f / Mathf.Max(2, Cfg.PingHz), PingTick);
         }
 
         private void Unload()
         {
             _radar?.Destroy();
+            _pingTimer?.Destroy();
+            foreach (var kv in _pings)
+            {
+                var p = BasePlayer.FindByID(kv.Key);
+                if (p != null) CuiHelper.DestroyUi(p, PingUi + kv.Key);
+            }
+            _pings.Clear();
             SaveData();
         }
 
@@ -158,6 +183,170 @@ namespace Oxide.Plugins
                     p.ChatMessage($"<color=#cd412b>◆ РАДАР:</color> враг <color=#E8B84B>{Clean(enemy.displayName)}</color> в радиусе {(int)Cfg.ProximityRadius} м!");
                 }
             }
+        }
+
+        // ── Платный ESP-пинг врага ───────────────────────────────────────────
+
+        // инфо для витрин (OctaHub): цены, длительность, какие валюты реально доступны
+        [HookMethod("GetPingInfo")]
+        public JObject API_PingInfo()
+        {
+            return new JObject
+            {
+                ["rp"] = Cfg.PingCostRp, ["coins"] = Cfg.PingCostCoins, ["sec"] = Cfg.PingSeconds,
+                ["rpOn"] = Cfg.PingCostRp > 0 && HasPlugin("ServerRewards"),
+                ["coinsOn"] = Cfg.PingCostCoins > 0 && HasPlugin("Economics"),
+            };
+        }
+
+        // currency: "rp" | "coins" | "auto". Возвращает null при успехе или текст ошибки.
+        [HookMethod("ScanEnemy")]
+        public string API_ScanEnemy(BasePlayer payer, ulong target, string currency)
+        {
+            if (Cfg == null || payer == null) return "сервис недоступен";
+            RelData d;
+            if (!_data.TryGetValue(payer.userID, out d) || !d.Enemies.Contains(target))
+                return "Это не твой враг — сначала /enemy add ник";
+            var t = BasePlayer.FindByID(target);
+            if (t == null || t.IsSleeping()) return "Цель не в сети.";
+            if (t.IsDead()) return "Цель уже мертва.";
+            if (_pings.ContainsKey(payer.userID)) return "Пинг уже активен — дождись конца.";
+
+            string err = null;
+            if ((currency == "rp" || currency == "auto") && Cfg.PingCostRp > 0 &&
+                TakeRp(payer, Cfg.PingCostRp, out err))
+                return StartPing(payer, t, $"{Cfg.PingCostRp} RP");
+            if (currency == "rp") return err ?? "RP-оплата выключена в конфиге.";
+            if ((currency == "coins" || currency == "auto") && Cfg.PingCostCoins > 0 &&
+                TakeCoins(payer, Cfg.PingCostCoins, out err))
+                return StartPing(payer, t, $"{Cfg.PingCostCoins} монет");
+            if (currency == "coins") return err ?? "Оплата монетами выключена в конфиге.";
+            return err ?? "Нет способа оплаты — ServerRewards/Economics не найдены.";
+        }
+
+        private string StartPing(BasePlayer payer, BasePlayer target, string paid)
+        {
+            _pings[payer.userID] = new PingSession
+            {
+                Target = target.userID,
+                Until = Time.realtimeSinceStartup + Mathf.Max(3, Cfg.PingSeconds)
+            };
+            payer.ChatMessage($"<color=#83b8c7>◆ ПИНГ:</color> <color=#E8B84B>{Clean(target.displayName)}</color> " +
+                              $"помечен на {Cfg.PingSeconds} сек (−{paid}).");
+            return null;
+        }
+
+        private void PingTick()
+        {
+            if (_pings.Count == 0) return;
+            List<ulong> done = null;
+            foreach (var kv in _pings)
+            {
+                var payer = BasePlayer.FindByID(kv.Key);
+                var target = BasePlayer.FindByID(kv.Value.Target);
+                if (Time.realtimeSinceStartup >= kv.Value.Until ||
+                    payer == null || target == null || target.IsDead())
+                {
+                    if (payer != null) CuiHelper.DestroyUi(payer, PingUi + kv.Key);
+                    if (done == null) done = new List<ulong>();
+                    done.Add(kv.Key);
+                    continue;
+                }
+                DrawPing(payer, target);
+            }
+            if (done == null) return;
+            foreach (var id in done)
+            {
+                var s = _pings[id];
+                _pings.Remove(id);
+                // честное «вас сканировали» — только по завершении и только если включено
+                if (!Cfg.PingNotifyTarget) continue;
+                var t = BasePlayer.FindByID(s.Target);
+                var p = BasePlayer.FindByID(id);
+                if (t != null && p != null)
+                    t.ChatMessage($"<color=#cd412b>◆ Внимание:</color> <color=#E8B84B>{Clean(p.displayName)}</color> " +
+                                  $"отслеживал тебя {Cfg.PingSeconds} сек.");
+            }
+        }
+
+        // проекция позиции врага в экранные координаты (серверный ESP:
+        // угол по каждой оси относительно взгляда / половина FOV, аспект 16:9)
+        private void DrawPing(BasePlayer payer, BasePlayer target)
+        {
+            var eye = payer.eyes.position;
+            var dir = Quaternion.Inverse(payer.eyes.rotation) *
+                      (target.transform.position + Vector3.up * 1.9f - eye);
+            CuiHelper.DestroyUi(payer, PingUi + payer.userID);
+            if (dir.z < 0.5f) return; // цель за спиной — метку не рисуем
+
+            const float hf = 37f * Mathf.Deg2Rad;
+            const float vf = hf * 9f / 16f;
+            float nx = Mathf.Clamp(Mathf.Atan2(dir.x, dir.z) / hf, -0.95f, 0.95f);
+            float ny = Mathf.Clamp(Mathf.Atan2(dir.y, dir.z) / vf, -0.9f, 0.9f);
+            float ax = 0.5f + nx * 0.5f, ay = 0.5f + ny * 0.5f;
+            int dist = (int)(target.transform.position - eye).magnitude;
+
+            var c = new CuiElementContainer();
+            c.Add(new CuiElement
+            {
+                Name = PingUi + payer.userID,
+                Parent = "Overlay",
+                Components =
+                {
+                    new CuiTextComponent
+                    {
+                        Text = $"<color=#ff5a4d>◆ {Clean(target.displayName)}\n{dist} м</color>",
+                        FontSize = 12, Align = TextAnchor.MiddleCenter
+                    },
+                    new CuiRectTransformComponent
+                    {
+                        AnchorMin = FormattableString.Invariant($"{ax - 0.08f:0.###} {ay:0.###}"),
+                        AnchorMax = FormattableString.Invariant($"{ax + 0.08f:0.###} {ay + 0.05f:0.###}")
+                    }
+                }
+            });
+            CuiHelper.AddUi(payer, c);
+        }
+
+        // ── Оплата (живой поиск плагинов — PluginReference залипает) ──────────
+
+        private static bool HasPlugin(string name)
+        {
+            foreach (var pl in Interface.Oxide.RootPluginManager.GetPlugins())
+                if (pl.Name == name && pl.IsLoaded) return true;
+            return false;
+        }
+
+        private bool TakeRp(BasePlayer p, int amount, out string err)
+        {
+            err = null;
+            foreach (var pl in Interface.Oxide.RootPluginManager.GetPlugins())
+            {
+                if (pl.Name != "ServerRewards" || !pl.IsLoaded) continue;
+                var bal = pl.Call("CheckPoints", p.userID);
+                int have = bal != null ? Convert.ToInt32(bal) : 0;
+                if (have < amount) { err = $"не хватает RP: {have}/{amount}"; return false; }
+                pl.Call("TakePoints", p.userID, amount);
+                return true;
+            }
+            err = "ServerRewards не установлен";
+            return false;
+        }
+
+        private bool TakeCoins(BasePlayer p, int amount, out string err)
+        {
+            err = null;
+            foreach (var pl in Interface.Oxide.RootPluginManager.GetPlugins())
+            {
+                if (pl.Name != "Economics" || !pl.IsLoaded) continue;
+                var bal = pl.Call("Balance", p.UserIDString);
+                double have = bal != null ? Convert.ToDouble(bal) : 0;
+                if (have < amount) { err = $"не хватает монет: {(int)have}/{amount}"; return false; }
+                pl.Call("Withdraw", p.UserIDString, (double)amount);
+                return true;
+            }
+            err = "Economics не установлен";
+            return false;
         }
 
         // ── API ──────────────────────────────────────────────────────────────
@@ -283,6 +472,15 @@ namespace Oxide.Plugins
                 if (target == 0) { player.ChatMessage("Игрок не найден (он должен был заходить на сервер)."); return; }
                 var err = API_Add(player.userID, type, target);
                 player.ChatMessage(err ?? $"Добавлен: <color=#E8B84B>{NameOf(target)}</color>");
+                return;
+            }
+
+            if (type == "enemy" && args[0] == "ping" && args.Length > 1)
+            {
+                var pid = FindPlayer(args[1]);
+                if (pid == 0) { player.ChatMessage("Игрок не найден."); return; }
+                var err2 = API_ScanEnemy(player, pid, args.Length > 2 ? args[2] : "auto");
+                if (err2 != null) player.ChatMessage($"<color=#cd412b>◆ ПИНГ:</color> {err2}");
                 return;
             }
 

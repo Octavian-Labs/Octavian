@@ -178,6 +178,10 @@ namespace Oxide.Plugins
         private string _worldSig = "";
         private Timer _scanTimer, _playTimer, _saveTimer;
 
+        // параметры платного пинга врага — из OctaRel.GetPingInfo
+        private int _pingRp, _pingCoins, _pingSec;
+        private bool _pingRpOn, _pingCoinsOn;
+
         #endregion
 
         #region [Hooks]
@@ -686,8 +690,17 @@ namespace Oxide.Plugins
             var player = arg?.Player();
             if (player == null || OctaRel == null || !_ui.ContainsKey(player.userID)) return;
             var args = arg.Args != null ? arg.Args.Select(x => x.ToString()).ToArray() : new string[0];
-            if (args.Length < 3 || args[0] != "del") return;
             ulong target;
+            // octahub_rel ping rp|coins <uid> — платный ESP-пинг врага (логика и списание в OctaRel)
+            if (args.Length >= 4 && args[0] == "ping")
+            {
+                if (!ulong.TryParse(args[3], out target)) return;
+                var err = OctaRel.Call("ScanEnemy", player, target, args[1]) as string;
+                if (!string.IsNullOrEmpty(err))
+                    player.ChatMessage($"<color=#cd412b>◆ ПИНГ:</color> {err}");
+                return;
+            }
+            if (args.Length < 3 || args[0] != "del") return;
             if (!ulong.TryParse(args[2], out target)) return;
             OctaRel.Call("RemoveRelation", (ulong)player.userID, args[1], target);
             UiRefresh(player, UiCnt);
@@ -1749,6 +1762,21 @@ namespace Oxide.Plugins
             {
                 JObject rel = null;
                 try { rel = OctaRel.Call("GetRelations", (ulong)player.userID) as JObject; } catch { }
+                // параметры пинга — цены и доступность валют из OctaRel
+                _pingRp = _pingCoins = _pingSec = 0; _pingRpOn = _pingCoinsOn = false;
+                try
+                {
+                    var pi = OctaRel.Call("GetPingInfo") as JObject;
+                    if (pi != null)
+                    {
+                        _pingRp = pi["rp"]?.Value<int>() ?? 0;
+                        _pingCoins = pi["coins"]?.Value<int>() ?? 0;
+                        _pingSec = pi["sec"]?.Value<int>() ?? 10;
+                        _pingRpOn = pi["rpOn"]?.Value<bool>() == true;
+                        _pingCoinsOn = pi["coinsOn"]?.Value<bool>() == true;
+                    }
+                }
+                catch { }
                 var friends = rel?["friends"] as JArray ?? new JArray();
                 var enemies = rel?["enemies"] as JArray ?? new JArray();
 
@@ -1762,7 +1790,7 @@ namespace Oxide.Plugins
                 foreach (var e in enemies.Take(4)) DrawRelRow(ref ui, 4 + ei++, e, "enemy", false);
 
                 CUIClass.CreateText(ref ui, "oh_pr_rel_hint", "oh_pr_rel", "muted",
-                    "/friend add ник · /enemy add ник — онлайн врага предупредит радар", 9,
+                    "/enemy ping ник — платная метка врага на экране · радар предупредит сам", 9,
                     "0.04 0.01", "0.96 0.11", TextAnchor.MiddleLeft, "robotocondensed-regular.ttf", "0 0 0 0", "0 0");
             }
 
@@ -1791,11 +1819,27 @@ namespace Oxide.Plugins
             string aMin = $"{x1.ToString("0.##", CultureInfo.InvariantCulture)} {y1.ToString("0.###", CultureInfo.InvariantCulture)}";
             string aMax = $"{x2.ToString("0.##", CultureInfo.InvariantCulture)} {y2.ToString("0.###", CultureInfo.InvariantCulture)}";
             string n = $"oh_rel_{i}";
+            bool ping = !isFriend && online && (_pingRpOn || _pingCoinsOn);
 
             CUIClass.CreatePanel(ref ui, n, "oh_pr_rel", "bg", aMin, aMax, false, 0f, Mat);
             CUIClass.CreateText(ref ui, n + "_t", n, "text",
                 $"{(online ? "<color=#8dd06f>●</color>" : "<color=#666>●</color>")} {name}", 10,
-                "0.02 0", "0.82 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+                "0.02 0", ping ? "0.44 1" : "0.82 1", TextAnchor.MiddleLeft, "robotocondensed-bold.ttf", "0 0 0 0", "0 0");
+
+            // кнопки-ценники платного ESP-пинга — только живым онлайн-врагам
+            if (ping)
+            {
+                if (_pingRpOn)
+                    CUIClass.CreateButton(ref ui, n + "_pr", n, "accent.glass",
+                        $"<color=#83b8c7>{_pingRp}RP</color>", 9,
+                        "0.45 0.10", "0.58 0.90", $"octahub_rel ping rp {id}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+                if (_pingCoinsOn)
+                    CUIClass.CreateButton(ref ui, n + "_pe", n, "accent.glass",
+                        $"<color=#8dd06f>${(_pingCoins >= 1000 ? (_pingCoins / 1000f).ToString("0.#", CultureInfo.InvariantCulture) + "К" : _pingCoins.ToString())}</color>", 9,
+                        "0.59 0.10", "0.72 0.90", $"octahub_rel ping coins {id}", "", "white", 0f,
+                        TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
+            }
             CUIClass.CreateButton(ref ui, n + "_x", n, "0 0 0 0", "<color=#cd412b>✕</color>", 9,
                 "0.85 0", "0.98 1", $"octahub_rel del {type} {id}", "", "white", 0f,
                 TextAnchor.MiddleCenter, "robotocondensed-bold.ttf");
