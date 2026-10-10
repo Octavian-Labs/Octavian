@@ -449,3 +449,12 @@ JSON `{Identifier, Message, Type:3}`; читать ответ — `carbon/logs/C
     Пере-добавление того же имени НЕ «обновляет» элемент.
   - На Unload/disconnect чистить все известные имена, включая оверлеи.
 - Укусились дважды: OctaLoadouts (слои окон) и OctaHits (залипшие цифры).
+
+## 20. HitInfo.isHeadshot — вычисляемое свойство, не поле
+
+`info.isHeadshot` НЕ хранится в HitInfo: геттер идёт через
+`HitEntity.skeletonProperties.FindBone(HitBone).area == HitArea.Head`.
+Если у жертвы нет `skeletonProperties` или кость не замаплена — всегда false.
+Надёжно: `StringPool.Get(info.HitBone)` → имя кости, сравнивать с "head"
+(сама игра так сравнивает "spine"/"spine2" в BasePlayer.OnAttacked).
+Значения кости считать ДО NextTick — pooled HitInfo потом перезаписывается.
