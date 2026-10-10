@@ -160,10 +160,27 @@ namespace Oxide.Plugins
             [JsonProperty("Discord webhook (пусто = выкл)")] public string DiscordWebhook = "";
         }
 
+        // AI-сторож: Gen2-животные кроме волка/тигра не имеют State_AttackUnreachable —
+        // цель на камне руды или другом недосягаемом месте их просто парализует.
+        // Сторож кусает «над головой» и подталкивает застрявших к цели.
+        private class WatchdogSettings
+        {
+            [JsonProperty("Включено")] public bool Enabled = true;
+            [JsonProperty("Стоит с целью дольше (сек) — застрял")] public float StuckSeconds = 5f;
+            [JsonProperty("Сдвиг меньше (м) за тик — считается стоянием")] public float MinMove = 0.6f;
+            [JsonProperty("Укус «над головой»: горизонталь до цели (м)")] public float BiteHorizontal = 2.8f;
+            [JsonProperty("Укус «над головой»: макс. превышение цели (м)")] public float BiteMaxHeight = 5f;
+            [JsonProperty("Урон укуса")] public float BiteDamage = 25f;
+            [JsonProperty("Кулдаун укуса (сек)")] public float BiteCooldown = 2.5f;
+            [JsonProperty("Подталкивание к цели (м)")] public float NudgeMeters = 4f;
+            [JsonProperty("Макс. подталкиваний подряд (потом оставляем в покое)")] public int MaxNudges = 3;
+        }
+
         private class ConfigData
         {
             [JsonProperty("Виды боссов")] public List<BossSpec> Bosses = new List<BossSpec>();
             [JsonProperty("Уведомления")] public NotifySettings Notify = new NotifySettings();
+            [JsonProperty("AI Watchdog")] public WatchdogSettings Watchdog = new WatchdogSettings();
         }
 
         // компактная запись строки лута: LE(шортнейм, мин, макс, шанс[, цель чертежа][, пул])
@@ -566,6 +583,16 @@ namespace Oxide.Plugins
             public ulong NetId;
             public List<ulong> EscortIds = new List<ulong>();
         }
+
+        // AI-сторож: трекер простоя по каждой боевой сущности (netID)
+        private class Watch
+        {
+            public Vector3 LastPos;
+            public DateTime StillSince;
+            public int Nudges;
+            public DateTime LastBite;
+        }
+        private readonly Dictionary<ulong, Watch> _watch = new Dictionary<ulong, Watch>();
 
         private readonly List<PendingCorpse> _corpses = new List<PendingCorpse>();
         private readonly Dictionary<DroppedItemContainer, DateTime> _lockedBags = new Dictionary<DroppedItemContainer, DateTime>();
@@ -1038,6 +1065,10 @@ namespace Oxide.Plugins
             if (st.Entity != null) _bossNames.Remove(st.Entity);
             foreach (var e in st.Escorts)
                 if (e != null) _bossNames.Remove(e);
+            // чистка AI-сторожа
+            if (st.Entity?.net != null) _watch.Remove(st.Entity.net.ID.Value);
+            foreach (var e in st.Escorts)
+                if (e?.net != null) _watch.Remove(e.net.ID.Value);
             if (st.Spec.Escort.KillOnDespawn) KillEscorts(st); else st.Escorts.Clear();
             if (st.Alive) st.Entity.Kill();
             st.Entity = null;
@@ -1259,6 +1290,11 @@ namespace Oxide.Plugins
                 // декоративная: Provoke на ближайшего затирал бы её каждый тик
                 var target = ThreatPlayer(st) ?? NearestPlayer(st.Entity.transform.position, radius);
                 if (target == null) continue;
+
+                // сторож: недосягаемая цель (камень руды) — укус/подталкивание.
+                // во время замаха прыжка P3 не трогаем — босс стоит намеренно
+                if (st.LeapStrikeAt == default)
+                    WatchEntity(st, st.Entity, target);
 
                 if (st.Spec.HyperAggro)
                 {
@@ -1698,6 +1734,7 @@ namespace Oxide.Plugins
                         try { npc?.MarkHostileFor(30f); } catch { }
                         try { npc?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(tp); } catch { }
                         try { lv?.Provoke(tp); lv?.RememberAggressor(tp); } catch { }
+                        WatchEntity(st, e, tp);
                     }
                 }
                 else
@@ -1708,6 +1745,7 @@ namespace Oxide.Plugins
                         try { npc?.MarkHostileFor(30f); } catch { }
                         try { npc?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(np); } catch { }
                         try { lv?.Provoke(np); lv?.RememberAggressor(np); } catch { }
+                        WatchEntity(st, e, np);
                     }
                 }
             }
@@ -1777,6 +1815,86 @@ namespace Oxide.Plugins
                 try { st.Livestock.Provoke(p); } catch { }
                 try { st.Livestock.RememberAggressor(p); } catch { }
             }
+        }
+
+        // ── AI Watchdog: недосягаемые цели и застревание ───────────────────
+        // Ванильный Gen2 умеет выпрыгнуть на камень только у волка/тигра —
+        // остальные звери встают у подножия навсегда. Здесь два клапана:
+        // 1) цель «над головой» вплотную — прямой укус + пуш (как у волка);
+        // 2) стоит с целью вне досягаемости > StuckSeconds — шаг телепортом
+        //    в её сторону по земле (ограничено MaxNudges подряд).
+        private void WatchEntity(BossState st, BaseCombatEntity ent, BasePlayer target)
+        {
+            var wd = _cfg?.Watchdog;
+            if (wd == null || !wd.Enabled) return;
+            if (ent == null || ent.IsDestroyed || target == null || target.IsDead() || !target.IsConnected) return;
+            if (ent.net == null) return;
+
+            var now = DateTime.UtcNow;
+            var pos = ent.transform.position;
+            var tpos = target.transform.position;
+
+            Watch w;
+            var id = ent.net.ID.Value;
+            if (!_watch.TryGetValue(id, out w)) w = _watch[id] = new Watch { LastPos = pos };
+
+            var dx = tpos.x - pos.x; var dz = tpos.z - pos.z;
+            var dHoriz = Mathf.Sqrt(dx * dx + dz * dz);
+            var dy = tpos.y - pos.y;
+            var mx = pos.x - w.LastPos.x; var mz = pos.z - w.LastPos.z;
+            var moved = Mathf.Sqrt(mx * mx + mz * mz);
+            w.LastPos = pos;
+
+            if (moved > wd.MinMove) { w.StillSince = default(DateTime); w.Nudges = 0; }
+            else if (w.StillSince == default(DateTime)) w.StillSince = now;
+
+            // 1) игрок прямо над головой на камне — укус и пуш, как у волка:
+            //    сбивает с насеста, проблема рассасывается сама собой
+            if (dHoriz <= wd.BiteHorizontal && dy > 0.8f && dy <= wd.BiteMaxHeight
+                && (now - w.LastBite).TotalSeconds >= wd.BiteCooldown)
+            {
+                w.LastBite = now;
+                try { target.OnAttacked(wd.BiteDamage, DamageType.Bite, ent, false); } catch { }
+                try { target.DoPush(ent.transform.forward * 10f + Vector3.up * 3f); } catch { }
+                return;
+            }
+
+            // 2) стоит с живой целью вне досягаемости — подтолкнуть к ней
+            if (w.StillSince != default(DateTime) &&
+                (now - w.StillSince).TotalSeconds >= wd.StuckSeconds &&
+                dHoriz > wd.BiteHorizontal + 0.5f)
+            {
+                w.StillSince = now;
+                if (w.Nudges >= wd.MaxNudges) return;
+                if (NudgeToward(ent, target, wd.NudgeMeters)) w.Nudges++;
+                else w.Nudges = wd.MaxNudges; // тупик — не дёргаем больше
+            }
+        }
+
+        // шаг телепортом в сторону цели по земле (как у свиты возврат к боссу):
+        // рейкаст вниз из точки-кандидата, без провала > 6м
+        private static bool NudgeToward(BaseCombatEntity ent, BasePlayer target, float meters)
+        {
+            var pos = ent.transform.position;
+            var tp = target.transform.position;
+            var dir = new Vector3(tp.x - pos.x, 0f, tp.z - pos.z);
+            var dist = dir.magnitude;
+            if (dist < 0.5f) return false;
+            dir /= dist;
+            var cand = pos + dir * Mathf.Min(meters, dist - 1f);
+            RaycastHit hit;
+            if (Physics.Raycast(cand + Vector3.up * 8f, Vector3.down, out hit, 16f,
+                    LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed")))
+                cand.y = hit.point.y + 0.3f;
+            else
+            {
+                try { cand.y = TerrainMeta.HeightMap.GetHeight(cand) + 0.3f; }
+                catch { return false; }
+            }
+            if (Mathf.Abs(cand.y - pos.y) > 6f) return false; // отвес — не лезем
+            try { ent.transform.position = cand; } catch { return false; }
+            try { (ent as Rust.Ai.Gen2.BaseNPC2)?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(target); } catch { }
+            return true;
         }
 
         #region Gen2 FSM — вырезание боевого бегства
