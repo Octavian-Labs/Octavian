@@ -1308,6 +1308,25 @@ namespace Oxide.Plugins
             var now = DateTime.UtcNow;
             foreach (var st in _bosses.Values)
             {
+                // «зомби»: сущность ходит, а смерть не оформлена.
+                // A) hp ≈ 0 при lifestate=Alive — добиваем Die(): <1 HP —
+                //    это не жизнь, а застрявший остаток (урон заблокирован
+                //    защитой/зоной или ушёл в обход Hurt).
+                // B) lifestate=Dead, но Kill() внутри OnDied не добежал —
+                //    «мёртвая» туша ходит, урон не проходит — добиваем Kill().
+                var z = st.Entity;
+                if (z != null && !z.IsDestroyed && (z.Health() <= 1f || !z.IsAlive()))
+                {
+                    Puts($"OctaBoss[{st.Spec.Key}]: зомби-детект {z.PrefabName} " +
+                         $"hp={z.Health():0.###} lifestate={z.lifestate} dead={z.IsDead()}");
+                    try { z.Die(); } catch { }
+                    // оформляем смерть ПОКА transform жив — HandleBossDeath читает
+                    // позицию для мешка с лутом; Kill() не триггерит OnEntityDeath,
+                    // DeathHandled отсекает дубль при нормальной смерти через Die
+                    if (st.Entity == z && !z.IsDestroyed) HandleBossDeath(st, null);
+                    if (!z.IsDestroyed) { try { z.Kill(); } catch { } }
+                    continue;
+                }
                 if (!st.Alive) continue;
 
                 // «зализывание ран»: нападавшие сдохли/сбежали — если RegenDelaySeconds
@@ -1834,6 +1853,14 @@ namespace Oxide.Plugins
             foreach (var e in st.Escorts)
             {
                 if (e == null || e.IsDestroyed) continue;
+                // тот же зомби-детект, что у босса: hp < 1 или lifestate=Dead,
+                // а сущность не убрана — добиваем (см. AggroTick)
+                if (e.Health() <= 1f || !e.IsAlive())
+                {
+                    try { e.Die(); } catch { }
+                    if (!e.IsDestroyed) try { e.Kill(); } catch { }
+                    continue;
+                }
                 var role = st.EscortRoles.TryGetValue(e, out var r) ? r : 0;
                 var npc = e as Rust.Ai.Gen2.BaseNPC2;
                 var lv = e as Rust.Ai.Gen2.LivestockAnimal;
