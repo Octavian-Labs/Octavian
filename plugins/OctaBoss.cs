@@ -591,6 +591,7 @@ namespace Oxide.Plugins
             public DateTime StillSince;
             public int Nudges;
             public DateTime LastBite;
+            public DateTime LastForce;
         }
         private readonly Dictionary<ulong, Watch> _watch = new Dictionary<ulong, Watch>();
 
@@ -1869,6 +1870,25 @@ namespace Oxide.Plugins
                 if (NudgeToward(ent, target, wd.NudgeMeters)) w.Nudges++;
                 else w.Nudges = wd.MaxNudges; // тупик — не дёргаем больше
             }
+
+            // 3) скотина: входы в боевую ветку FSM (warn→chargeRun→headbutt)
+            // висят на protective/canReach-переходах — цель на бочке ветку не
+            // открывает, бык остаётся пастбищным. Пинаем в боевые состояния
+            // напрямую — headbutt рядом, chargeRun вдогонку.
+            var lfsm = ent.GetComponent<Rust.Ai.Gen2.LivestockAnimalFSM>();
+            if (lfsm != null && (now - w.LastForce).TotalSeconds >= 2f)
+            {
+                var cur = lfsm.CurrentState;
+                var inCombat = cur == lfsm.chargeRun || cur == lfsm.headbutt ||
+                               cur == lfsm.kick || cur == lfsm.kickBehind ||
+                               cur == lfsm.warn || cur == lfsm.warnApproach;
+                if (!inCombat && dHoriz <= 30f && dy < 2f)
+                {
+                    try { lfsm.SetState(dHoriz <= 2.2f ? (Rust.Ai.Gen2.FSMStateBase)lfsm.headbutt
+                                                       : lfsm.chargeRun); } catch { }
+                    w.LastForce = now;
+                }
+            }
         }
 
         // шаг телепортом в сторону цели по земле (как у свиты возврат к боссу):
@@ -2152,24 +2172,29 @@ namespace Oxide.Plugins
         {
             if (entity == null || info == null) return;
 
-            // урон ПО боссу: броня + иммунитеты + трекинг урона + гипер-агрессия
-            var st = StateOf(entity);
+            // урон ПО боссу/свите: броня + иммунитеты + трекинг урона + гипер-агрессия.
+            // EscortOf важен: урон по свите раньше молча игнорировался — ни
+            // угрозы, ни цели; бьёшь быка-охранника, а он «как ни в чём не бывало»
+            var st = StateOf(entity) ?? EscortOf(entity);
             if (st != null && st.Alive)
             {
                 var attacker = info.InitiatorPlayer;
                 if (attacker != null && !attacker.IsNpc)
                 {
-                    // ответка на ЛЮБОЙ урон от игрока, в т.ч. снайп с 200м:
-                    // без этого босс — бесплатный мешок HP, стоящий за радиусом агро
-                    try { st.Ai?.MarkHostileFor(60f); } catch { }
-                    // выстрел = стрелок становится целью по-настоящему:
-                    // без TrySetTarget Senses.Target остаётся пустым и босс
-                    // валяется в ветке еды/роума вместо боя
-                    try { st.Ai?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(attacker); } catch { }
-                    if (st.Spec.ForceProvoke && st.Livestock != null)
+                    // целим ту сущность, КОТОРУЮ ударили: по свите бил — свита и дерётся
+                    try { (entity as Rust.Ai.Gen2.BaseNPC2)?.MarkHostileFor(60f); } catch { }
+                    try { entity.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(attacker); } catch { }
+                    var lvHit = entity as Rust.Ai.Gen2.LivestockAnimal;
+                    if (lvHit != null)
                     {
-                        try { st.Livestock.Provoke(attacker); } catch { }
-                        try { st.Livestock.RememberAggressor(attacker); } catch { }
+                        try { lvHit.Provoke(attacker); } catch { }
+                        try { lvHit.RememberAggressor(attacker); } catch { }
+                    }
+                    // а босс получает тот же пинок — бой общий
+                    if (entity != st.Entity)
+                    {
+                        try { st.Ai?.MarkHostileFor(60f); } catch { }
+                        try { st.Ai?.GetComponent<Rust.Ai.Gen2.SenseComponent>()?.TrySetTarget(attacker); } catch { }
                     }
                 }
                 ApplyBossArmor(st.Spec, info);
