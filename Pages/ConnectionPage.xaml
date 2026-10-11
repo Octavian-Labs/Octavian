@@ -1,0 +1,119 @@
+<Page x:Class="OctavianRSM.Pages.ConnectionPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      xmlns:octa="clr-namespace:OctavianRSM.Controls"
+      ScrollViewer.CanContentScroll="False"
+      Title="Подключение">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Style="{StaticResource OctaPageTitle}" Text="Подключение"/>
+            <TextBlock Style="{StaticResource OctaPageSub}" Text="режим, доступ к RCON и локальные пути — octavian-rsm.json"/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <UniformGrid Columns="2">
+                <!-- ══ РЕЖИМ + RCON ══ -->
+                <StackPanel Margin="0,0,8,0">
+                    <Border Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                        <StackPanel>
+                            <TextBlock Text="РЕЖИМ РАБОТЫ" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,10"/>
+                            <TextBlock Text="Режим" Style="{StaticResource OctaFieldLabel}"/>
+                            <ComboBox x:Name="CmbMode" SelectionChanged="Mode_Changed">
+                                <ComboBoxItem Content="Local"/>
+                                <ComboBoxItem Content="Remote"/>
+                            </ComboBox>
+                            <TextBlock x:Name="TxtModeHint" TextWrapping="Wrap" Margin="0,10,0,0"
+                                       Foreground="{StaticResource B.TextDim}" FontSize="11"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource OctaPanel}" Padding="16,14">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False" Margin="0,0,0,10">
+                                <TextBlock Text="RCON" Style="{StaticResource OctaStatLabel}"/>
+                                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                                    <Ellipse x:Name="DotRcon" Width="8" Height="8" Fill="{StaticResource B.Danger}"
+                                             VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                    <TextBlock x:Name="TxtRconState" Text="offline" FontSize="11"
+                                               Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <UniformGrid Columns="2" Margin="0,0,0,10">
+                                <StackPanel Margin="0,0,6,0">
+                                    <TextBlock Text="Host / IP" Style="{StaticResource OctaFieldLabel}"/>
+                                    <TextBox x:Name="TxtHost"/>
+                                </StackPanel>
+                                <StackPanel Margin="6,0,0,0">
+                                    <TextBlock Text="Порт" Style="{StaticResource OctaFieldLabel}"/>
+                                    <TextBox x:Name="TxtPort"/>
+                                </StackPanel>
+                            </UniformGrid>
+                            <TextBlock Text="Пароль" Style="{StaticResource OctaFieldLabel}"/>
+                            <PasswordBox x:Name="TxtPassword" Margin="0,0,0,10"/>
+                            <CheckBox x:Name="ChkWebSocket" Content="WebSocket RCON (rcon.web 1)"
+                                      Foreground="{StaticResource B.Text}" Margin="0,0,0,4"
+                                      ToolTip="Параметр запуска локального сервера"/>
+                            <TextBlock Text="для локального сервера — параметр запуска"
+                                       Foreground="{StaticResource B.TextDim}" FontSize="10" Margin="24,0,0,8"/>
+                            <UniformGrid Columns="3">
+                                <ui:Button Content="ПОДКЛЮЧИТЬ" Appearance="Primary" Margin="0,0,4,0"
+                                           Click="Connect_Click"/>
+                                <ui:Button Content="ОТКЛЮЧИТЬ" Margin="4,0" Click="Disconnect_Click"/>
+                                <ui:Button Content="ПРОВЕРИТЬ" Margin="4,0,0,0" Click="Test_Click"
+                                           ToolTip="serverinfo — проверка живого ответа"/>
+                            </UniformGrid>
+                            <octa:CommandResultBar x:Name="ResultBar" Margin="0,10,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- ══ ЛОКАЛЬНЫЙ СЕРВЕР ══ -->
+                <StackPanel Margin="8,0,0,0">
+                    <Border x:Name="PnlLocal" Style="{StaticResource OctaPanel}" Margin="0,0,0,12" Padding="16,14">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False" Margin="0,0,0,10">
+                                <TextBlock Text="ЛОКАЛЬНЫЙ СЕРВЕР" Style="{StaticResource OctaStatLabel}"/>
+                                <TextBlock x:Name="TxtExeState" DockPanel.Dock="Right" FontSize="11"
+                                           Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <DockPanel LastChildFill="False" Margin="0,0,0,4">
+                                <TextBlock Text="Папка сервера" Style="{StaticResource OctaFieldLabel}" VerticalAlignment="Center"/>
+                                <ui:Button Content="ОБЗОР…" Padding="10,3" FontSize="10" DockPanel.Dock="Right"
+                                           Click="BrowseServer_Click"/>
+                            </DockPanel>
+                            <TextBox x:Name="TxtServerDir" Margin="0,0,0,10"/>
+                            <TextBlock Text="SteamCMD (exe)" Style="{StaticResource OctaFieldLabel}"/>
+                            <TextBox x:Name="TxtSteamCmd" Margin="0,0,0,10"/>
+                            <TextBlock x:Name="TxtExePath" TextWrapping="Wrap" FontFamily="Consolas" FontSize="10"
+                                       Foreground="{StaticResource B.TextDim}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource OctaPanel}" Padding="16,14">
+                        <StackPanel>
+                            <TextBlock Text="СЕТЕВЫЕ ПОРТЫ" Style="{StaticResource OctaStatLabel}" Margin="0,0,0,8"/>
+                            <TextBlock Text="game/query/app порты и сеть сервера настраиваются в разделе «Сервер → Параметры» — там же единый канонический редактор server.cfg."
+                                       TextWrapping="Wrap" Foreground="{StaticResource B.TextDim}" FontSize="11"/>
+                            <ui:Button Content="ОТКРЫТЬ ПАРАМЕТРЫ" Margin="0,10,0,0" Padding="14,4"
+                                       HorizontalAlignment="Left" Click="OpenParams_Click"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </UniformGrid>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Style="{StaticResource OctaPanel}" Margin="0,12,0,0" Padding="14,10">
+            <DockPanel LastChildFill="False">
+                <TextBlock x:Name="TxtSaved" Text="" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+                <ui:Button DockPanel.Dock="Right" Content="СОХРАНИТЬ" Appearance="Primary" Padding="20,7" Click="Save_Click"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Page>

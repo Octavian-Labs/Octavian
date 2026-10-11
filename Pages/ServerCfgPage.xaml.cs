@@ -20,9 +20,13 @@ using OctavianRSM.Services;
 namespace OctavianRSM.Pages;
 
 // Структурный редактор server.cfg (по образцу RSM Web Server Config):
-// форма поверх convar'ов, launch-параметры блокируются при работающем сервере
-public partial class ServerCfgPage : Page
+// форма поверх convar'ов, launch-параметры блокируются при работающем сервере.
+// IDirtyPage — черновик формы и файлового редактора блокирует навигацию.
+public partial class ServerCfgPage : Page, IDirtyPage
 {
+    private bool _loading;
+    private bool _formDirty;
+    private bool _fileDirty;
     // ключи, которые формой не покрываются и не должны теряться при сохранении
     private static readonly HashSet<string> Known = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -30,13 +34,24 @@ public partial class ServerCfgPage : Page
         "server.headerimage", "server.logoimage", "server.favoritesendpoint",
         "server.maxplayers", "server.saveinterval", "server.idlekick",
         "server.pve", "censorplayerlist.enabled", "radiation.enabled",
-        "server.levelurl", "server.seed", "server.worldsize",
-        "server.ip", "server.port", "server.queryport", "rcon.port", "rcon.password"
+        "server.levelurl", "server.level", "server.gamemode", "server.seed", "server.worldsize",
+        "server.ip", "server.port", "server.queryport", "app.port", "server.identity",
+        // rcon.* остаются в Known: старые записи не показываем в кастом-поле —
+        // их владелец «Подключение» (параметры запуска), из cfg не дублируем
+        "rcon.port", "rcon.password"
     };
 
     public ServerCfgPage()
     {
         InitializeComponent();
+        Loaded += (_, _) => AppNav.SelectTab(this);
+        // черновик: любые правки формы/редактора блокируют уход со страницы до сохранения
+        App.Ctx.RegisterDraft(this);
+        Unloaded += (_, _) => App.Ctx.UnregisterDraft(this);
+        AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler(OnFormChanged));
+        AddHandler(System.Windows.Controls.Primitives.Selector.SelectionChangedEvent, new SelectionChangedEventHandler(OnFormChanged));
+        AddHandler(System.Windows.Controls.Primitives.ToggleButton.CheckedEvent, new RoutedEventHandler(OnFormChanged));
+        AddHandler(System.Windows.Controls.Primitives.ToggleButton.UncheckedEvent, new RoutedEventHandler(OnFormChanged));
         Load();
         SetupFileEditor();
         LoadFileLists();
@@ -44,8 +59,23 @@ public partial class ServerCfgPage : Page
             TxtFilePos.Text = $"Строка {FileEditor.TextArea.Caret.Line}, столбец {FileEditor.TextArea.Caret.Column}";
     }
 
+    private void OnFormChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_loading) _formDirty = true;
+    }
+
+    // ── IDirtyPage ───────────────────────────────────────────
+    public bool IsDirty => _formDirty || _fileDirty;
+    public string DraftTitle => "Параметры сервера";
+    public void SaveDraft()
+    {
+        if (_formDirty) Save();
+        if (_fileDirty && _curFile != null) FileSave_Click(this, new RoutedEventArgs());
+    }
+
     private void Load()
     {
+        _loading = true;
         var cfg = App.ServerCfg;
         var s = App.Settings;
         cfg.Load();
@@ -67,11 +97,13 @@ public partial class ServerCfgPage : Page
         In_LevelUrl.Text = Val("server.levelurl", s.LevelUrl);
         In_Seed.Text = Val("server.seed", s.WorldSeed.ToString());
         In_WorldSize.Text = Val("server.worldsize", s.WorldSize.ToString());
+        SelectCombo(In_Level, Val("server.level", s.Level));
+        SelectCombo(In_Gamemode, Val("server.gamemode", s.Gamemode));
         In_Ip.Text = Val("server.ip", s.ServerIp);
         In_Port.Text = Val("server.port", s.GamePort.ToString());
         In_QueryPort.Text = Val("server.queryport", s.QueryPort.ToString());
-        In_RconPort.Text = Val("rcon.port", s.RconPort.ToString());
-        In_RconPass.Text = Val("rcon.password", s.RconPassword);
+        In_AppPort.Text = Val("app.port", s.AppPort.ToString());
+        In_Identity.Text = Val("server.identity", s.Identity);
 
         In_MapsFolder.Text = s.MapsFolder;
         LoadMapsList();
@@ -83,6 +115,8 @@ public partial class ServerCfgPage : Page
 
         ApplyLock();
         TxtStatus.Text = "загружено";
+        _loading = false;
+        _formDirty = false;
     }
 
     private void ApplyLock()
@@ -101,7 +135,7 @@ public partial class ServerCfgPage : Page
     {
         "server.maxplayers", "server.saveinterval", "server.idlekick",
         "server.seed", "server.worldsize", "server.ip", "server.port",
-        "server.queryport", "rcon.port", "rcon.password"
+        "server.queryport", "app.port", "server.identity"
     };
 
     private void Set(string key, string value)
@@ -122,16 +156,19 @@ public partial class ServerCfgPage : Page
         cfg["censorplayerlist.enabled"] = ToFlag(Sw_Censor.IsChecked);
         cfg["radiation.enabled"] = ToFlag(Sw_Radiation.IsChecked);
 
-        if (!App.Server.IsRunning)
+        bool launchLock = App.Server.IsRunning;
+        if (!launchLock)
         {
             cfg["server.levelurl"] = In_LevelUrl.Text.Trim();
+            cfg["server.level"] = (In_Level.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
+            cfg["server.gamemode"] = (In_Gamemode.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
             Set("server.seed", In_Seed.Text.Trim());
             Set("server.worldsize", In_WorldSize.Text.Trim());
             Set("server.ip", In_Ip.Text.Trim());
             Set("server.port", In_Port.Text.Trim());
             Set("server.queryport", In_QueryPort.Text.Trim());
-            Set("rcon.port", In_RconPort.Text.Trim());
-            Set("rcon.password", In_RconPass.Text.Trim());
+            Set("app.port", In_AppPort.Text.Trim());
+            Set("server.identity", In_Identity.Text.Trim());
         }
 
         // кастомные convars — общий парсер (ключи могут содержать пробелы)
@@ -144,8 +181,53 @@ public partial class ServerCfgPage : Page
         }
 
         cfg.Save();
+        _formDirty = false;
+        MirrorToSettings(launchLock);
         // лицо сервера (hostname/description/домен) — на дашборде, там же синхрон настроек
-        TxtStatus.Text = "✓ сохранено";
+        TxtStatus.Text = launchLock
+            ? "✓ сохранено (карта/сеть заблокированы — сервер запущен)"
+            : "✓ сохранено + синхронизировано с launch-аргументами";
+    }
+
+    /// <summary>
+    /// server.cfg — канон; но те же поля нужны и в octavian-rsm.json:
+    /// BuildServerArgs собирает из них строку запуска (cfg исполняется последним
+    /// и перебивает args — поэтому зеркало держит оба слоя согласованными).
+    /// </summary>
+    private void MirrorToSettings(bool launchLock)
+    {
+        var s = App.Settings;
+        if (int.TryParse(In_MaxPlayers.Text, out var mp)) s.MaxPlayers = mp;
+        if (int.TryParse(In_SaveInterval.Text, out var si)) s.SaveInterval = si;
+        s.ServerPve = Sw_Pve.IsChecked == true;
+        if (launchLock) { s.Save(App.SettingsPath); return; }
+        s.LevelUrl = In_LevelUrl.Text.Trim();
+        s.Level = (In_Level.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? s.Level;
+        s.Gamemode = (In_Gamemode.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? s.Gamemode;
+        if (uint.TryParse(In_Seed.Text, out var seed)) s.WorldSeed = seed;
+        if (int.TryParse(In_WorldSize.Text, out var ws)) s.WorldSize = ws;
+        s.ServerIp = In_Ip.Text.Trim();
+        if (int.TryParse(In_Port.Text, out var gp)) s.GamePort = gp;
+        if (int.TryParse(In_QueryPort.Text, out var qp)) s.QueryPort = qp;
+        if (int.TryParse(In_AppPort.Text, out var ap)) s.AppPort = ap;
+        if (!string.IsNullOrWhiteSpace(In_Identity.Text)) s.Identity = In_Identity.Text.Trim();
+        s.Save(App.SettingsPath);
+        App.Ctx.Refresh();
+    }
+
+    /// <summary>Выбрать пункт комбобокса по тексту; неизвестное значение — добавить, не затирать.</summary>
+    private static void SelectCombo(ComboBox box, string value)
+    {
+        foreach (ComboBoxItem it in box.Items)
+            if (it.Content?.ToString() == value) { box.SelectedItem = it; return; }
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var extra = new ComboBoxItem { Content = value };
+            box.Items.Add(extra);
+            box.SelectedItem = extra;
+            return;
+        }
+        if (box.SelectedIndex < 0) box.SelectedIndex = 0;
     }
 
     // ── Библиотека кастомных карт ────────────────────────────────────────
@@ -309,6 +391,7 @@ public partial class ServerCfgPage : Page
             FileEditor.ScrollToHome();
             TxtFileName.Text = _curFile.Name;
             TxtFileDirty.Text = "";
+            _fileDirty = false;
             TxtFileInfo.Text = $"{new FileInfo(_curFile.Path).Length / 1024.0:0.#} KB";
         }
         catch (Exception ex) { FileEditor.Text = "// " + ex.Message; }
@@ -318,6 +401,7 @@ public partial class ServerCfgPage : Page
     private void FileEditor_TextChanged(object? sender, EventArgs e)
     {
         if (_fileLoading || _curFile == null) return;
+        _fileDirty = true;
         TxtFileDirty.Text = "● изменён";
         TxtFileDirty.Foreground = (Brush)FindResource("B.Warn");
     }
@@ -337,6 +421,7 @@ public partial class ServerCfgPage : Page
         try
         {
             File.WriteAllText(_curFile.Path, FileEditor.Text);
+            _fileDirty = false;
             TxtFileDirty.Text = "✓ сохранено " + DateTime.Now.ToString("HH:mm:ss");
             TxtFileDirty.Foreground = (Brush)FindResource("B.Success");
             // server.cfg сервер перечитывает по server.writecfg

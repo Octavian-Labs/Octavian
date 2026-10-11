@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         xmlns:local="clr-namespace:OctavianRSM"
+        xmlns:octa="clr-namespace:OctavianRSM.Controls"
         Title="OCTAVIAN RSM — ПЕРВАЯ НАСТРОЙКА" Height="640" Width="920"
         MinWidth="820" MinHeight="560"
         WindowStartupLocation="CenterScreen"
@@ -350,9 +351,7 @@
                     </Border>
                 </StackPanel>
                 <Border Style="{StaticResource OctaPanel}" Padding="10">
-                    <ScrollViewer x:Name="LogScroll" VerticalScrollBarVisibility="Auto">
-                        <TextBlock x:Name="TxtInstallLog" Style="{StaticResource OctaMono}" FontSize="11"/>
-                    </ScrollViewer>
+                    <octa:LogViewer x:Name="InstallLog" UsePanel="False"/>
                 </Border>
             </DockPanel>
         </Grid>

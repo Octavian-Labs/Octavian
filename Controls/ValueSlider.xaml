@@ -1,0 +1,19 @@
+<UserControl x:Class="OctavianRSM.Controls.ValueSlider"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             mc:Ignorable="d" d:DesignWidth="300">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="76"/>
+        </Grid.ColumnDefinitions>
+        <Slider x:Name="PartSlider" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"
+                ValueChanged="Slider_ValueChanged"/>
+        <ui:NumberBox x:Name="PartBox" Grid.Column="1" TextAlignment="Center"
+                      SpinButtonPlacementMode="Hidden"
+                      ValueChanged="Box_ValueChanged"/>
+    </Grid>
+</UserControl>

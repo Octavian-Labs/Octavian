@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using OctavianRSM.Models;
+using OctavianRSM.Services;
 using WpfNumberBox = Wpf.Ui.Controls.NumberBox;
 using WpfTextBox = Wpf.Ui.Controls.TextBox;
 
@@ -26,6 +27,7 @@ public partial class CommandsPage : Page
     public CommandsPage()
     {
         InitializeComponent();
+        Loaded += (_, _) => AppNav.SelectTab(this);
         UpdateRconState();
         App.Server.OnStateChanged += Server_OnStateChanged;
         // отписка при уходе со страницы — экземпляр после навигации не нужен в подписчиках
@@ -39,7 +41,6 @@ public partial class CommandsPage : Page
         App.Settings.WorldModeSnapshot ??= new Dictionary<string, string>();
         LoadAnnouncements();
         RefreshChat();
-        _ = RefreshPlayers();
         _ = RefreshModes();
         BuildDeepSea();
     }
@@ -260,46 +261,19 @@ public partial class CommandsPage : Page
             ? $"RCON подключён • ws://{App.Settings.RconHost}:{App.Settings.RconPort}"
             : "RCON не подключён — команды не выполнятся";
 
-    private PlayerInfo? SelectedTarget => CbTarget.SelectedItem as PlayerInfo;
-
-    private async System.Threading.Tasks.Task RefreshPlayers()
-    {
-        var selectedId = SelectedTarget?.SteamID;
-        var destinationId = (CbTeleportDest.SelectedItem as PlayerInfo)?.SteamID;
-        var raw = await App.Rcon.SendAsync("playerlist");
-        try
-        {
-            var players = JsonSerializer.Deserialize<PlayerInfo[]>(raw) ?? Array.Empty<PlayerInfo>();
-            CbTarget.ItemsSource = players;
-            CbTeleportDest.ItemsSource = players;
-            CbTarget.SelectedItem = players.FirstOrDefault(p => p.SteamID == selectedId) ?? players.FirstOrDefault();
-            CbTeleportDest.SelectedItem = players.FirstOrDefault(p => p.SteamID == destinationId) ?? players.FirstOrDefault();
-            TxtTargetHint.Text = players.Length == 0
-                ? "онлайн-игроков нет"
-                : $"онлайн: {players.Length}; точка определяется прицелом";
-        }
-        catch
-        {
-            CbTarget.ItemsSource = Array.Empty<PlayerInfo>();
-            CbTeleportDest.ItemsSource = Array.Empty<PlayerInfo>();
-            TxtTargetHint.Text = App.Rcon.IsConnected ? "playerlist: неожиданный ответ" : "RCON не подключён";
-        }
-    }
-
-    private async void RefreshPlayers_Click(object sender, RoutedEventArgs e) => await RefreshPlayers();
-
-    private void Target_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (SelectedTarget is { } target)
-            TxtTargetHint.Text = $"{target.DisplayName} • {target.SteamID} • точка по прицелу";
-    }
-
+    // Цель адресных действий живёт в ServerContext (выбирается на странице «Игроки»)
     private async void SpawnAtPlayer_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement button) return;
-        if (SelectedTarget is not { } target)
+        var target = App.Ctx.SelectedPlayer;
+        if (target == null)
         {
-            TxtResult.Text = "выберите онлайн-игрока в поле ЦЕЛЬ";
+            TxtResult.Text = "выберите игрока на странице «Игра → Игроки»";
+            return;
+        }
+        if (!target.Online)
+        {
+            TxtResult.Text = $"{target.DisplayName} оффлайн — точку прицела определить нельзя";
             return;
         }
 
@@ -312,7 +286,7 @@ public partial class CommandsPage : Page
 
         if (MessageBox.Show($"Создать «{entity}» в точке прицела игрока {target.DisplayName}?",
                 "OctavianRSM", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await Run($"octa.spawnat {entity} {target.SteamID}");
+        await Run($"octa.spawnat {entity} {target.SteamId}");
     }
 
     // Значение параметра из контрола, который кнопка несёт в DataContext
@@ -374,101 +348,6 @@ public partial class CommandsPage : Page
         if (System.Windows.MessageBox.Show($"Выполнить «{cmd}»?", "OctavianRSM",
                 System.Windows.MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         _ = Run(cmd);
-    }
-
-    private bool TryGetTarget(out PlayerInfo target)
-    {
-        target = SelectedTarget!;
-        if (target != null) return true;
-        TxtResult.Text = "выберите онлайн-игрока в поле ЦЕЛЬ";
-        return false;
-    }
-
-    private async void TargetCommand_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetTarget(out var target) || sender is not FrameworkElement { Tag: string template }) return;
-        await Run(string.Format(CultureInfo.InvariantCulture, template, target.SteamID));
-    }
-
-    private async void TargetCommandConfirm_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetTarget(out var target) || sender is not FrameworkElement { Tag: string template }) return;
-        var command = string.Format(CultureInfo.InvariantCulture, template, target.SteamID);
-        if (MessageBox.Show($"Выполнить для {target.DisplayName}?\n{command}", "OctavianRSM",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await Run(command);
-    }
-
-    private async void TeleportTargetPos_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetTarget(out var target)) return;
-        var parts = In_TargetPos.Text.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 3 || !parts.All(p => double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out _)))
-        {
-            TxtResult.Text = "координаты должны иметь формат: x y z";
-            return;
-        }
-        var command = $"octa.tppos {target.SteamID} {string.Join(" ", parts)}";
-        if (MessageBox.Show($"Телепортировать {target.DisplayName} в {string.Join(" ", parts)}?", "OctavianRSM",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await Run(command);
-    }
-
-    private async void TeleportTarget_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetTarget(out var target) || CbTeleportDest.SelectedItem is not PlayerInfo destination) return;
-        if (target.SteamID == destination.SteamID) { TxtResult.Text = "цель и пункт назначения совпадают"; return; }
-        if (MessageBox.Show($"Телепортировать {target.DisplayName} к {destination.DisplayName}?", "OctavianRSM",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await Run($"octa.tpto {target.SteamID} {destination.SteamID}");
-    }
-
-    private async void AccessIdCommand_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: string template }) return;
-        var id = In_AccessSteamId.Text.Trim();
-        if (!ulong.TryParse(id, out _) || id.Length != 17)
-        {
-            TxtResult.Text = "укажите корректный SteamID64 из 17 цифр";
-            return;
-        }
-        await Run(string.Format(CultureInfo.InvariantCulture, template, id));
-    }
-
-    private async void MaintenanceOn_Click(object sender, RoutedEventArgs e)
-    {
-        var message = CleanCommandText(In_MaintMessage.Text);
-        if (string.IsNullOrWhiteSpace(message)) message = "Технические работы. Попробуйте позже.";
-        if (MessageBox.Show($"Закрыть вход для всех, кроме админов и allow-list?\n{message}", "OctavianRSM",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        await Run($"octa.maintenance on {message}");
-    }
-
-    private async void GiveTarget_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetTarget(out var target)) return;
-        var item = In_GiveItem.Text.Trim().ToLowerInvariant();
-        if (string.IsNullOrEmpty(item) || item.Any(c => !char.IsLetterOrDigit(c) && c is not '_' and not '-' and not '.'))
-        {
-            TxtResult.Text = "некорректный shortname предмета";
-            return;
-        }
-        var amount = Math.Max(1, (int)(In_GiveAmount.Value ?? 1));
-        await Run($"inventory.giveto {item} {target.SteamID} {amount}");
-    }
-
-    private async void DeployLoadout_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetTarget(out var target)) return;
-        var name = In_Loadout.Text.Trim();
-        if (string.IsNullOrEmpty(name) || name.Any(c => !char.IsLetterOrDigit(c) && c is not '_' and not '-'))
-        {
-            TxtResult.Text = "имя loadout может содержать буквы, цифры, _ и -";
-            return;
-        }
-        if (MessageBox.Show($"Выдать loadout «{name}» игроку {target.DisplayName}?", "OctavianRSM",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        await Run($"inventory.deployloadout {name} {target.SteamID}");
     }
 
     private static string SingleLine(string value) => value.Replace('\r', ' ').Replace('\n', ' ').Trim();

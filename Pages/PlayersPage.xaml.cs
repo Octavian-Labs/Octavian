@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -32,7 +34,7 @@ public partial class PlayersPage : Page
         // периодический опрос пока страница открыта — копится время на сервере,
         // обновляются страны и ростер
         _poll.Tick += (_, _) => _ = Refresh();
-        Loaded += (_, _) => _poll.Start();
+        Loaded += (_, _) => { _poll.Start(); ApplyContextTarget(); };
         Unloaded += (_, _) => _poll.Stop();
         _ = Refresh();
     }
@@ -46,8 +48,29 @@ public partial class PlayersPage : Page
         Selected is { } p ? (p.SteamID, p.DisplayName, true) :
         SelectedRoster is { } r ? (r.SteamId, r.Name, false) : null;
 
-    private void UpdateTargetLabel() =>
-        TxtSelected.Text = Target is { } t ? $"цель: {t.name} {(t.online ? "(онлайн)" : "(оффлайн)")}" : "";
+    private void UpdateTargetLabel()
+    {
+        var t = Target;
+        TxtSelected.Text = t is { } tt ? $"цель: {tt.name} {(tt.online ? "(онлайн)" : "(оффлайн)")}" : "";
+        TxtActTarget.Text = t is { } ta
+            ? $"цель: {ta.name} ({ta.id}) {(ta.online ? "— онлайн" : "— оффлайн")}"
+            : "цель: не выбрана — выберите игрока во вкладке «Онлайн» или «База»";
+        // единая модель цели: контекстная панель оболочки видит того же игрока
+        App.Ctx.SelectPlayer(t is { } tp ? new PlayerRef(tp.id, tp.name, tp.online) : null);
+    }
+
+    /// <summary>Прийти сюда с уже выбранной целью (например, из панели контекста).</summary>
+    private void ApplyContextTarget()
+    {
+        var want = App.Ctx.SelectedPlayer;
+        if (want == null || Target?.id == want.SteamId) return;
+        var online = Grid.ItemsSource as IEnumerable<PlayerInfo>;
+        var hit = online?.FirstOrDefault(p => p.SteamID == want.SteamId);
+        if (hit != null) { Grid.SelectedItem = hit; Grid.ScrollIntoView(hit); return; }
+        var roster = GridRoster.ItemsSource as IEnumerable<KnownPlayer>;
+        var rhit = roster?.FirstOrDefault(r => r.SteamId == want.SteamId);
+        if (rhit != null) { GridRoster.SelectedItem = rhit; GridRoster.ScrollIntoView(rhit); }
+    }
 
     private void ApplyFilter()
     {
@@ -85,6 +108,7 @@ public partial class PlayersPage : Page
             App.Db.FlushOfflineSessions();
             CmbTpTarget.ItemsSource = _all;
             ApplyFilter();
+            ApplyContextTarget();
             _ = ResolveCountries();
             RefreshRoster();
         }
@@ -269,6 +293,115 @@ public partial class PlayersPage : Page
     private void CopyId_Click(object sender, RoutedEventArgs e)
     {
         if (Target is { } t) Clipboard.SetText(t.id);
+    }
+
+    // ── Вкладка «Действия»: адресные команды OctaAdminTools/Rust ────────
+    // Ответы идут в единый канал ServerContext → CommandResultBar + панель контекста.
+
+    private bool TryTarget(bool needOnline)
+    {
+        if (Target is not { } t) { ResultBar.StateText = "цель не выбрана"; return false; }
+        if (needOnline && !t.online)
+        {
+            ResultBar.StateText = $"{t.name} оффлайн — действие только для онлайн";
+            return false;
+        }
+        return true;
+    }
+
+    private async void PlayerCmd_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryTarget(needOnline: true) || sender is not FrameworkElement { Tag: string tpl }) return;
+        await App.Ctx.RunRconAsync(string.Format(CultureInfo.InvariantCulture, tpl, Target!.Value.id));
+    }
+
+    private async void PlayerCmdConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryTarget(needOnline: true) || sender is not FrameworkElement { Tag: string tpl }) return;
+        var t = Target!.Value;
+        var cmd = string.Format(CultureInfo.InvariantCulture, tpl, t.id);
+        if (!UiConfirm.Ask(Window.GetWindow(this), "Выполнить команду", cmd,
+                $"цель: {t.name} ({t.id})", danger: true)) return;
+        await App.Ctx.RunRconAsync(cmd);
+    }
+
+    private async void Cmd_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string cmd }) await App.Ctx.RunRconAsync(cmd);
+    }
+
+    private async void CmdConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string cmd }) return;
+        if (!UiConfirm.Ask(Window.GetWindow(this), "Выполнить команду", cmd,
+                "действует на весь сервер", danger: true)) return;
+        await App.Ctx.RunRconAsync(cmd);
+    }
+
+    private async void TpPos_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryTarget(needOnline: true)) return;
+        var t = Target!.Value;
+        var parts = In_TpPos.Text.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3 || !parts.All(p => double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out _)))
+        {
+            ResultBar.StateText = "координаты должны иметь формат: x y z";
+            return;
+        }
+        if (!UiConfirm.Ask(Window.GetWindow(this), "Телепортировать игрока",
+                $"{t.name} → {string.Join(" ", parts)}", "мгновенный телепорт")) return;
+        await App.Ctx.RunRconAsync($"octa.tppos {t.id} {string.Join(" ", parts)}");
+    }
+
+    private async void AccessId_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string tpl }) return;
+        var id = In_AccessId.Text.Trim();
+        if (!ulong.TryParse(id, out _) || id.Length != 17)
+        {
+            ResultBar.StateText = "укажите корректный SteamID64 из 17 цифр";
+            return;
+        }
+        await App.Ctx.RunRconAsync(string.Format(CultureInfo.InvariantCulture, tpl, id));
+    }
+
+    private async void MaintenanceOn_Click(object sender, RoutedEventArgs e)
+    {
+        var message = In_MaintMsg.Text.Replace('\r', ' ').Replace('\n', ' ')
+            .Replace(';', ',').Replace('"', '\'').Trim();
+        if (string.IsNullOrWhiteSpace(message)) message = "Технические работы. Попробуйте позже.";
+        if (!UiConfirm.Ask(Window.GetWindow(this), "Включить режим техработ",
+                message, "вход закрыт для всех, кроме админов и allow-list", danger: true)) return;
+        await App.Ctx.RunRconAsync($"octa.maintenance on {message}");
+    }
+
+    private async void GiveItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryTarget(needOnline: true)) return;
+        var t = Target!.Value;
+        var item = In_GiveItem.Text.Trim().ToLowerInvariant();
+        if (item.Length == 0 || item.Any(c => !char.IsLetterOrDigit(c) && c is not '_' and not '-' and not '.'))
+        {
+            ResultBar.StateText = "некорректный shortname предмета";
+            return;
+        }
+        var amount = Math.Max(1, (int)(In_GiveAmount.Value ?? 1));
+        await App.Ctx.RunRconAsync($"inventory.giveto {item} {t.id} {amount}");
+    }
+
+    private async void Loadout_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryTarget(needOnline: true)) return;
+        var t = Target!.Value;
+        var name = In_LoadoutName.Text.Trim();
+        if (name.Length == 0 || name.Any(c => !char.IsLetterOrDigit(c) && c is not '_' and not '-'))
+        {
+            ResultBar.StateText = "имя loadout может содержать буквы, цифры, _ и -";
+            return;
+        }
+        if (!UiConfirm.Ask(Window.GetWindow(this), "Выдать loadout",
+                $"«{name}» → {t.name}", "заменит текущий инвентарь игрока")) return;
+        await App.Ctx.RunRconAsync($"inventory.deployloadout {name} {t.id}");
     }
 
     // stats возвращает JSON — разворачиваем в читаемый список ключ: значение

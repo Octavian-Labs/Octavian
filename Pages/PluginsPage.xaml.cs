@@ -94,6 +94,13 @@ public partial class PluginsPage : Page
         if (App.Rcon.IsConnected) _ = App.Rcon.FireAsync($"c.loadmoduleconfig {m.Name}");
     }
 
+    // Перезагрузка всех модулей Carbon — переехала из «Управление → Carbon/Плагины»
+    private async void ReloadModules_Click(object sender, RoutedEventArgs e)
+    {
+        TxtStatus.Text = "c.reloadmodules…";
+        TxtStatus.Text = (await App.Ctx.RunRconAsync("c.reloadmodules")).Trim();
+    }
+
     private void Uninstall_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement fe || fe.DataContext is not PluginInfo p) return;

@@ -13,9 +13,6 @@ public partial class ConsolePage : Page
 {
     private readonly List<string> _history = new();
     private int _histIdx = -1;
-
-    // полный журнал для фильтрации (как All/Errors/Warnings в RSM Web)
-    private readonly List<(string type, string tag, string text, Brush brush)> _entries = new();
     private string _typeFilter = "all";
 
     public ConsolePage()
@@ -55,48 +52,17 @@ public partial class ConsolePage : Page
             _ => (type.ToUpperInvariant(), (Brush)FindResource("B.TextDim"))
         };
         var text = $"[{(stamp ?? DateTime.Now.ToString("HH:mm:ss"))}] [{tag}] {msg}";
-        _entries.Add((type, tag, text, brush));
-        while (_entries.Count > 1500) _entries.RemoveAt(0);
-        if (Pass(type, tag, text)) AddLine(text, brush);
+        Log.AddLine(text, tag, brush);
     }
 
-    private void AddLine(string text, Brush brush)
+    // фильтры: категория — Predicate LogViewer, подстрока — FilterText
+    private void ApplyFilters() => Log.Predicate = _typeFilter switch
     {
-        // автоскролл только если пользователь уже смотрит на конец — не выдёргиваем скролл из-под него
-        var atBottom = Scroll.VerticalOffset >= Scroll.ScrollableHeight - 2;
-        Items.Items.Add(new TextBlock
-        {
-            Text = text,
-            Foreground = brush,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 12.5,
-            TextWrapping = TextWrapping.Wrap
-        });
-        while (Items.Items.Count > 800) Items.Items.RemoveAt(0);
-        if (atBottom) Scroll.ScrollToEnd();
-    }
-
-    // фильтр по типу + по свободному тексту
-    private bool Pass(string type, string tag, string text)
-    {
-        var ok = _typeFilter switch
-        {
-            "err" => tag == "ERR" || text.Contains("error", StringComparison.OrdinalIgnoreCase),
-            "chat" => type.Equals("Chat", StringComparison.OrdinalIgnoreCase),
-            "sys" => type is "sys" or "cmd",
-            _ => true
-        };
-        if (!ok) return false;
-        var f = TxtFilter?.Text?.Trim() ?? "";
-        return f.Length == 0 || text.Contains(f, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private void Refilter()
-    {
-        Items.Items.Clear();
-        foreach (var e in _entries.Where(e => Pass(e.type, e.tag, e.text)).TakeLast(800))
-            AddLine(e.text, e.brush);
-    }
+        "err" => e => e.Category == "ERR" || e.Text.Contains("error", StringComparison.OrdinalIgnoreCase),
+        "chat" => e => e.Category == "CHAT",
+        "sys" => e => e.Category is "SYS" or ">",
+        _ => null
+    };
 
     private void Filter_Click(object sender, RoutedEventArgs e)
     {
@@ -106,14 +72,15 @@ public partial class ConsolePage : Page
         FErr.Appearance = _typeFilter == "err" ? Wpf.Ui.Controls.ControlAppearance.Primary : Wpf.Ui.Controls.ControlAppearance.Secondary;
         FChat.Appearance = _typeFilter == "chat" ? Wpf.Ui.Controls.ControlAppearance.Primary : Wpf.Ui.Controls.ControlAppearance.Secondary;
         FSys.Appearance = _typeFilter == "sys" ? Wpf.Ui.Controls.ControlAppearance.Primary : Wpf.Ui.Controls.ControlAppearance.Secondary;
-        Refilter();
+        ApplyFilters();
     }
 
-    private void TxtFilter_TextChanged(object sender, TextChangedEventArgs e) => Refilter();
+    private void TxtFilter_TextChanged(object sender, TextChangedEventArgs e)
+        => Log.FilterText = TxtFilter.Text?.Trim() ?? "";
 
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
-        var text = string.Join(Environment.NewLine, Items.Items.Cast<TextBlock>().Select(t => t.Text));
+        var text = Log.VisibleText();
         if (text.Length > 0) Clipboard.SetText(text);
     }
 
@@ -155,5 +122,5 @@ public partial class ConsolePage : Page
     }
 
     private async void Connect_Click(object sender, RoutedEventArgs e) => await Connect();
-    private void Clear_Click(object sender, RoutedEventArgs e) { Items.Items.Clear(); _entries.Clear(); }
+    private void Clear_Click(object sender, RoutedEventArgs e) => Log.ClearLog();
 }

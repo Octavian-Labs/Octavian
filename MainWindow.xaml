@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-        xmlns:pages="clr-namespace:OctavianRSM.Pages"
+        xmlns:octa="clr-namespace:OctavianRSM"
         Title="OCTAVIAN RSM" Height="760" Width="1280" MinWidth="880" MinHeight="560"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" ResizeMode="CanResizeWithGrip"
@@ -21,96 +21,107 @@
             <RowDefinition Height="26"/>
         </Grid.RowDefinitions>
 
-        <!-- ── Заголовок окна: drag-зона + кнопки ── -->
-        <Border Grid.Row="0" Background="#0D1118"
-                BorderBrush="{StaticResource B.Border}" BorderThickness="0,0,0,1">
-            <DockPanel LastChildFill="False">
-                <TextBlock Margin="14,0,0,0" FontSize="13" FontWeight="Bold" VerticalAlignment="Center">
-                    <Run Text="◆ " Foreground="{StaticResource B.Accent}"/>
-                    <Run Text="OCTAVIAN" Foreground="{StaticResource B.Text}"/>
-                    <Run Text="  RSM" Foreground="{StaticResource B.Accent2}" FontSize="10"/>
-                </TextBlock>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
-                            WindowChrome.IsHitTestVisibleInChrome="True">
-                    <Button Content="—" Width="46" Click="Min_Click" Style="{StaticResource OctaWinBtn}"/>
-                    <Button x:Name="BtnMax" Content="▢" Width="46" Click="Max_Click" Style="{StaticResource OctaWinBtn}"/>
-                    <Button Content="✕" Width="46" Click="Close_Click" Style="{StaticResource OctaWinBtnClose}"/>
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <!-- Единая шапка окна — та же, что у остальных окон (без копии логики) -->
+        <octa:OctaTitleBar TitleText="OCTAVIAN" TitleSuffix="  RSM" AllowMin="True" AllowMax="True"/>
 
-        <!-- ── Тело ── -->
-        <ui:NavigationView x:Name="NavView" Grid.Row="1" IsPaneToggleVisible="True"
-                           PaneDisplayMode="Left" IsBackButtonVisible="Collapsed"
-                           OpenPaneLength="230">
-            <ui:NavigationView.PaneHeader>
-                <StackPanel Margin="4,10,0,18">
-                    <TextBlock Text="RUST SERVER MANAGER" FontSize="10" Foreground="{StaticResource B.Accent2}" Margin="2,0,0,0"/>
-                    <Border Height="1" Background="{StaticResource B.Accent2}" Margin="0,10,24,0" Opacity="0.6"/>
-                </StackPanel>
-            </ui:NavigationView.PaneHeader>
-            <ui:NavigationView.MenuItems>
-                <ui:NavigationViewItem Content="Дашборд" TargetPageType="pages:DashboardPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Home24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem Content="Управление" TargetPageType="pages:CommandsPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="ToggleMultiple24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem Content="Консоль" TargetPageType="pages:ConsolePage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Code24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem Content="Игроки" TargetPageType="pages:PlayersPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="People24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavPlugins" Content="Плагины" TargetPageType="pages:PluginsPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="PuzzlePiece24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavStore" Content="Магазин" TargetPageType="pages:StorePage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Globe24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavServerCfg" Content="Серв. конфиг" TargetPageType="pages:ServerCfgPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="TextBoxSettings24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavRates" Content="Рейты и лут" TargetPageType="pages:RatesPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="DataHistogram24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavFarm" Content="Ферма" TargetPageType="pages:FarmPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="LeafTwo24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavLogs" Content="Логи" TargetPageType="pages:LogsPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="DocumentText24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavWipes" Content="Вайпы" TargetPageType="pages:WipePage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="ArrowClockwise24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-                <ui:NavigationViewItem x:Name="NavInstall" Content="Установка" TargetPageType="pages:InstallPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="ArrowDownload24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-            </ui:NavigationView.MenuItems>
-            <ui:NavigationView.FooterMenuItems>
-                <ui:NavigationViewItem Content="Настройки" TargetPageType="pages:SettingsPage">
-                    <ui:NavigationViewItem.Icon><ui:SymbolIcon Symbol="Settings24"/></ui:NavigationViewItem.Icon>
-                </ui:NavigationViewItem>
-            </ui:NavigationView.FooterMenuItems>
-            <ui:NavigationView.PaneFooter>
-                <StackPanel Margin="4,8,12,10">
-                    <Border Height="1" Background="{StaticResource B.Border}" Margin="0,0,12,10"/>
-                    <Border Style="{StaticResource OctaChip}" Margin="0,0,0,6">
-                        <StackPanel Orientation="Horizontal">
-                            <Ellipse x:Name="DotServer" Width="8" Height="8" Fill="{StaticResource B.Danger}" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="TxtServerState" Text=" SERVER" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center" Margin="6,0,0,0"/>
-                        </StackPanel>
+        <!-- ── Тело: навигация + контекстная панель ── -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition x:Name="CtxColumn" Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <ui:NavigationView x:Name="NavView" Grid.Column="0" IsPaneToggleVisible="True"
+                               PaneDisplayMode="Left" IsBackButtonVisible="Collapsed"
+                               OpenPaneLength="230">
+                <ui:NavigationView.PaneHeader>
+                    <StackPanel Margin="4,10,0,18">
+                        <TextBlock Text="RUST SERVER MANAGER" FontSize="10" Foreground="{StaticResource B.Accent2}" Margin="2,0,0,0"/>
+                        <Border Height="1" Background="{StaticResource B.Accent2}" Margin="0,10,24,0" Opacity="0.6"/>
+                    </StackPanel>
+                </ui:NavigationView.PaneHeader>
+                <ui:NavigationView.PaneFooter>
+                    <StackPanel Margin="4,8,12,10">
+                        <Border Height="1" Background="{StaticResource B.Border}" Margin="0,0,12,10"/>
+                        <Border Style="{StaticResource OctaChip}" Margin="0,0,0,6">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="DotServer" Width="8" Height="8" Fill="{StaticResource B.Danger}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="TxtServerState" Text=" SERVER" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource OctaChip}">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="DotRcon" Width="8" Height="8" Fill="{StaticResource B.Danger}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="TxtRconState" Text=" RCON" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="TxtVersion" Text="v—" FontSize="10" Foreground="{StaticResource B.TextDim}" Margin="4,8,0,0"/>
+                    </StackPanel>
+                </ui:NavigationView.PaneFooter>
+            </ui:NavigationView>
+
+            <!-- ══ ПАНЕЛЬ КОНТЕКСТА: цель, операция, последний результат ══ -->
+            <Border x:Name="CtxPanel" Grid.Column="1" Width="224" Background="{StaticResource B.Bg1}"
+                    BorderBrush="{StaticResource B.Border}" BorderThickness="1,0,0,0">
+                <DockPanel LastChildFill="False">
+                    <Border DockPanel.Dock="Top" Padding="10,6" Background="{StaticResource B.Bg2}"
+                            BorderBrush="{StaticResource B.Border}" BorderThickness="0,0,0,1"
+                            MouseLeftButtonUp="CtxCollapse_Click" Cursor="Hand">
+                        <DockPanel LastChildFill="False">
+                            <TextBlock Text="КОНТЕКСТ" FontSize="10" FontWeight="Bold"
+                                       Foreground="{StaticResource B.Accent2}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="TxtCtxToggle" Text="◢" FontSize="10"
+                                       Foreground="{StaticResource B.TextDim}" DockPanel.Dock="Right"/>
+                        </DockPanel>
                     </Border>
-                    <Border Style="{StaticResource OctaChip}">
-                        <StackPanel Orientation="Horizontal">
-                            <Ellipse x:Name="DotRcon" Width="8" Height="8" Fill="{StaticResource B.Danger}" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="TxtRconState" Text=" RCON" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center" Margin="6,0,0,0"/>
-                        </StackPanel>
-                    </Border>
-                    <TextBlock x:Name="TxtVersion" Text="v—" FontSize="10" Foreground="{StaticResource B.TextDim}" Margin="4,8,0,0"/>
-                </StackPanel>
-            </ui:NavigationView.PaneFooter>
-        </ui:NavigationView>
+
+                    <StackPanel x:Name="CtxBody" DockPanel.Dock="Top" Margin="12,10">
+                        <!-- Цель: выбранный игрок -->
+                        <TextBlock Text="ЦЕЛЬ" Style="{StaticResource OctaStatLabel}"/>
+                        <Border Style="{StaticResource OctaPanel}" Padding="10,8" Margin="0,4,0,12"
+                                MouseLeftButtonUp="CtxTarget_Click" Cursor="Hand"
+                                ToolTip="Перейти к игрокам">
+                            <StackPanel>
+                                <TextBlock x:Name="CtxTargetName" Text="не выбрана" FontSize="12"
+                                           FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="CtxTargetId" Text="игрок для адресных действий"
+                                           FontSize="9" FontFamily="Consolas"
+                                           Foreground="{StaticResource B.TextDim}"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Текущая операция -->
+                        <TextBlock Text="ОПЕРАЦИЯ" Style="{StaticResource OctaStatLabel}"/>
+                        <Border Style="{StaticResource OctaPanel}" Padding="10,8" Margin="0,4,0,12">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="CtxOpName" Text="—" FontSize="12"
+                                           Foreground="{StaticResource B.Text}"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                <Ellipse x:Name="CtxOpDot" Width="7" Height="7" Margin="8,0,0,0"
+                                         Fill="{StaticResource B.TextDim}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Последний ответ команды -->
+                        <TextBlock Text="ПОСЛЕДНЯЯ КОМАНДА" Style="{StaticResource OctaStatLabel}"/>
+                        <Border Style="{StaticResource OctaPanel}" Padding="10,8" Margin="0,4,0,12"
+                                MouseLeftButtonUp="CtxResult_Click" Cursor="Hand"
+                                ToolTip="Открыть консоль">
+                            <StackPanel>
+                                <TextBlock x:Name="CtxLastCmd" Text="—" FontSize="10"
+                                           FontFamily="Consolas" Foreground="{StaticResource B.Accent}"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="CtxLastResult" Text="" FontSize="10"
+                                           Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap"
+                                           MaxHeight="72"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+        </Grid>
 
         <!-- ── Строка состояния ── -->
         <Border Grid.Row="2" Background="#0D1118"
@@ -126,6 +137,8 @@
                     <TextBlock x:Name="SbFps" Text="fps —" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center"/>
                     <TextBlock Text=" │ " FontSize="11" Foreground="{StaticResource B.Border}" VerticalAlignment="Center" Margin="10,0"/>
                     <TextBlock x:Name="SbUptime" Text="uptime —" FontSize="11" Foreground="{StaticResource B.TextDim}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="SbBusy" Text="" FontSize="11" FontWeight="SemiBold"
+                               Foreground="{StaticResource B.Warn}" VerticalAlignment="Center" Margin="10,0,0,0"/>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0">
                     <TextBlock x:Name="SbMode" Text="LOCAL" FontSize="11" FontWeight="SemiBold"

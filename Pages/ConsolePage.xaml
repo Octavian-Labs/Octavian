@@ -2,6 +2,7 @@
       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      xmlns:octa="clr-namespace:OctavianRSM.Controls"
       ScrollViewer.CanContentScroll="False"
       Title="Консоль">
     <Grid Margin="20">
@@ -39,11 +40,7 @@
             </DockPanel>
         </Border>
 
-        <Border Grid.Row="2" Style="{StaticResource OctaPanel}" Padding="0">
-            <ScrollViewer x:Name="Scroll" Margin="12">
-                <ItemsControl x:Name="Items"/>
-            </ScrollViewer>
-        </Border>
+        <octa:LogViewer x:Name="Log" Grid.Row="2"/>
 
         <Border Grid.Row="3" Style="{StaticResource OctaPanel}" Margin="0,12,0,0" Padding="12">
             <Grid>

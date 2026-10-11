@@ -1,9 +1,13 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using OctavianRSM.Services;
+using Wpf.Ui.Controls;
 
 namespace OctavianRSM;
 
@@ -11,124 +15,188 @@ public partial class MainWindow : Window
 {
     public static MainWindow? Instance { get; private set; }
 
-    // Псевдо-maximize: системный WindowState.Maximized у кастомного chrome
-    // (WindowStyle=None) выходит за пределы рабочей области и режет нижний край —
-    // разворачиваем окно вручную ровно по SystemParameters.WorkArea
-    private bool _pseudoMax;
-    private bool _suppressState;
-    private Rect _restoredBounds = Rect.Empty;
-    private WindowState _lastState = WindowState.Normal;
+    private readonly Dictionary<NavigationViewItem, AppRoute> _routeByItem = new();
+    private readonly Dictionary<string, NavigationViewItem> _itemByRoute = new();
+    private readonly List<(NavigationViewItemHeader Header, List<NavigationViewItem> Items)> _groups = new();
+    private string _currentRouteId = "dashboard";
+    private AppRoute? _pendingRoute;
+    private AppRoute? _clickedRoute;
+    private bool _forceNextNav;
+    private bool _ctxCollapsed;
 
     public MainWindow()
     {
         InitializeComponent();
         Instance = this;
-        var localVisibility = App.Settings.IsRemoteMode ? Visibility.Collapsed : Visibility.Visible;
-        NavPlugins.Visibility = localVisibility;
-        NavServerCfg.Visibility = localVisibility;
-        NavRates.Visibility = localVisibility;
-        NavFarm.Visibility = localVisibility;
-        NavLogs.Visibility = localVisibility;
-        NavWipes.Visibility = localVisibility;
-        NavInstall.Visibility = localVisibility;
+        BuildMenu();
         Loaded += (_, _) =>
         {
             // WPF-UI NavigationViewContentPresenter оборачивает страницу в динамический ScrollViewer —
             // из-за него внутренние ScrollViewer страниц получали бесконечную высоту и «глотали» колесо мыши
             NavView.ApplyTemplate();
             if (NavView.Template.FindName("PART_NavigationViewContentPresenter", NavView)
-                    is Wpf.Ui.Controls.NavigationViewContentPresenter presenter)
+                    is NavigationViewContentPresenter presenter)
             {
-                // сеттер internal — ставим DP напрямую через SetValue
-                var dp = typeof(Wpf.Ui.Controls.NavigationViewContentPresenter)
+                var dp = typeof(NavigationViewContentPresenter)
                     .GetField("IsDynamicScrollViewerEnabledProperty",
                         System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
                     ?.GetValue(null) as DependencyProperty;
                 if (dp != null) presenter.SetValue(dp, false);
             }
-            NavView.Navigate(typeof(Pages.DashboardPage));
+            NavigateToRoute("dashboard", force: true);
         };
-        StateChanged += (_, _) => OnStateChangedEx();
-        App.Server.OnStateChanged += _ => Dispatcher.Invoke(UpdateChips);
-        App.Rcon.OnDisconnected += () => Dispatcher.Invoke(UpdateChips);
+        App.Ctx.Changed += () => Dispatcher.Invoke(ApplyContextState);
+        App.Ctx.CommandResultPosted += (cmd, result) => Dispatcher.Invoke(() => ApplyLastResult(cmd, result));
         SbMode.Text = App.Settings.IsRemoteMode
             ? $"REMOTE • {App.Settings.RconHost}:{App.Settings.RconPort}"
             : $"LOCAL • порт {App.Settings.GamePort}";
-        TxtVersion.Text = $"v{Services.UpdateService.CurrentVersion()} • Octavian";
+        TxtVersion.Text = $"v{UpdateService.CurrentVersion()} • Octavian";
         var clock = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         clock.Tick += (_, _) => SbClock.Text = DateTime.Now.ToString("HH:mm:ss");
         clock.Start();
         _ = StatusLoop();
-        UpdateChips();
+        ApplyContextState();
         ClearStatusBar();
     }
 
-    private void Min_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    // ── Меню из реестра маршрутов ───────────────────────────────────────
 
-    private void Max_Click(object sender, RoutedEventArgs e)
+    private void BuildMenu()
     {
-        if (_pseudoMax) Unmaximize();
-        else MaximizeBounds();
-    }
-
-    private void MaximizeBounds()
-    {
-        // RestoreBounds валиден, когда окно уже развёрнуто системой (двойной клик по шапке);
-        // в Normal он может хранить устаревшее значение — берём текущие границы
-        var rb = RestoreBounds;
-        _restoredBounds = (WindowState == WindowState.Normal || rb.IsEmpty)
-            ? new Rect(Left, Top, Width, Height) : rb;
-        if (WindowState != WindowState.Normal)
+        // единый перехват: черновик → capability → параметр маршрута.
+        // Срабатывает и на клики, и на программные Navigate — до создания/показа страницы
+        NavView.Navigating += Nav_Navigating;
+        foreach (var group in AppRoutes.Groups)
         {
-            _suppressState = true;
-            WindowState = WindowState.Normal;
-            _suppressState = false;
+            var header = new NavigationViewItemHeader { Text = group.Title };
+            NavView.MenuItems.Add(header);
+            var items = new List<NavigationViewItem>();
+            foreach (var route in group.Routes)
+            {
+                var item = new NavigationViewItem
+                {
+                    Content = route.Title,
+                    Tag = route,
+                    TargetPageType = route.PageType,
+                    TargetPageTag = route.Id, // id маршрута: Navigate(tag) находит именно этот пункт
+                    Icon = Enum.TryParse<SymbolRegular>(route.Icon, out var sym)
+                        ? new SymbolIcon(sym) : new SymbolIcon(SymbolRegular.Home24),
+                };
+                // Click бьёт до внутренней навигации — запоминаем маршрут,
+                // потому что у одного PageType может быть несколько маршрутов
+                var r = route;
+                item.Click += (_, _) => _clickedRoute = r;
+                NavView.MenuItems.Add(item);
+                _routeByItem[item] = route;
+                _itemByRoute[route.Id] = item;
+                items.Add(item);
+            }
+            _groups.Add((header, items));
         }
-        var wa = SystemParameters.WorkArea;
-        Left = wa.Left; Top = wa.Top; Width = wa.Width; Height = wa.Height;
-        _pseudoMax = true;
-        BtnMax.Content = "❐";
     }
 
-    private void Unmaximize()
+    private void Nav_Navigating(NavigationView sender, NavigatingCancelEventArgs e)
     {
-        _pseudoMax = false;
-        if (!_restoredBounds.IsEmpty && _restoredBounds.Width > 0)
+        var pageType = e.Page?.GetType();
+        // приоритет: явно запрошенный маршрут → кликнутый пункт → первый маршрут с этим PageType
+        var route = _pendingRoute ?? _clickedRoute ?? AppRoutes.FindByType(pageType);
+        _pendingRoute = null; _clickedRoute = null;
+        if (route == null || route.PageType != pageType)
         {
-            Left = _restoredBounds.Left; Top = _restoredBounds.Top;
-            Width = _restoredBounds.Width; Height = _restoredBounds.Height;
+            AppNav.Arm(_currentRouteId, null);
+            return;
         }
-        BtnMax.Content = "▢";
+        if (route.Requires != null && !route.Requires(App.Ctx)) { e.Cancel = true; return; }
+        var force = _forceNextNav;
+        _forceNextNav = false;
+        if (!force && !App.Ctx.ConfirmLeaveDirty(this)) { e.Cancel = true; return; }
+        AppNav.Arm(route.Id, route.Param);
+        _currentRouteId = route.Id;
     }
 
-    private void OnStateChangedEx()
+    /// <summary>Единая точка переходов: навигация по id маршрута (tag пункта меню).</summary>
+    public void NavigateToRoute(string routeId, bool force = false)
     {
-        if (_suppressState) { _lastState = WindowState; return; }
-        if (WindowState == WindowState.Maximized && !_pseudoMax)
-            MaximizeBounds();
-        else if (WindowState == WindowState.Normal && _pseudoMax && _lastState == WindowState.Maximized)
-            Unmaximize(); // системное восстановление из развёрнутого состояния
-        _lastState = WindowState;
+        var route = AppRoutes.Find(routeId);
+        if (route == null) return;
+        _pendingRoute = route;
+        _forceNextNav = force; // принудительный переход (закрывшийся маршрут): без вопроса о черновике
+        NavView.Navigate(routeId); // tag пункта меню — попадаем в нужный маршрут при общем PageType
     }
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    // ── Возможности: скрываем маршруты, недоступные в текущем режиме ─────
 
-    public void UpdateChips()
+    private void ApplyCapabilities()
     {
-        bool srv = App.Settings.IsRemoteMode ? App.Rcon.IsConnected : App.Server.IsRunning;
+        foreach (var (item, route) in _routeByItem)
+            item.Visibility = route.Requires == null || route.Requires(App.Ctx)
+                ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var (header, items) in _groups)
+        {
+            bool any = false;
+            foreach (var i in items)
+                if (i.Visibility == Visibility.Visible) { any = true; break; }
+            header.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
+        }
+        // текущий маршрут стал недоступен (переключили режим/отвалился RCON на странице без partial) → на обзор
+        var cur = AppRoutes.Find(_currentRouteId);
+        if (cur?.Requires != null && !cur.Requires(App.Ctx))
+            NavigateToRoute("dashboard", force: true);
+    }
+
+    // ── Состояние оболочки от ServerContext ─────────────────────────────
+
+    private void ApplyContextState()
+    {
+        var ctx = App.Ctx;
+        ApplyCapabilities();
+
+        bool srv = ctx.IsRemote ? ctx.RconConnected : ctx.ServerRunning;
         DotServer.Fill = (SolidColorBrush)FindResource(srv ? "B.Success" : "B.Danger");
-        TxtServerState.Text = App.Settings.IsRemoteMode
+        TxtServerState.Text = ctx.IsRemote
             ? (srv ? " REMOTE ONLINE" : " REMOTE OFFLINE")
             : (srv ? " РАБОТАЕТ" : " СТОП");
-        bool rcon = App.Rcon.IsConnected;
-        DotRcon.Fill = (SolidColorBrush)FindResource(rcon ? "B.Success" : "B.Danger");
-        TxtRconState.Text = rcon ? " RCON" : " RCON OFF";
-        // строка состояния
+        DotRcon.Fill = (SolidColorBrush)FindResource(ctx.RconConnected ? "B.Success" : "B.Danger");
+        TxtRconState.Text = ctx.RconConnected ? " RCON" : " RCON OFF";
         SbDot.Fill = (SolidColorBrush)FindResource(srv ? "B.Success" : "B.Danger");
-        SbState.Text = App.Settings.IsRemoteMode
+        SbMode.Text = ctx.IsRemote
+            ? $"REMOTE • {App.Settings.RconHost}:{App.Settings.RconPort}"
+            : $"LOCAL • порт {App.Settings.GamePort}";
+        SbState.Text = ctx.IsRemote
             ? (srv ? "REMOTE ONLINE" : "REMOTE OFFLINE")
             : (srv ? "РАБОТАЕТ" : "СТОП");
+
+        // контекстная панель
+        var p = ctx.SelectedPlayer;
+        CtxTargetName.Text = p?.DisplayName ?? "не выбрана";
+        CtxTargetId.Text = p?.SteamId ?? "игрок для адресных действий";
+        CtxOpName.Text = ctx.Operation ?? "—";
+        CtxOpDot.Fill = (SolidColorBrush)FindResource(ctx.Busy ? "B.Warn" : "B.TextDim");
+        SbBusy.Text = ctx.Busy ? $"│ ⏳ {ctx.Operation}" : "";
     }
+
+    private void ApplyLastResult(string command, string result)
+    {
+        CtxLastCmd.Text = "❯ " + command;
+        var one = result.Replace("\r", " ").Replace("\n", " ⏎ ");
+        CtxLastResult.Text = one.Length > 300 ? one[..300] + "…" : one;
+    }
+
+    private void CtxTarget_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        => NavigateToRoute("players");
+
+    private void CtxResult_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        => NavigateToRoute("console");
+
+    private void CtxCollapse_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _ctxCollapsed = !_ctxCollapsed;
+        CtxBody.Visibility = _ctxCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        CtxPanel.Width = _ctxCollapsed ? 34 : 224;
+        TxtCtxToggle.Text = _ctxCollapsed ? "◣" : "◢";
+    }
+
+    // ── Строка состояния: serverinfo по RCON ────────────────────────────
 
     private void ApplyStatusBar(string raw)
     {
@@ -163,11 +231,10 @@ public partial class MainWindow : Window
         while (true)
         {
             await Task.Delay(5000);
-            if (Dispatcher.HasShutdownStarted) return; // окно закрыто — выходим
+            if (Dispatcher.HasShutdownStarted) return;
             try
             {
-                Dispatcher.Invoke(UpdateChips);
-                if (App.Rcon.IsConnected)
+                if (App.Ctx.RconConnected)
                 {
                     var raw = await App.Rcon.SendAsync("serverinfo");
                     Dispatcher.Invoke(() => ApplyStatusBar(raw));

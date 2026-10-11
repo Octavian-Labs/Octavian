@@ -195,7 +195,7 @@ public partial class SetupWizardWindow : Window
                 {
                     var line = $"Исключение установщика: {fatal}";
                     if (_chainErrors.Count < 20) _chainErrors.Add(line);
-                    TxtInstallLog.Text += $"[Установка] {line}\n";
+                    InstallLog.AddLine($"[Установка] {line}", "err");
                 }
                 if (_chainOk) TxtPhase.Text = "Загрузка завершена — можно завершать настройку";
                 else TxtPhase.Text = t.Status == TaskStatus.Canceled || _cts.IsCancellationRequested
@@ -238,11 +238,8 @@ public partial class SetupWizardWindow : Window
         // строки с ошибкой запоминаем — покажем причину на шаге «Установка»
         if (LooksLikeError(p.Detail) && _chainErrors.Count < 20)
             _chainErrors.Add($"[{p.Phase}] {p.Detail}");
-        var line = $"[{p.Phase}] {p.Detail}\n";
-        TxtInstallLog.Text += line;
-        if (TxtInstallLog.Text.Length > 60_000)
-            TxtInstallLog.Text = TxtInstallLog.Text[^40_000..];
-        LogScroll.ScrollToEnd();
+        var line = $"[{p.Phase}] {p.Detail}";
+        InstallLog.AddLine(line, LooksLikeError(line) ? "err" : "log");
     }
 
     private static bool LooksLikeError(string s)

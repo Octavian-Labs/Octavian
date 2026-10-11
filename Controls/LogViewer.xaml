@@ -1,0 +1,31 @@
+<UserControl x:Class="OctavianRSM.Controls.LogViewer"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="300">
+    <Border x:Name="Frame" Style="{StaticResource OctaPanel}" Padding="0">
+        <ListBox x:Name="List" Background="Transparent" BorderThickness="0"
+                 FontFamily="Consolas" FontSize="12"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.VirtualizationMode="Recycling"
+                 VirtualizingPanel.IsContainerVirtualizable="True">
+            <ListBox.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Копировать строку" Click="CopyRow_Click"/>
+                    <MenuItem Header="Копировать видимое" Click="CopyVisible_Click"/>
+                    <MenuItem Header="Копировать всё" Click="CopyAll_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Очистить" Click="Clear_Click"/>
+                </ContextMenu>
+            </ListBox.ContextMenu>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Text}" Foreground="{Binding Foreground}"
+                               TextWrapping="Wrap" FontFamily="Consolas" FontSize="12"/>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Border>
+</UserControl>

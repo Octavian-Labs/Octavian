@@ -19,6 +19,9 @@ public partial class App : Application
     public static GeoService Geo { get; private set; } = new();
     public static UpdateService Updater { get; private set; } = new();
 
+    /// <summary>Единая модель состояния и возможностей — создаётся после InitializeServices.</summary>
+    public static ServerContext Ctx { get; private set; } = null!;
+
     public static string SettingsPath { get; private set; } = "";
     public static string AppRoot => Path.GetDirectoryName(SettingsPath) ?? AppContext.BaseDirectory;
     public static string DataDir => Path.Combine(AppRoot, "data");
@@ -105,6 +108,8 @@ public partial class App : Application
         Db = new DbService(DataDir);
         Rcon.OnMessage += (type, msg) => Db.Log($"rcon:{type}", msg);
         Server.OnOutput += line => Db.Log("server", line);
+        Ctx = new ServerContext(Settings, Server, Rcon);
+        Ctx.Refresh();
     }
 
     private static void LogCrash(Exception? ex)

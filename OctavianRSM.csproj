@@ -8,6 +8,7 @@
     <UseWPF>true</UseWPF>
     <Version>1.2.6</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +22,13 @@
     <!-- plugins\*.cs — встраиваемые ресурсы, а не код проекта -->
     <Compile Remove="plugins\*.cs" />
     <None Remove="plugins\*.cs" />
+    <!-- _decomp_out — декомпилированные сборки игры для справки, не код проекта;
+         _*.cs и _*\ — рабочие черновики/пробы, тоже не компилируются -->
+    <Compile Remove="_decomp_out\**\*.cs" />
+    <None Remove="_decomp_out\**" />
+    <Compile Remove="_*.cs" />
+    <Compile Remove="_*\**\*.cs" />
+    <None Remove="_*\**" />
     <None Update="Assets\*.xshd">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

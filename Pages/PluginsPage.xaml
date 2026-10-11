@@ -116,6 +116,11 @@
             <TabItem Header="МОДУЛИ CARBON">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
                     <StackPanel>
+            <DockPanel LastChildFill="False" Margin="0,0,0,10">
+                <TextBlock Text="модули ядра carbon — конфиги в carbon/configs" Style="{StaticResource OctaPageSub}" VerticalAlignment="Center"/>
+                <ui:Button Content="⟳ RELOAD MODULES" DockPanel.Dock="Right" Padding="12,5"
+                           Click="ReloadModules_Click" ToolTip="c.reloadmodules — перезагрузить все модули"/>
+            </DockPanel>
             <ItemsControl x:Name="ModuleCards">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>

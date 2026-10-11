@@ -11,8 +11,10 @@ using OctavianRSM.Services;
 namespace OctavianRSM.Pages;
 
 // Рейты сбора/крафта (convars server.cfg + RCON) и библиотека пресетов лута для BetterLoot/MagicLoot
-public partial class RatesPage : Page
+public partial class RatesPage : Page, IDirtyPage
 {
+    private bool _presetLoading;
+    private bool _presetDirty;
     // слайдер → секция GatherManager.json (плагин перебивает ванильные convars)
     private static readonly Dictionary<string, string> RateKeys = new()
     {
@@ -30,10 +32,19 @@ public partial class RatesPage : Page
     public RatesPage()
     {
         InitializeComponent();
+        // черновик пресета лута — несохранённый текст не должен теряться при навигации
+        App.Ctx.RegisterDraft(this);
+        Unloaded += (_, _) => App.Ctx.UnregisterDraft(this);
+        AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler(OnPresetFieldChanged));
+        AddHandler(System.Windows.Controls.Primitives.Selector.SelectionChangedEvent,
+            new SelectionChangedEventHandler(OnPresetFieldChanged));
         LoadRates();
         DetectLootPlugins();
         RefreshPresets();
         LoadStackPanel();
+        BuildAnimalRows();
+        LoadFarmFromCfg();
+        _ = RefreshFarmFromRconAsync();
 
         // множители сбора живут в GatherManager.json, но без самого плагина не работают
         var gm = File.Exists(Path.Combine(App.Settings.PluginsDir, "GatherManager.cs"));
@@ -367,14 +378,27 @@ public partial class RatesPage : Page
         LstPresets.DisplayMemberPath = "Name";
     }
 
+    private void OnPresetFieldChanged(object sender, RoutedEventArgs e)
+    {
+        if (_presetLoading || e.Source is not FrameworkElement fe) return;
+        if (fe.Name.StartsWith("In_Preset") || fe.Name == "CmbPresetTarget") _presetDirty = true;
+    }
+
+    // ── IDirtyPage ───────────────────────────────────────────
+    public bool IsDirty => _presetDirty;
+    public string DraftTitle => "Пресет лута";
+    public void SaveDraft() => SavePreset_Click(this, new RoutedEventArgs());
+
     private void Preset_Selected(object s, SelectionChangedEventArgs e)
     {
         if (LstPresets.SelectedItem is not LootPreset p) return;
+        _presetLoading = true;
         In_PresetName.Text = p.Name;
         In_PresetDesc.Text = p.Description;
         In_PresetCode.Text = p.Content;
         foreach (ComboBoxItem it in CmbPresetTarget.Items)
             if ((it.Tag as string) == p.Target) { CmbPresetTarget.SelectedItem = it; break; }
+        _presetLoading = false;
     }
 
     private void NewPreset_Click(object s, RoutedEventArgs e)
@@ -395,6 +419,7 @@ public partial class RatesPage : Page
         p.Target = (CmbPresetTarget.SelectedItem as ComboBoxItem)?.Tag as string ?? "BetterLoot";
         App.Settings.Save(App.SettingsPath);
         RefreshPresets();
+        _presetDirty = false;
         TxtStatus.Text = $"✓ пресет «{p.Name}» сохранён";
     }
 

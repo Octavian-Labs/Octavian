@@ -8,9 +8,10 @@ using System.Windows.Media;
 
 namespace OctavianRSM.Pages;
 
-// Ферма: скот (Livestock Update Oct-2026), плотность животных, рост растений.
-// Все значения — честные Rust-convars: пишем в server.cfg + шлём по RCON.
-public partial class FarmPage : Page
+// Ферма (переехала с FarmPage): скот (Livestock Update Oct-2026),
+// плотность животных на карте, рост растений. Все значения — честные
+// Rust-convars: пишем в server.cfg + шлём по RCON.
+public partial class RatesPage
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -66,14 +67,6 @@ public partial class FarmPage : Page
 
     private readonly Dictionary<string, Slider> _popSliders = new();
 
-    public FarmPage()
-    {
-        InitializeComponent();
-        BuildAnimalRows();
-        LoadFromCfg();
-        _ = RefreshFromRconAsync();
-    }
-
     // ── Построение строк плотности ───────────────────────────
 
     private void BuildAnimalRows()
@@ -113,7 +106,7 @@ public partial class FarmPage : Page
 
     // ── Загрузка текущих значений ────────────────────────────
 
-    private void LoadFromCfg()
+    private void LoadFarmFromCfg()
     {
         App.ServerCfg.Load();
         var cfg = App.ServerCfg;
@@ -144,7 +137,7 @@ public partial class FarmPage : Page
     }
 
     // RCON: опросить живые значения convars (ответ вида `cow.population "2"` или число)
-    private async Task RefreshFromRconAsync()
+    private async Task RefreshFarmFromRconAsync()
     {
         if (!App.Rcon.IsConnected) return;
         var keys = new List<string> { "livestock.agescale" };
@@ -189,7 +182,7 @@ public partial class FarmPage : Page
             foreach (var (ctl, key) in PlantBools)
                 if (FindName(ctl) is CheckBox c && TryBool(live.GetValueOrDefault(key), out var b))
                     c.IsChecked = b;
-            TxtStatus.Text = "✓ значения прочитаны с сервера";
+            TxtStatus.Text = "✓ значения фермы прочитаны с сервера";
         });
     }
 
@@ -289,7 +282,7 @@ public partial class FarmPage : Page
             pairs.Add((key, Fmt(((Slider)FindName(ctl)!).Value)));
         foreach (var (ctl, key) in FarmBools)
             pairs.Add((key, ((CheckBox)FindName(ctl)!).IsChecked == true ? "True" : "False"));
-        await ApplyAsync(pairs, "скот");
+        await ApplyConvarsAsync(pairs, "скот");
     }
 
     private async void ApplyPop_Click(object sender, RoutedEventArgs e)
@@ -297,7 +290,7 @@ public partial class FarmPage : Page
         var pairs = new List<(string Key, string Val)>();
         foreach (var (_, convar, _, _) in Animals)
             pairs.Add((convar, Fmt(_popSliders[convar].Value)));
-        await ApplyAsync(pairs, "плотность");
+        await ApplyConvarsAsync(pairs, "плотность");
     }
 
     private async void ApplyPlants_Click(object sender, RoutedEventArgs e)
@@ -311,11 +304,11 @@ public partial class FarmPage : Page
         }
         foreach (var (ctl, key) in PlantBools)
             pairs.Add((key, ((CheckBox)FindName(ctl)!).IsChecked == true ? "True" : "False"));
-        await ApplyAsync(pairs, "растения");
+        await ApplyConvarsAsync(pairs, "растения");
     }
 
     // server.cfg — чтобы пережило рестарт; RCON — чтобы применилось живьём
-    private async Task ApplyAsync(List<(string Key, string Val)> pairs, string what)
+    private async Task ApplyConvarsAsync(List<(string Key, string Val)> pairs, string what)
     {
         try
         {

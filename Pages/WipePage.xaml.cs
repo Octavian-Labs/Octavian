@@ -51,7 +51,7 @@ public partial class WipePage : Page
 
     private void DoWipe(bool full)
     {
-        if (App.Server.IsRunning)
+        if (!App.Ctx.CanWipe)
         {
             TxtResult.Text = "Сервер работает — сначала остановите его (Дашборд → ОСТАНОВИТЬ).";
             return;
@@ -64,12 +64,16 @@ public partial class WipePage : Page
         TxtResult.Text = moved == 0
             ? "Файлов сохранения не найдено — вайпать нечего."
             : $"✓ Перемещено файлов: {moved} → {dir}";
-        // опция как в RSM Web: после вайпа генерируем новый seed для следующей карты
+        // опция как в RSM Web: после вайпа генерируем новый seed для следующей карты;
+        // канон — server.cfg, json-зеркало — для launch-аргументов
         if (moved > 0 && ChkSeed.IsChecked == true)
         {
-            App.Settings.WorldSeed = (uint)Random.Shared.Next(1, int.MaxValue);
+            var seed = (uint)Random.Shared.Next(1, int.MaxValue);
+            App.Settings.WorldSeed = seed;
             App.Settings.Save(App.SettingsPath);
-            TxtResult.Text += $" · новый seed: {App.Settings.WorldSeed}";
+            App.ServerCfg["server.seed"] = seed.ToString();
+            App.ServerCfg.Save();
+            TxtResult.Text += $" · новый seed: {seed}";
         }
         RefreshStats();
     }

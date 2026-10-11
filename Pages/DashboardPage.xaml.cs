@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -19,11 +20,11 @@ public partial class DashboardPage : Page
     private CancellationTokenLike _tail = new();
     private TimeSpan? _prevCpu;
     private DateTime _prevCpuAt;
-    private bool _optsReady;
 
     public DashboardPage()
     {
         InitializeComponent();
+        Loaded += (_, _) => AppNav.SelectTab(this);
         TxtSub.Text = App.Settings.IsRemoteMode
             ? $"{App.Settings.Hostname} • удалённый RCON {App.Settings.RconHost}:{App.Settings.RconPort}"
             : $"{App.Settings.Hostname} • {App.Settings.ServerDirPath}";
@@ -127,12 +128,13 @@ public partial class DashboardPage : Page
 
     private void UpdateState()
     {
-        bool local = !App.Settings.IsRemoteMode;
-        bool running = local ? App.Server.IsRunning : App.Rcon.IsConnected;
-        BtnPower.IsEnabled = local;
-        BtnRestart.IsEnabled = local && running;
-        BtnKill.IsEnabled = local && running;
-        BtnForceSave.IsEnabled = App.Rcon.IsConnected;
+        var ctx = App.Ctx;
+        bool local = ctx.IsLocal;
+        bool running = local ? ctx.ServerRunning : ctx.RconConnected;
+        BtnPower.IsEnabled = ctx.CanManageProcess;
+        BtnRestart.IsEnabled = ctx.CanManageProcess && running;
+        BtnKill.IsEnabled = ctx.CanManageProcess && running;
+        BtnForceSave.IsEnabled = ctx.CanUseRcon;
         // кнопка состояния: ЗАПУСТИТЬ (акцент) ↔ ОСТАНОВИТЬ (красная)
         BtnPower.Content = running ? "■ ОСТАНОВИТЬ" : "ЗАПУСТИТЬ";
         BtnPower.Appearance = running
@@ -149,7 +151,7 @@ public partial class DashboardPage : Page
         {
             StatOnline.Text = "—"; StatFps.Text = "—"; StatUptime.Text = "—"; StatRcon.Text = "OFF";
             StatQueue.Text = "—"; StatNet.Text = "—"; StatMem.Text = "—"; StatWipe.Text = "—";
-            StatState.Text = App.Settings.IsRemoteMode ? "OFFLINE" : "СТОП";
+            StatState.Text = ctx.IsRemote ? "OFFLINE" : "СТОП";
             StatState.Foreground = (SolidColorBrush)FindResource("B.Danger");
             StatCpu.Text = "—"; StatRam.Text = "—"; StatDisk.Text = "—";
             StatOnlineSub.Text = "сервер остановлен";
@@ -322,36 +324,39 @@ public partial class DashboardPage : Page
         Note("✔ server.save отправлен");
     }
 
-    // ── Опции автоматики: сохраняются сразу, watchdog читает их вживую ──────
+    // Сервисные runtime-команды (переехали из «Управление → Операции»)
+    private async void FpsLimit_Click(object sender, RoutedEventArgs e)
+    {
+        var v = (int)(NumFpsLimit.Value ?? 0);
+        TxtServiceResult.Text = "⏳";
+        TxtServiceResult.Text = Trim(await App.Ctx.RunRconAsync($"fps.limit {v}"));
+    }
+
+    private async void GcCollect_Click(object sender, RoutedEventArgs e)
+    {
+        TxtServiceResult.Text = "⏳";
+        TxtServiceResult.Text = Trim(await App.Ctx.RunRconAsync("gc.collect"));
+    }
+
+    private static string Trim(string s) => s.Length > 60 ? s[..60] + "…" : s;
+
+    // ── Автоматика: только сводка — настройки живут в «Сервер → Автоматика» ──
     private void LoadOptions()
     {
         var s = App.Settings;
-        ChkWatchdog.IsChecked = s.WatchdogEnabled;
-        TxtWatchdogDelay.Text = s.WatchdogDelaySec.ToString();
-        ChkAutoRestart.IsChecked = s.AutoRestartEnabled;
-        TxtRestartTimes.Text = s.AutoRestartTimes;
-        TxtRestartWarn.Text = s.AutoRestartWarnSec.ToString();
-        ChkAutoWipe.IsChecked = s.AutoWipeEnabled;
-        TxtWipeDays.Text = s.AutoWipeIntervalDays.ToString();
-        ChkAutoWipeFull.IsChecked = s.AutoWipeFull;
-        _optsReady = true;
+        var parts = new List<string>();
+        parts.Add(s.WatchdogEnabled ? $"watchdog · {s.WatchdogDelaySec}с" : "watchdog выкл");
+        parts.Add(s.AutoRestartEnabled
+            ? $"рестарт {(string.IsNullOrWhiteSpace(s.AutoRestartTimes) ? "—" : s.AutoRestartTimes)}"
+            : "рестарт выкл");
+        parts.Add(s.AutoWipeEnabled
+            ? $"автовайп каждые {s.AutoWipeIntervalDays} дн{(s.AutoWipeFull ? ", полный" : "")}"
+            : "автовайп выкл");
+        TxtAutomation.Text = string.Join("   ·   ", parts);
     }
 
-    private void Opt_Changed(object sender, RoutedEventArgs e)
-    {
-        if (!_optsReady) return;
-        var s = App.Settings;
-        s.WatchdogEnabled = ChkWatchdog.IsChecked == true;
-        if (int.TryParse(TxtWatchdogDelay.Text, out var wd) && wd >= 3) s.WatchdogDelaySec = wd;
-        s.AutoRestartEnabled = ChkAutoRestart.IsChecked == true;
-        s.AutoRestartTimes = TxtRestartTimes.Text.Trim();
-        if (int.TryParse(TxtRestartWarn.Text, out var rw) && rw >= 0) s.AutoRestartWarnSec = rw;
-        s.AutoWipeEnabled = ChkAutoWipe.IsChecked == true;
-        if (int.TryParse(TxtWipeDays.Text, out var dd) && dd >= 1) s.AutoWipeIntervalDays = dd;
-        s.AutoWipeFull = ChkAutoWipeFull.IsChecked == true;
-        s.Save(App.SettingsPath);
-        TxtOptSaved.Text = $"✔ сохранено · {DateTime.Now:HH:mm:ss}";
-    }
+    private void Automation_Click(object sender, RoutedEventArgs e)
+        => Services.AppNav.Go("server.automation");
 
     // ── Подключение: адрес для игроков ─────────────────────────────────────
     private string? _connectAddr; // "ip:port"

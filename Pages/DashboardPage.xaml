@@ -91,82 +91,37 @@
                                        DockPanel.Dock="Right" HorizontalAlignment="Right"
                                        TextWrapping="Wrap" TextAlignment="Right" MaxWidth="400"/>
                         </DockPanel>
+                        <!-- сервисные runtime-команды: fps.limit и gc.collect -->
+                        <DockPanel LastChildFill="False" Margin="0,8,0,0">
+                            <TextBlock Text="fps.limit" FontSize="11" Foreground="{StaticResource B.TextDim}"
+                                       VerticalAlignment="Center"/>
+                            <ui:NumberBox x:Name="NumFpsLimit" Width="64" Value="0" Minimum="0" Maximum="500"
+                                          SpinButtonPlacementMode="Inline" Margin="6,0,0,0"
+                                          ToolTip="0 = без лимита"/>
+                            <ui:Button Content="ПРИМЕНИТЬ" Appearance="Transparent" FontSize="11" Padding="8,3"
+                                       Foreground="{StaticResource B.TextDim}" Margin="6,0,0,0"
+                                       Click="FpsLimit_Click" ToolTip="fps.limit N через RCON — только до рестарта"/>
+                            <ui:Button Content="GC COLLECT" Appearance="Transparent" FontSize="11" Padding="8,3"
+                                       Foreground="{StaticResource B.TextDim}" Margin="10,0,0,0"
+                                       Click="GcCollect_Click" ToolTip="gc.collect — очистка памяти сервера"/>
+                            <TextBlock x:Name="TxtServiceResult" Style="{StaticResource OctaPageSub}"
+                                       DockPanel.Dock="Right" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="300"/>
+                        </DockPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- ОПЦИИ: переключатели автоматики — сохраняются сразу -->
-                <TextBlock Text="ОПЦИИ" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
+                <!-- АВТОМАТИКА: сводка + ссылка на «Сервер → Автоматика» (владелец настроек) -->
+                <TextBlock Text="АВТОМАТИКА" Style="{StaticResource OctaSectionHeader}" Margin="0,0,0,8"/>
                 <Border Style="{StaticResource OctaPanel}" Padding="16,12" Margin="0,0,0,14">
-                    <StackPanel>
-                        <DockPanel Margin="0,0,0,12">
-                            <CheckBox x:Name="ChkWatchdog" VerticalAlignment="Top" Click="Opt_Changed"
-                                      Foreground="{StaticResource B.Text}"/>
-                            <StackPanel Margin="8,0,0,0">
-                                <TextBlock Text="Автоподнятие при падении (watchdog)" FontSize="12"
-                                           FontWeight="SemiBold" Foreground="{StaticResource B.Text}"/>
-                                <TextBlock Text="перезапустит сервер, если он умер не по команде" FontSize="11"
-                                           Foreground="{StaticResource B.TextDim}"/>
-                            </StackPanel>
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="задержка" FontSize="11" Foreground="{StaticResource B.TextDim}"
-                                           VerticalAlignment="Center"/>
-                                <ui:TextBox x:Name="TxtWatchdogDelay" Width="56" Margin="6,0,0,0"
-                                            LostFocus="Opt_Changed" TextAlignment="Center"/>
-                                <TextBlock Text="сек" FontSize="11" Foreground="{StaticResource B.TextDim}"
-                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
-                            </StackPanel>
-                        </DockPanel>
-
-                        <DockPanel Margin="0,0,0,12">
-                            <CheckBox x:Name="ChkAutoRestart" VerticalAlignment="Top" Click="Opt_Changed"
-                                      Foreground="{StaticResource B.Text}"/>
-                            <StackPanel Margin="8,0,0,0">
-                                <TextBlock Text="Авторестарт по расписанию" FontSize="12"
-                                           FontWeight="SemiBold" Foreground="{StaticResource B.Text}"/>
-                                <TextBlock Text="restart с предупреждением игроков в заданные часы" FontSize="11"
-                                           Foreground="{StaticResource B.TextDim}"/>
-                            </StackPanel>
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="время" FontSize="11" Foreground="{StaticResource B.TextDim}"
-                                           VerticalAlignment="Center"/>
-                                <ui:TextBox x:Name="TxtRestartTimes" Width="110" Margin="6,0,0,0"
-                                            LostFocus="Opt_Changed" TextAlignment="Center"
-                                            ToolTip="HH:mm через запятую, например 04:00, 16:00"/>
-                                <TextBlock Text="warn" FontSize="11" Foreground="{StaticResource B.TextDim}"
-                                           VerticalAlignment="Center" Margin="10,0,0,0"/>
-                                <ui:TextBox x:Name="TxtRestartWarn" Width="50" Margin="6,0,0,0"
-                                            LostFocus="Opt_Changed" TextAlignment="Center"/>
-                                <TextBlock Text="сек" FontSize="11" Foreground="{StaticResource B.TextDim}"
-                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
-                            </StackPanel>
-                        </DockPanel>
-
-                        <DockPanel>
-                            <CheckBox x:Name="ChkAutoWipe" VerticalAlignment="Top" Click="Opt_Changed"
-                                      Foreground="{StaticResource B.Text}"/>
-                            <StackPanel Margin="8,0,0,0">
-                                <TextBlock Text="Автовайп по расписанию" FontSize="12"
-                                           FontWeight="SemiBold" Foreground="{StaticResource B.Text}"/>
-                                <TextBlock Text="при старте сервера, если вайп просрочен — предложит выполнить" FontSize="11"
-                                           Foreground="{StaticResource B.TextDim}"/>
-                            </StackPanel>
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="каждые" FontSize="11" Foreground="{StaticResource B.TextDim}"
-                                           VerticalAlignment="Center"/>
-                                <ui:TextBox x:Name="TxtWipeDays" Width="50" Margin="6,0,0,0"
-                                            LostFocus="Opt_Changed" TextAlignment="Center"/>
-                                <TextBlock Text="дн." FontSize="11" Foreground="{StaticResource B.TextDim}"
-                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
-                                <CheckBox x:Name="ChkAutoWipeFull" Content="полный" FontSize="11"
-                                          Foreground="{StaticResource B.Text}" Margin="12,0,0,0"
-                                          Click="Opt_Changed" VerticalAlignment="Center"
-                                          ToolTip="Полный вайп (карта + BP) или только карта"/>
-                            </StackPanel>
-                        </DockPanel>
-
-                        <TextBlock x:Name="TxtOptSaved" FontSize="10" Foreground="{StaticResource B.Success}"
-                                   Margin="0,8,0,0" HorizontalAlignment="Right"/>
-                    </StackPanel>
+                    <DockPanel LastChildFill="False">
+                        <TextBlock x:Name="TxtAutomation" Text="…" FontSize="11"
+                                   Foreground="{StaticResource B.TextDim}" TextWrapping="Wrap"
+                                   VerticalAlignment="Center"/>
+                        <ui:Button Content="НАСТРОИТЬ →" DockPanel.Dock="Right" Appearance="Transparent"
+                                   Foreground="{StaticResource B.Accent}" FontSize="11" Padding="8,3"
+                                   Margin="12,0,0,0" Click="Automation_Click"/>
+                    </DockPanel>
                 </Border>
             </StackPanel>
         </ScrollViewer>

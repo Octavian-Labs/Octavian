@@ -22,6 +22,7 @@ public class RconService : IDisposable
 
     // Пуши сервера (консоль, чат) — Identifier -1/0
     public event Action<string, string>? OnMessage; // (type, message)
+    public event Action? OnConnected;
     public event Action? OnDisconnected;
 
     public async Task<bool> ConnectAsync(string host, int port, string password, int timeoutMs = 5000)
@@ -36,6 +37,7 @@ public class RconService : IDisposable
             cto.CancelAfter(timeoutMs);
             await _ws.ConnectAsync(uri, cto.Token);
             _ = Task.Run(() => ReceiveLoop(_cts.Token));
+            OnConnected?.Invoke();
             return true;
         }
         catch

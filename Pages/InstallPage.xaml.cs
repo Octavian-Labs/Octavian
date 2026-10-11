@@ -20,9 +20,9 @@ public partial class InstallPage : Page
 
     private void Append(string line)
     {
-        TxtLog.Text += line + "\n";
-        if (TxtLog.Text.Length > 200_000) TxtLog.Text = TxtLog.Text[^100_000..];
-        Scroll.ScrollToEnd();
+        var kind = line.StartsWith(">>>") ? "sys"
+                 : line.Contains("error", StringComparison.OrdinalIgnoreCase) ? "err" : "log";
+        Log.AddLine(line, kind);
     }
 
     private string Branch => (CmbBranch.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "release";
