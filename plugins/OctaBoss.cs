@@ -608,9 +608,13 @@ namespace Oxide.Plugins
 
         private readonly List<PendingCorpse> _corpses = new List<PendingCorpse>();
         private readonly Dictionary<DroppedItemContainer, DateTime> _lockedBags = new Dictionary<DroppedItemContainer, DateTime>();
+        // свита после смерти босса: 60с «паники у туши», потом исчезает.
+        // Живёт тут (не разовым таймером): добивание гарантирует тик,
+        // свип по клеймам грейс-период уважает и не трогает раньше срока
+        private readonly Dictionary<BaseCombatEntity, DateTime> _dyingEscorts = new Dictionary<BaseCombatEntity, DateTime>();
         private readonly Dictionary<ulong, Buff> _buffs = new Dictionary<ulong, Buff>();
         private readonly Dictionary<string, string> _lastKillInfo = new Dictionary<string, string>();
-        private Timer _timerSpawn, _timerAggro;
+        private Timer _timerSpawn, _timerAggro, _timerSweep;
 
         #endregion
 
@@ -632,6 +636,9 @@ namespace Oxide.Plugins
             }
             _timerSpawn = timer.Every(30f, SpawnTick);
             _timerAggro = timer.Every(1f, AggroTick);
+            // клеймо позволяет свипить сирот и периодически, а не только
+            // при загрузке — ловит зомби-свиту и прочие неконтролируемые
+            _timerSweep = timer.Every(120f, SweepOrphans);
             ReattachSaved();
             SweepOrphans();
         }
@@ -640,6 +647,7 @@ namespace Oxide.Plugins
         {
             _timerSpawn?.Destroy();
             _timerAggro?.Destroy();
+            _timerSweep?.Destroy();
             // живых боссов не бросаем сиротами: пишем netID -> key в дата-файл,
             // после reload подхватываем их обратно в стейт (ReattachSaved)
             var saved = new List<SavedBoss>();
@@ -728,6 +736,26 @@ namespace Oxide.Plugins
             SpawnMarker(st, ent.transform.position);
         }
 
+        // добивание сущности с лесенкой fallback'ов: Kill() бывает «не
+        // доходит» (туша остаётся в мире — так рождаются зомби). Тогда
+        // Kill(Gib), а если и он молчит — снос под карту: движок сам
+        // уничтожает сущность по Invalid Position
+        private static bool ForceRemove(BaseEntity ent)
+        {
+            if (ent == null || ent.IsDestroyed) return true;
+            try { ent.Kill(); } catch { }
+            if (ent.IsDestroyed) return true;
+            try { ent.Kill(BaseNetworkable.DestroyMode.Gib); } catch { }
+            if (ent.IsDestroyed) return true;
+            try
+            {
+                ent.transform.position = new Vector3(0f, -500f, 0f);
+                ent.SendNetworkUpdateImmediate();
+            }
+            catch { }
+            return ent.IsDestroyed;
+        }
+
         // находит наше клеймо на сущности: компонент свежего билда — прямо,
         // копию от ПРОШЛОЙ загрузки плагина (тип старой сборки, GetComponent
         // её не видит) — по имени класса, данные переливаем в свежий тег
@@ -781,6 +809,9 @@ namespace Oxide.Plugins
                 foreach (var e in st.Escorts) if (e != null) tracked.Add(e);
                 if (st.Marker != null) tracked.Add(st.Marker);
             }
+            // свита в грейс-периоде после смерти босса — не сирота,
+            // у неё есть дедлайн в _dyingEscorts и свой добиватель в тике
+            foreach (var e in _dyingEscorts.Keys) if (e != null) tracked.Add(e);
 
             var adopted = 0;
             // проход 1 — боссы: свой вид, живой, без живого стейта
@@ -817,14 +848,15 @@ namespace Oxide.Plugins
                 adopted++;
             }
             // остаток — сироты и маркеры-призраки
-            var killed = 0;
+            var killed = 0; var failed = 0;
             foreach (var kv in tagged)
             {
                 if (tracked.Contains(kv.Key) || kv.Key.IsDestroyed) continue;
-                try { kv.Key.Kill(); killed++; } catch { }
+                try { if (ForceRemove(kv.Key)) killed++; else failed++; } catch { }
             }
-            if (adopted > 0 || killed > 0)
-                Puts($"OctaBoss: свип по клеймам — усыновлено {adopted}, сирот убито {killed}");
+            if (adopted > 0 || killed > 0 || failed > 0)
+                Puts($"OctaBoss: свип по клеймам — усыновлено {adopted}, " +
+                     $"сирот убито {killed}, не удалось убить {failed}");
         }
 
         private void ScheduleNext(BossState st, bool first = false)
@@ -1306,6 +1338,21 @@ namespace Oxide.Plugins
         private void AggroTick()
         {
             var now = DateTime.UtcNow;
+
+            // добивание выжившей свиты по дедлайну — переживает reload,
+            // а не добежавший Kill() повторяем каждый тик до победы
+            if (_dyingEscorts.Count > 0)
+            {
+                foreach (var kv in _dyingEscorts.ToList())
+                {
+                    var e = kv.Key;
+                    if (e == null || e.IsDestroyed) { _dyingEscorts.Remove(e); continue; }
+                    if (kv.Value > now) continue;
+                    _bossNames.Remove(e);
+                    if (ForceRemove(e)) _dyingEscorts.Remove(e);
+                }
+            }
+
             foreach (var st in _bosses.Values)
             {
                 // «зомби»: сущность ходит, а смерть не оформлена.
@@ -1324,7 +1371,8 @@ namespace Oxide.Plugins
                     // позицию для мешка с лутом; Kill() не триггерит OnEntityDeath,
                     // DeathHandled отсекает дубль при нормальной смерти через Die
                     if (st.Entity == z && !z.IsDestroyed) HandleBossDeath(st, null);
-                    if (!z.IsDestroyed) { try { z.Kill(); } catch { } }
+                    if (!ForceRemove(z))
+                        Puts($"OctaBoss[{st.Spec.Key}]: ЗОМБИ НЕ УДАЛЯЕТСЯ — все способы исчерпаны");
                     continue;
                 }
                 if (!st.Alive) continue;
@@ -1858,7 +1906,7 @@ namespace Oxide.Plugins
                 if (e.Health() <= 1f || !e.IsAlive())
                 {
                     try { e.Die(); } catch { }
-                    if (!e.IsDestroyed) try { e.Kill(); } catch { }
+                    if (!e.IsDestroyed) ForceRemove(e);
                     continue;
                 }
                 var role = st.EscortRoles.TryGetValue(e, out var r) ? r : 0;
@@ -2535,20 +2583,14 @@ namespace Oxide.Plugins
             st.Entity = null;
             st.Ai = null;
             st.Livestock = null;
-            // свита: 60 сек паникует у туши, потом исчезает — не бесплатное
-            // мясо и не зверинец на карте после каждого ивента
+            // свита: 60 сек паники у туши, потом исчезает — не бесплатное
+            // мясо и не зверинец на карте после каждого ивента.
+            // Дедлайн в _dyingEscorts: разовый timer.Once терялся бы при
+            // reload, а тихо не сработавший Kill() давал бессмертного зомби
             var leftover = st.Escorts.Where(e => e != null && !e.IsDestroyed).ToList();
             st.Escorts.Clear();
-            if (leftover.Count > 0)
-                timer.Once(60f, () =>
-                {
-                    foreach (var e in leftover)
-                        if (e != null && !e.IsDestroyed)
-                        {
-                            _bossNames.Remove(e);
-                            e.Kill();
-                        }
-                });
+            foreach (var e in leftover)
+                _dyingEscorts[e] = DateTime.UtcNow.AddSeconds(60);
             ScheduleNext(st);
         }
 
@@ -4776,6 +4818,14 @@ namespace Oxide.Plugins
             if (!st.Alive) { Puts($"OctaBoss[{st.Spec.Key}]: босса нет"); return; }
             AdminKill(st);
             Puts($"OctaBoss[{st.Spec.Key}]: убит администратором");
+        }
+
+        [ConsoleCommand("octaboss.sweep")]
+        private void CmdSweep(ConsoleSystem.Arg arg)
+        {
+            if (!arg.IsAdmin) return;
+            SweepOrphans();
+            Puts("OctaBoss: свип по клеймам выполнен (см. строку «усыновлено/сирот» выше)");
         }
 
         [ConsoleCommand("octaboss.next")]
