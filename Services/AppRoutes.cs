@@ -21,6 +21,8 @@ public sealed class AppRoute
     public Func<ServerContext, bool>? Requires { get; init; }
     /// <summary>Локальная страница, частично работающая в Remote — видна, гейтинг внутри.</summary>
     public bool RemotePartial { get; init; }
+    /// <summary>Панель контекста на этом маршруте: сервисные инструменты вместо «Цели».</summary>
+    public bool CtxService { get; init; }
 }
 
 public static class AppRoutes
@@ -33,12 +35,12 @@ public static class AppRoutes
         new Group("ГЛАВНАЯ", new[]
         {
             new AppRoute { Id = "dashboard", Title = "Обзор", Icon = "Home24",
-                PageType = typeof(DashboardPage), Param = "Обзор" },
+                PageType = typeof(DashboardPage), CtxService = true },
         }),
         new Group("СЕРВЕР", new[]
         {
             new AppRoute { Id = "server.face", Title = "Лицо сервера", Icon = "Tag24",
-                PageType = typeof(DashboardPage), Param = "Лицо" },
+                PageType = typeof(FacePage) },
             new AppRoute { Id = "server.params", Title = "Параметры", Icon = "TextBoxSettings24",
                 PageType = typeof(ServerCfgPage), Param = "Лимиты",
                 Requires = c => c.CanEditFiles },

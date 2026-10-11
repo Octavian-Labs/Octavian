@@ -76,21 +76,70 @@
                     </Border>
 
                     <StackPanel x:Name="CtxBody" DockPanel.Dock="Top" Margin="12,10">
-                        <!-- Цель: выбранный игрок -->
-                        <TextBlock Text="ЦЕЛЬ" Style="{StaticResource OctaStatLabel}"/>
-                        <Border Style="{StaticResource OctaPanel}" Padding="10,8" Margin="0,4,0,12"
-                                MouseLeftButtonUp="CtxTarget_Click" Cursor="Hand"
-                                ToolTip="Перейти к игрокам">
+                        <!-- Сервер: режим, состояние, онлайн — чтобы панель не была пустой -->
+                        <TextBlock Text="СЕРВЕР" Style="{StaticResource OctaStatLabel}"/>
+                        <Border Style="{StaticResource OctaPanel}" Padding="10,8" Margin="0,4,0,12">
                             <StackPanel>
-                                <TextBlock x:Name="CtxTargetName" Text="не выбрана" FontSize="12"
+                                <TextBlock x:Name="CtxServerState" Text="—" FontSize="12"
                                            FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
                                            TextTrimming="CharacterEllipsis"/>
-                                <TextBlock x:Name="CtxTargetId" Text="игрок для адресных действий"
-                                           FontSize="9" FontFamily="Consolas"
-                                           Foreground="{StaticResource B.TextDim}"
+                                <TextBlock x:Name="CtxServerMeta" Text="режим и подключение" FontSize="9"
+                                           FontFamily="Consolas" Foreground="{StaticResource B.TextDim}"
                                            TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="CtxServerLive" Text="" FontSize="9"
+                                           FontFamily="Consolas" Foreground="{StaticResource B.TextDim}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                             </StackPanel>
                         </Border>
+
+                        <!-- Сервис (дашборд): команды, тонко влияющие на показания -->
+                        <StackPanel x:Name="CtxSecService" Visibility="Collapsed">
+                            <TextBlock Text="СЕРВИС" Style="{StaticResource OctaStatLabel}"/>
+                            <Border Style="{StaticResource OctaPanel}" Padding="10,8" Margin="0,4,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="fps.limit" FontSize="9" FontFamily="Consolas"
+                                               Foreground="{StaticResource B.TextDim}"/>
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <ui:NumberBox x:Name="CtxFpsLimit" Value="0" Minimum="0" Maximum="500"
+                                                      SpinButtonPlacementMode="Inline" FontSize="11"
+                                                      ToolTip="0 = без лимита — только до рестарта"/>
+                                        <ui:Button Grid.Column="1" Content="OK" Appearance="Transparent"
+                                                   FontSize="11" Padding="8,4" Margin="6,0,0,0"
+                                                   Foreground="{StaticResource B.Accent}"
+                                                   Click="CtxFps_Click" ToolTip="fps.limit N через RCON"/>
+                                    </Grid>
+                                    <ui:Button Content="GC COLLECT · очистка памяти" Appearance="Transparent"
+                                               FontSize="10" Padding="0,6" Margin="0,8,0,0"
+                                               Foreground="{StaticResource B.TextDim}"
+                                               HorizontalContentAlignment="Left"
+                                               Click="CtxGc_Click" ToolTip="gc.collect — очистка памяти сервера"/>
+                                    <TextBlock x:Name="CtxServiceResult" Style="{StaticResource OctaPageSub}"
+                                               Margin="0,4,0,0" TextWrapping="Wrap" MaxHeight="42"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Цель: выбранный игрок -->
+                        <StackPanel x:Name="CtxSecTarget">
+                            <TextBlock Text="ЦЕЛЬ" Style="{StaticResource OctaStatLabel}"/>
+                            <Border Style="{StaticResource OctaPanel}" Padding="10,8" Margin="0,4,0,12"
+                                    MouseLeftButtonUp="CtxTarget_Click" Cursor="Hand"
+                                    ToolTip="Перейти к игрокам">
+                                <StackPanel>
+                                    <TextBlock x:Name="CtxTargetName" Text="не выбрана" FontSize="12"
+                                               FontWeight="SemiBold" Foreground="{StaticResource B.Text}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock x:Name="CtxTargetId" Text="игрок для адресных действий"
+                                               FontSize="9" FontFamily="Consolas"
+                                               Foreground="{StaticResource B.TextDim}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
 
                         <!-- Текущая операция -->
                         <TextBlock Text="ОПЕРАЦИЯ" Style="{StaticResource OctaStatLabel}"/>

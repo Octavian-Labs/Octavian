@@ -17,7 +17,7 @@ public partial class MainWindow : Window
 
     private readonly Dictionary<NavigationViewItem, AppRoute> _routeByItem = new();
     private readonly Dictionary<string, NavigationViewItem> _itemByRoute = new();
-    private readonly List<(NavigationViewItemHeader Header, List<NavigationViewItem> Items)> _groups = new();
+    private readonly List<(NavigationViewItem? Parent, List<NavigationViewItem> Items)> _groups = new();
     private string _currentRouteId = "dashboard";
     private AppRoute? _pendingRoute;
     private AppRoute? _clickedRoute;
@@ -68,8 +68,6 @@ public partial class MainWindow : Window
         NavView.Navigating += Nav_Navigating;
         foreach (var group in AppRoutes.Groups)
         {
-            var header = new NavigationViewItemHeader { Text = group.Title };
-            NavView.MenuItems.Add(header);
             var items = new List<NavigationViewItem>();
             foreach (var route in group.Routes)
             {
@@ -79,25 +77,61 @@ public partial class MainWindow : Window
                     Tag = route,
                     TargetPageType = route.PageType,
                     TargetPageTag = route.Id, // id маршрута: Navigate(tag) находит именно этот пункт
-                    Icon = Enum.TryParse<SymbolRegular>(route.Icon, out var sym)
-                        ? new SymbolIcon(sym) : new SymbolIcon(SymbolRegular.Home24),
+                    Icon = Symbol(route.Icon),
                 };
                 // Click бьёт до внутренней навигации — запоминаем маршрут,
                 // потому что у одного PageType может быть несколько маршрутов
                 var r = route;
                 item.Click += (_, _) => _clickedRoute = r;
-                NavView.MenuItems.Add(item);
                 _routeByItem[item] = route;
                 _itemByRoute[route.Id] = item;
                 items.Add(item);
             }
-            _groups.Add((header, items));
+            if (items.Count == 1)
+            {
+                // одиночный маршрут — без раскрывающейся группы-родителя
+                NavView.MenuItems.Add(items[0]);
+                _groups.Add((null, items));
+                continue;
+            }
+            // группа-родитель: клик разворачивает/сворачивает подпункты (шеврон WPF-UI)
+            var parent = new NavigationViewItem
+            {
+                Content = GroupLabel(group.Title),
+                Icon = Symbol(GroupIcon(group.Title)),
+                IsExpanded = true,
+            };
+            foreach (var i in items) parent.MenuItems.Add(i);
+            NavView.MenuItems.Add(parent);
+            _groups.Add((parent, items));
         }
     }
+
+    private static SymbolIcon? Symbol(string name)
+        => Enum.TryParse<SymbolRegular>(name, out var s) ? new SymbolIcon(s) : null;
+
+    // «СЕРВЕР» → «Сервер»: в родителе группы верхний регистр смотрится чужеродно
+    private static string GroupLabel(string t)
+        => t.Length < 2 ? t : char.ToUpper(t[0]) + t[1..].ToLowerInvariant();
+
+    private static string GroupIcon(string title) => title switch
+    {
+        "СЕРВЕР" => "Server24",
+        "ИГРА" => "Games24",
+        "ИНСТРУМЕНТЫ" => "Toolbox24",
+        "ПРИЛОЖЕНИЕ" => "Apps24",
+        _ => "Home24",
+    };
 
     private void Nav_Navigating(NavigationView sender, NavigatingCancelEventArgs e)
     {
         var pageType = e.Page?.GetType();
+        if (pageType == null)
+        {
+            // пункт-родитель (группа) — только разворот подпунктов, навигации нет
+            e.Cancel = true;
+            return;
+        }
         // приоритет: явно запрошенный маршрут → кликнутый пункт → первый маршрут с этим PageType
         var route = _pendingRoute ?? _clickedRoute ?? AppRoutes.FindByType(pageType);
         _pendingRoute = null; _clickedRoute = null;
@@ -106,12 +140,56 @@ public partial class MainWindow : Window
             AppNav.Arm(_currentRouteId, null);
             return;
         }
-        if (route.Requires != null && !route.Requires(App.Ctx)) { e.Cancel = true; return; }
+        if (route.Requires != null && !route.Requires(App.Ctx)) { CancelNav(e); return; }
         var force = _forceNextNav;
         _forceNextNav = false;
-        if (!force && !App.Ctx.ConfirmLeaveDirty(this)) { e.Cancel = true; return; }
+        if (!force && !App.Ctx.ConfirmLeaveDirty(this)) { CancelNav(e); return; }
         AppNav.Arm(route.Id, route.Param);
         _currentRouteId = route.Id;
+        ApplyRouteContext(route);
+    }
+
+    // Отмена перехода: кликнутый пункт уже подсвечен WPF-UI, а страница осталась —
+    // возвращаем активность текущему маршруту через Activate/Deactivate.
+    // SelectedItem не трогаем: его присваивание запустило бы навигацию и пересоздало страницу.
+    private void CancelNav(NavigatingCancelEventArgs e)
+    {
+        e.Cancel = true;
+        RestoreActiveItem();
+        Dispatcher.BeginInvoke(RestoreActiveItem); // порядок активации внутри WPF-UI может отличаться
+    }
+
+    private void RestoreActiveItem()
+    {
+        var sel = NavView.SelectedItem as NavigationViewItem;
+        if (_itemByRoute.TryGetValue(_currentRouteId, out var cur) && !ReferenceEquals(sel, cur))
+        {
+            sel?.Deactivate(NavView);
+            cur.Activate(NavView);
+        }
+    }
+
+    // Панель контекста по маршруту: на дашборде — сервисные рычаги вместо «Цели»
+    private void ApplyRouteContext(AppRoute route)
+    {
+        CtxSecService.Visibility = route.CtxService ? Visibility.Visible : Visibility.Collapsed;
+        CtxSecTarget.Visibility = route.CtxService ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // ── Сервисные runtime-команды панели контекста (дашборд) ─────────────
+    private async void CtxFps_Click(object sender, RoutedEventArgs e)
+    {
+        var v = (int)(CtxFpsLimit.Value ?? 0);
+        CtxServiceResult.Text = "⏳";
+        var r = await App.Ctx.RunRconAsync($"fps.limit {v}");
+        CtxServiceResult.Text = r.Length > 80 ? r[..80] + "…" : r;
+    }
+
+    private async void CtxGc_Click(object sender, RoutedEventArgs e)
+    {
+        CtxServiceResult.Text = "⏳";
+        var r = await App.Ctx.RunRconAsync("gc.collect");
+        CtxServiceResult.Text = r.Length > 80 ? r[..80] + "…" : r;
     }
 
     /// <summary>Единая точка переходов: навигация по id маршрута (tag пункта меню).</summary>
@@ -131,12 +209,12 @@ public partial class MainWindow : Window
         foreach (var (item, route) in _routeByItem)
             item.Visibility = route.Requires == null || route.Requires(App.Ctx)
                 ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var (header, items) in _groups)
+        foreach (var (parent, items) in _groups)
         {
             bool any = false;
             foreach (var i in items)
                 if (i.Visibility == Visibility.Visible) { any = true; break; }
-            header.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
+            if (parent != null) parent.Visibility = any ? Visibility.Visible : Visibility.Collapsed;
         }
         // текущий маршрут стал недоступен (переключили режим/отвалился RCON на странице без partial) → на обзор
         var cur = AppRoutes.Find(_currentRouteId);
@@ -167,6 +245,12 @@ public partial class MainWindow : Window
             : (srv ? "РАБОТАЕТ" : "СТОП");
 
         // контекстная панель
+        CtxServerState.Text = srv ? "РАБОТАЕТ" : ctx.IsRemote ? "REMOTE OFFLINE" : "ОСТАНОВЛЕН";
+        CtxServerState.Foreground = (SolidColorBrush)FindResource(srv ? "B.Success" : "B.TextDim");
+        CtxServerMeta.Text = ctx.IsRemote
+            ? $"{App.Settings.RconHost}:{App.Settings.RconPort}"
+            : $"local · порт {App.Settings.GamePort}";
+
         var p = ctx.SelectedPlayer;
         CtxTargetName.Text = p?.DisplayName ?? "не выбрана";
         CtxTargetId.Text = p?.SteamId ?? "игрок для адресных действий";
@@ -214,6 +298,7 @@ public partial class MainWindow : Window
             SbFps.Foreground = (SolidColorBrush)FindResource(
                 fps >= 25 ? "B.Success" : fps >= 15 ? "B.Warn" : "B.Danger");
             SbUptime.Text = $"uptime {(ts.Days > 0 ? $"{ts.Days}д " : "")}{ts.Hours:00}:{ts.Minutes:00}";
+            CtxServerLive.Text = $"{players}/{max} · {fps}fps · {ts.Hours:00}:{ts.Minutes:00} up";
         }
         catch { }
     }
@@ -224,6 +309,7 @@ public partial class MainWindow : Window
         SbFps.Text = "fps —";
         SbFps.Foreground = (SolidColorBrush)FindResource("B.TextDim");
         SbUptime.Text = "uptime —";
+        CtxServerLive.Text = "";
     }
 
     private async Task StatusLoop()

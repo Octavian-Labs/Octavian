@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,14 +14,67 @@ using OctavianRSM.Services;
 
 namespace OctavianRSM.Pages;
 
-// Вкладка «ЛИЦО СЕРВЕРА»: конструктор названия по паттернам топовых серверов
-// + маркетинг (описание/URL/картинки/теги/домен) — переехало из «Серв. конфиг»
-public partial class DashboardPage
+// Страница «Лицо сервера»: конструктор названия по паттернам топовых серверов
+// + маркетинг (описание/URL/картинки/теги/домен) + живой превью карточки
+public partial class FacePage : Page
 {
     private bool _faceReady;
     // живые числа из serverinfo — превью показывает реальный онлайн/карту
     private int _statPlayers, _statMax;
     private string _statMap = "";
+    private readonly CancellationTokenLike _tail = new();
+    private string? _connectAddr;
+
+    public FacePage()
+    {
+        InitializeComponent();
+        var s = App.Settings;
+        TxtSub.Text = s.IsRemoteMode
+            ? $"{s.Hostname} • удалённый RCON {s.RconHost}:{s.RconPort}"
+            : $"{s.Hostname} • {s.ServerDirPath}";
+        InitFace();
+        Unloaded += (_, _) => _tail.Cancel();
+        _ = DetectConnect();
+        _ = LoopStats();
+    }
+
+    private async Task DetectConnect()
+    {
+        var info = await ServerConnect.DetectAsync();
+        _connectAddr = info.Address;
+    }
+
+    // онлайн/карта для живого превью — лёгкий опрос serverinfo, пока страница на экране
+    private async Task LoopStats()
+    {
+        while (!_tail.Cancelled)
+        {
+            try
+            {
+                if (App.Rcon.IsConnected)
+                {
+                    var raw = await App.Rcon.SendAsync("serverinfo");
+                    Dispatcher.Invoke(() => ApplyFaceStats(raw));
+                }
+            }
+            catch { }
+            await Task.Delay(10000);
+        }
+    }
+
+    private void ApplyFaceStats(string raw)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var r = doc.RootElement;
+            _statPlayers = r.TryGetProperty("Players", out var p) ? p.GetInt32() : 0;
+            _statMax = r.TryGetProperty("MaxPlayers", out var m) ? m.GetInt32() : 0;
+            _statMap = r.TryGetProperty("Map", out var mp) ? mp.GetString() ?? "" : "";
+            UpdateFacePreview();
+        }
+        catch { }
+    }
 
     private void InitFace()
     {
@@ -209,8 +263,12 @@ public partial class DashboardPage
         catch { return null; }
     }
 
-    private void FaceConnect_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
-        => SteamConnect_Click(sender, e);
+    private async void FaceConnect_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var addr = _connectAddr ??= (await ServerConnect.DetectAsync()).Address;
+        try { ServerConnect.OpenSteamUrl(await ServerConnect.SteamUrlAsync(addr)); }
+        catch (Exception ex) { FaceValidation.Text = $"Не удалось вызвать Steam: {ex.Message}"; }
+    }
 
     private void TitlePreset_Click(object sender, RoutedEventArgs e)
     {

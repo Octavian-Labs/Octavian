@@ -24,7 +24,6 @@ public partial class DashboardPage : Page
     public DashboardPage()
     {
         InitializeComponent();
-        Loaded += (_, _) => AppNav.SelectTab(this);
         TxtSub.Text = App.Settings.IsRemoteMode
             ? $"{App.Settings.Hostname} • удалённый RCON {App.Settings.RconHost}:{App.Settings.RconPort}"
             : $"{App.Settings.Hostname} • {App.Settings.ServerDirPath}";
@@ -34,7 +33,6 @@ public partial class DashboardPage : Page
             : $"игра {s0.GamePort}  ·  query {s0.QueryPort}  ·  rcon {s0.RconPort}  ·  app {s0.AppPort}";
         _ = DetectConnectAddress();
         LoadOptions();
-        InitFace(); // вкладка «Лицо сервера»: конструктор названия + маркетинг
         App.Server.OnStateChanged += Server_OnStateChanged;
         // NavigationView пересоздаёт страницы — при уходе гасим фон и отписываемся,
         // иначе каждая загрузка дашборда плодит вечные циклы и подписчиков
@@ -220,9 +218,6 @@ public partial class DashboardPage : Page
             StatMem.Text = mem > 0 ? $"{mem / 1048576.0:0} MB" : "—";
             StatWipe.Text = wipe.Length >= 10 ? wipe[..10] : (wipe == "" ? "—" : wipe);
 
-            // живые числа для превью карточки на вкладке «Лицо сервера»
-            _statPlayers = players; _statMax = max; _statMap = map;
-            UpdateFacePreview();
             TxtPowerState.Text = $"РАБОТАЕТ · {StatUptime.Text}";
 
             // CPU/RAM процесса — только локальный сервер; в remote их не измерить
@@ -324,22 +319,6 @@ public partial class DashboardPage : Page
         Note("✔ server.save отправлен");
     }
 
-    // Сервисные runtime-команды (переехали из «Управление → Операции»)
-    private async void FpsLimit_Click(object sender, RoutedEventArgs e)
-    {
-        var v = (int)(NumFpsLimit.Value ?? 0);
-        TxtServiceResult.Text = "⏳";
-        TxtServiceResult.Text = Trim(await App.Ctx.RunRconAsync($"fps.limit {v}"));
-    }
-
-    private async void GcCollect_Click(object sender, RoutedEventArgs e)
-    {
-        TxtServiceResult.Text = "⏳";
-        TxtServiceResult.Text = Trim(await App.Ctx.RunRconAsync("gc.collect"));
-    }
-
-    private static string Trim(string s) => s.Length > 60 ? s[..60] + "…" : s;
-
     // ── Автоматика: только сводка — настройки живут в «Сервер → Автоматика» ──
     private void LoadOptions()
     {
@@ -359,71 +338,18 @@ public partial class DashboardPage : Page
         => Services.AppNav.Go("server.automation");
 
     // ── Подключение: адрес для игроков ─────────────────────────────────────
-    private string? _connectAddr; // "ip:port"
+    private string? _connectAddr; // "ip:port" или домен (резолвит ServerConnect)
 
-    // Приоритет адреса: remote → RconHost; заданный домен → он (SRV-запись
-    // сама резолвит порт); заданный ServerIp → он; иначе LAN сразу +
-    // попытка узнать внешний IP через ipwho.is.
     private async Task DetectConnectAddress()
     {
-        var s = App.Settings;
-        if (s.IsRemoteMode) { SetConnect(s.RconHost, "УДАЛЬНЫЙ СЕРВЕР — подключение в игре (F1)"); return; }
-        if (!string.IsNullOrWhiteSpace(s.ServerDomain))
-        { SetConnectDomain(s.ServerDomain.Trim()); return; }
-        if (!string.IsNullOrWhiteSpace(s.ServerIp) && s.ServerIp != "0.0.0.0")
-        { SetConnect(s.ServerIp, "АДРЕС СЕРВЕРА — подключение в игре (F1)"); return; }
-
-        var lan = LocalIPv4() ?? "127.0.0.1";
-        SetConnect(lan, "ЛОКАЛЬНЫЙ АДРЕС (LAN) — подключение в игре (F1)");
-        var pub = await PublicIPv4Async();
-        if (pub != null) SetConnect(pub, "ВНЕШНИЙ IP — подключение в игре (F1)");
-    }
-
-    // Подключение по домену: порт не пишем — SRV-запись отдаёт его сама
-    private void SetConnectDomain(string domain)
-    {
+        var info = await ServerConnect.DetectAsync();
         if (Dispatcher.HasShutdownStarted) return;
         Dispatcher.Invoke(() =>
         {
-            _connectAddr = domain;
-            TxtConnectLabel.Text = "ДОМЕН СЕРВЕРА (DNS SRV) — подключение в игре (F1)";
-            TxtConnect.Text = $"client.connect {domain}";
+            _connectAddr = info.Address;
+            TxtConnectLabel.Text = info.Label;
+            TxtConnect.Text = $"client.connect {info.Address}";
         });
-    }
-
-    private void SetConnect(string ip, string label)
-    {
-        if (Dispatcher.HasShutdownStarted) return;
-        Dispatcher.Invoke(() =>
-        {
-            _connectAddr = $"{ip}:{App.Settings.GamePort}";
-            TxtConnectLabel.Text = label;
-            TxtConnect.Text = $"client.connect {_connectAddr}";
-        });
-    }
-
-    private static string? LocalIPv4()
-    {
-        try
-        {
-            return Dns.GetHostEntry(Dns.GetHostName()).AddressList
-                .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork
-                                  && !IPAddress.IsLoopback(a))?.ToString();
-        }
-        catch { return null; }
-    }
-
-    // Свой публичный IP — тот же ipwho.is, что и геолокация игроков
-    private static async Task<string?> PublicIPv4Async()
-    {
-        try
-        {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
-            var json = await http.GetStringAsync("https://ipwho.is/?fields=ip");
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty("ip", out var ip) ? ip.GetString() : null;
-        }
-        catch { return null; }
     }
 
     private async void CopyConnect_Click(object sender, RoutedEventArgs e)
@@ -437,25 +363,12 @@ public partial class DashboardPage : Page
 
     private async void SteamConnect_Click(object sender, RoutedEventArgs e)
     {
-        var addr = _connectAddr ?? $"127.0.0.1:{App.Settings.GamePort}";
-        string url;
-        if (addr.Contains(':'))
-        {
-            url = $"steam://connect/{addr}";
-        }
-        else
-        {
-            // домен без порта — резолвим SRV/A сами и отдаём Steam честный IP:port;
-            // если DNS не ответил — фолбэк: +connect делает SRV-резолв уже клиент Rust
-            Note("Резолвлю DNS-записи сервера…");
-            var ep = await Task.Run(() => DnsSrvResolver.ResolveRust(addr, App.Settings.GamePort));
-            url = ep != null
-                ? $"steam://connect/{ep.Target}:{ep.Port}"
-                : $"steam://run/252490//+connect%20{addr}";
-        }
+        var addr = _connectAddr ?? (await ServerConnect.DetectAsync()).Address;
+        _connectAddr = addr;
+        if (!addr.Contains(':')) Note("Резолвлю DNS-записи сервера…");
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            ServerConnect.OpenSteamUrl(await ServerConnect.SteamUrlAsync(addr));
             Note("Запускаю подключение через Steam…");
         }
         catch (Exception ex) { Note($"Не удалось вызвать Steam: {ex.Message}"); }
